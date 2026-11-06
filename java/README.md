@@ -34,6 +34,12 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   phép quay X -90° + tỉ lệ về chiều cao 2.3, chuyển động toàn thân (nhún khi đi, nghiêng người, lao khi đấm).
   Đây là nhân vật MẶC ĐỊNH hiện tại; bản sprite AI vẫn bật lại được bằng biến môi trường `SPRITES=1`,
   model Blender tự dựng ở J1.8 bằng `BOY3D=1`.
+- **J1.10 thử công viên giải trí của Tín**: Tín gửi zip gồm script Blender sinh cảnh công viên
+  (`tools/blender/amusement_park_generator.py`, bản gốc của Tín) + ảnh concept. Đã chạy script trong Blender
+  (bản .blend sinh ra ở `gen/park/`), xuất `assets/models/park.glb` bằng `tools/blender/park_export.py`
+  (626 vật, 80K đỉnh — file 4.4MB nên KHÔNG đẩy lên repo, chạy 2 script trên là tái tạo được).
+  Game bật cờ `PARK=1` là thay phố bằng công viên để xem thử (chưa có va chạm riêng cho công viên).
+  Cờ `SWAP=1` hoán đổi vai nam/nữ để kiểm tra mặt trước của model nam.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

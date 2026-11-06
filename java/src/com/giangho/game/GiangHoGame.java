@@ -55,6 +55,8 @@ public class GiangHoGame extends ApplicationAdapter {
     private ModelInstance boy3d;
     private boolean userPair;
     private ModelInstance userBoy, userGirl;
+    private boolean parkMode;
+    private ModelInstance parkInst;
     private com.badlogic.gdx.graphics.g3d.model.Node nArmL, nArmR, nLegL, nLegR, nHead;
     private float headBaseY;
     private final float dummyX = -1.6f, dummyZ = -0.8f, dummyHeading = 0.15f;
@@ -144,6 +146,14 @@ public class GiangHoGame extends ApplicationAdapter {
         meSpr = buildSprite("boy");
         dummySpr = buildSprite("girl");
         use3d = System.getenv("BOY3D") != null;
+        parkMode = System.getenv("PARK") != null;
+        if (parkMode) {
+            Model mp = MiniGlb.load("assets/models/park.glb");
+            models.add(mp);
+            parkInst = new ModelInstance(mp);
+            parkInst.transform.setToTranslation(0, -0.48f, 0);
+            parkInst.transform.scale(0.55f, 0.55f, 0.55f);
+        }
         userPair = !use3d && System.getenv("SPRITES") == null;
         if (userPair) {
             Model mb = MiniGlb.load("assets/models/user_boy.glb");
@@ -427,9 +437,11 @@ public class GiangHoGame extends ApplicationAdapter {
                 player.moving, player.grounded, player.punchT, player.grabT);
         if (use3d) updateBoy3d(dt);
         if (userPair) {
-            updateGlbChar(userBoy, player.x, player.y, player.z, player.heading, player.animT,
-                    player.moving, player.punchT, player.grabT, 2.3f / 5.47f);
-            updateGlbChar(userGirl, dummyX, 0, dummyZ, dummyHeading, 0, false, 0, 0, 2.3f / 5.01f);
+            boolean swap = System.getenv("SWAP") != null;
+            updateGlbChar(swap ? userGirl : userBoy, player.x, player.y, player.z, player.heading, player.animT,
+                    player.moving, player.punchT, player.grabT, swap ? 2.3f / 5.01f : 2.3f / 5.47f);
+            updateGlbChar(swap ? userBoy : userGirl, dummyX, 0, dummyZ, dummyHeading, 0, false, 0, 0,
+                    swap ? 2.3f / 5.47f : 2.3f / 5.01f);
         }
         updateSprite(dummySpr, dummyX, 0, dummyZ, dummyHeading, 0, false, true, 0, 0);
 
@@ -445,7 +457,8 @@ public class GiangHoGame extends ApplicationAdapter {
         cam.update();
 
         batch.begin(cam);
-        for (ModelInstance i : worldInstances) batch.render(i, env);
+        if (parkMode) batch.render(parkInst, env);
+        else for (ModelInstance i : worldInstances) batch.render(i, env);
         batch.render(meSpr.shadow, env);
         batch.render(dummySpr.shadow, env);
         if (!userPair) batch.render(dummySpr.active, env);
