@@ -29,6 +29,11 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   xuất `assets/models/boy3d.glb`; game có `MiniGlb.java` (nạp GLB tối giản tự viết vì không tải được thư viện ngoài)
   và cờ môi trường `BOY3D=1` để thay nhân vật chính bằng model 3D (vung tay/chân theo nhịp đi, đấm, nhảy giơ tay).
   Mặc định vẫn dùng sprite AI; chờ Tín chốt hướng.
+- **J1.9 cặp nhân vật GLB của Tín**: Tín tự gửi 2 file GLB (nam áo khoác đỏ + nữ, sinh bằng trimesh — hình học nướng
+  sẵn trong tọa độ file Z-up, mặt hướng -Y, không khớp rời/texture/animation). Game nạp bằng MiniGlb, dựng đứng bằng
+  phép quay X -90° + tỉ lệ về chiều cao 2.3, chuyển động toàn thân (nhún khi đi, nghiêng người, lao khi đấm).
+  Đây là nhân vật MẶC ĐỊNH hiện tại; bản sprite AI vẫn bật lại được bằng biến môi trường `SPRITES=1`,
+  model Blender tự dựng ở J1.8 bằng `BOY3D=1`.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

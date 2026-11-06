@@ -53,6 +53,8 @@ public class GiangHoGame extends ApplicationAdapter {
     private CharSprite meSpr, dummySpr;
     private boolean use3d;
     private ModelInstance boy3d;
+    private boolean userPair;
+    private ModelInstance userBoy, userGirl;
     private com.badlogic.gdx.graphics.g3d.model.Node nArmL, nArmR, nLegL, nLegR, nHead;
     private float headBaseY;
     private final float dummyX = -1.6f, dummyZ = -0.8f, dummyHeading = 0.15f;
@@ -142,6 +144,15 @@ public class GiangHoGame extends ApplicationAdapter {
         meSpr = buildSprite("boy");
         dummySpr = buildSprite("girl");
         use3d = System.getenv("BOY3D") != null;
+        userPair = !use3d && System.getenv("SPRITES") == null;
+        if (userPair) {
+            Model mb = MiniGlb.load("assets/models/user_boy.glb");
+            models.add(mb);
+            userBoy = new ModelInstance(mb);
+            Model mg = MiniGlb.load("assets/models/user_girl.glb");
+            models.add(mg);
+            userGirl = new ModelInstance(mg);
+        }
         if (use3d) {
             Model m3 = MiniGlb.load("assets/models/boy3d.glb");
             models.add(m3);
@@ -312,6 +323,24 @@ public class GiangHoGame extends ApplicationAdapter {
         spr.shadow.transform.setToTranslation(x, 0.17f, z);
     }
 
+    /** Nhân vật GLB của Tín (hình học nướng sẵn, không khớp rời): chuyển động toàn thân —
+     *  nhún khi đi, nghiêng người về trước, lao người khi đấm. Model gốc Z-up, mặt hướng -Y. */
+    private void updateGlbChar(ModelInstance inst, float x, float y, float z, float heading, float animT,
+                               boolean moving, float punchT, float grabT, float scale) {
+        float bob = moving ? Math.abs((float) Math.sin(animT * 3.0)) * 0.05f : 0f;
+        float lean = moving ? 6f : 0f;
+        float lunge = 0f;
+        if (punchT > 0 || grabT > 0) {
+            lean = 14f;
+            lunge = 0.13f;
+        }
+        inst.transform.setToTranslation(x + (float) Math.sin(heading) * lunge, y + bob,
+                z + (float) Math.cos(heading) * lunge);
+        inst.transform.rotate(Vector3.Y, (float) Math.toDegrees(heading));
+        inst.transform.rotate(Vector3.X, -90f + lean);
+        inst.transform.scale(scale, scale, scale);
+    }
+
     private void updateBoy3d(float dt) {
         float swing = player.moving ? (float) Math.sin(player.animT * 3.0) * 0.55f : 0f;
         float bob = player.moving ? Math.abs((float) Math.sin(player.animT * 3.0)) * 0.05f : 0f;
@@ -397,6 +426,11 @@ public class GiangHoGame extends ApplicationAdapter {
         updateSprite(meSpr, player.x, player.y, player.z, player.heading, player.animT,
                 player.moving, player.grounded, player.punchT, player.grabT);
         if (use3d) updateBoy3d(dt);
+        if (userPair) {
+            updateGlbChar(userBoy, player.x, player.y, player.z, player.heading, player.animT,
+                    player.moving, player.punchT, player.grabT, 2.3f / 5.47f);
+            updateGlbChar(userGirl, dummyX, 0, dummyZ, dummyHeading, 0, false, 0, 0, 2.3f / 5.01f);
+        }
         updateSprite(dummySpr, dummyX, 0, dummyZ, dummyHeading, 0, false, true, 0, 0);
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -414,9 +448,12 @@ public class GiangHoGame extends ApplicationAdapter {
         for (ModelInstance i : worldInstances) batch.render(i, env);
         batch.render(meSpr.shadow, env);
         batch.render(dummySpr.shadow, env);
-        batch.render(dummySpr.active, env);
+        if (!userPair) batch.render(dummySpr.active, env);
         if (use3d) batch.render(boy3d, env);
-        else batch.render(meSpr.active, env);
+        else if (userPair) {
+            batch.render(userGirl, env);
+            batch.render(userBoy, env);
+        } else batch.render(meSpr.active, env);
         batch.end();
 
         drawHud();
