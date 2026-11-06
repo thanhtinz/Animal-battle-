@@ -14,9 +14,8 @@
     roomsCount: document.getElementById('rooms-count'),
     btnJoin: document.getElementById('btn-join'),
     btnLeave: document.getElementById('btn-leave'),
-    roomTitle: document.getElementById('room-title'),
-    roomWelcome: document.getElementById('room-welcome'),
-    roomMode: document.getElementById('room-mode')
+    hudRoom: document.getElementById('hud-room'),
+    hudPlayer: document.getElementById('hud-player')
   };
 
   var state = { selectedRoomId: null, occupancy: {} }; // occupancy: Bước Online cấp số thật
@@ -74,15 +73,15 @@
     if (!join.ok) { showError(els.joinError, join.error); return; }
 
     try { localStorage.setItem('ghx_name', v.name); } catch (e) {}
-    els.roomTitle.textContent = room.name;
-    els.roomWelcome.textContent = 'Xin chào, ' + v.name + '.';
-    els.roomMode.textContent = C.MODES[room.mode].name + ' — ' + C.MODES[room.mode].desc +
-      ' Địa bàn ' + room.map + ', tối đa ' + room.max + ' người.';
+    els.hudRoom.textContent = room.name + ' · ' + C.MODES[room.mode].name;
+    els.hudPlayer.textContent = v.name;
     els.lobby.hidden = true;
     els.room.hidden = false;
+    if (window.GHXGame) window.GHXGame.start({ name: v.name, room: room });
   });
 
   els.btnLeave.addEventListener('click', function () {
+    if (window.GHXGame) window.GHXGame.stop();
     els.room.hidden = true;
     els.lobby.hidden = false;
   });

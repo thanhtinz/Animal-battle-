@@ -12,7 +12,7 @@ Mẫu tham khảo cơ chế: Giang Hồ Online (play.giangho.online) — vào nh
 ## Lộ trình từng bước
 
 1. **Khung dự án + sảnh** — nhập tên, chọn phòng (7 phòng, 2 chế độ Chiếm phố / Đấu trường), vào / rời phòng. ✅ Xong, test 17/17 PASS.
-2. Map khu phố 3D + nhân vật di chuyển bằng joystick.
+2. **Map khu phố 3D + nhân vật + joystick + nút bấm luôn hiện** — phố 2 dãy nhà có biển hiệu, sạp, đèn, cây; nhân vật đi/chạy theo độ kéo cần, va chạm nhà, nhảy; nút ĐẤM / NHẢY / TÚM luôn hiện (Đấm/Túm mới có hoạt hình tay, hiệu quả trúng đòn ở Bước 4). ✅ Xong, test 20/20 PASS.
 3. Camera xoay / zoom + nút Nhảy.
 4. Đấm / Túm / ném + vật ngã.
 5. Online đồng bộ nhiều người cùng phòng.
@@ -30,8 +30,10 @@ node tests/test_step1.js
 
 ## Cấu trúc
 
-- `index.html` — 2 màn: sảnh + phòng chờ
-- `css/style.css` — giao diện sảnh
+- `index.html` — 2 màn: sảnh + trong phòng (game 3D)
+- `css/style.css` — giao diện sảnh + HUD + nút bấm
 - `js/config.js` — dữ liệu phòng / chế độ + kiểm tra tên (dùng chung, test bằng Node)
-- `js/lobby.js` — logic sảnh
+- `js/lobby.js` — logic sảnh, nối vào game
+- `js/world.js` — logic thế giới thuần: di chuyển, va chạm, nhảy, đấm/túm (test bằng Node)
+- `js/game3d.js` — dựng 3D bằng Three.js (`js/three.min.js` r149 đóng gói kèm), joystick + nút bấm
 - `tests/` — test từng bước

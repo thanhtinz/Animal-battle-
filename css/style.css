@@ -55,3 +55,39 @@ h1 { font-size: 34px; letter-spacing: 1px; margin: 10px 0 4px; color: #fff; }
   font-size: 16px; font-weight: 700; color: #f4f1e8; background: #101c28; }
 .hint { font-size: 12.5px; color: #8fa3b5; margin-top: 12px; line-height: 1.5; }
 .room-mode { font-size: 14.5px; color: #ffd98a; line-height: 1.55; }
+
+/* ===== Bước 2: màn game 3D + nút bấm luôn hiện ===== */
+.screen-game { position: fixed; inset: 0; overflow: hidden; background: #87b5d9; touch-action: none; }
+.screen-game[hidden] { display: none; }
+#game-wrap { position: absolute; inset: 0; }
+#game-wrap canvas { display: block; }
+#hud-top { position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 10px; right: 10px;
+  display: flex; gap: 8px; align-items: center; pointer-events: none; z-index: 5; }
+.chip { background: rgba(13, 30, 48, .78); color: #eaf4ff; border-radius: 999px; padding: 7px 13px;
+  font-size: 13.5px; font-weight: 700; white-space: nowrap; }
+#hud-player { color: #ffd98a; }
+#btn-leave { pointer-events: auto; margin-left: auto; background: rgba(178, 44, 44, .92); color: #fff; border: none;
+  border-radius: 999px; padding: 8px 14px; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+
+#controls { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; pointer-events: none;
+  display: flex; justify-content: space-between; align-items: flex-end;
+  padding: 0 18px calc(16px + env(safe-area-inset-bottom)); }
+#joy { pointer-events: auto; width: 128px; height: 128px; border-radius: 50%; position: relative;
+  background: rgba(13, 30, 48, .38); border: 2px solid rgba(255, 255, 255, .45); touch-action: none; }
+#joy-knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  border-radius: 50%; background: rgba(255, 217, 138, .92); border: 2px solid rgba(20, 32, 46, .5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+#actions { pointer-events: none; position: relative; width: 178px; height: 150px; }
+.act-btn { pointer-events: auto; position: absolute; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .5);
+  color: #fff; font-weight: 800; cursor: pointer; touch-action: none;
+  display: flex; align-items: center; justify-content: center; }
+.act-btn:active { transform: scale(.93); }
+.act-main { width: 84px; height: 84px; right: 0; bottom: 0; font-size: 19px;
+  background: radial-gradient(circle at 35% 30%, #ffa53a, #e85d0c); }
+.act-small { width: 64px; height: 64px; font-size: 14px; background: rgba(20, 44, 66, .82); }
+#btn-jump { right: 92px; bottom: 6px; }
+#btn-grab { right: 44px; bottom: 88px; }
+
+#rotate-hint { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(10, 20, 32, .82);
+  color: #ffd98a; font-size: 19px; font-weight: 800; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+@media (orientation: portrait) and (max-width: 700px) { #rotate-hint { display: flex; } }
