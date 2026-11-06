@@ -40,6 +40,11 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   (626 vật, 80K đỉnh — file 4.4MB nên KHÔNG đẩy lên repo, chạy 2 script trên là tái tạo được).
   Game bật cờ `PARK=1` là thay phố bằng công viên để xem thử (chưa có va chạm riêng cho công viên).
   Cờ `SWAP=1` hoán đổi vai nam/nữ để kiểm tra mặt trước của model nam.
+- **J1.11 đợt nâng hình**: Tín chê "sao vô game xấu vậy" — nguyên nhân: ánh sáng phẳng (ambient 0.8, KHÔNG bóng đổ),
+  cộng thêm ảnh kiểm chứng chụp bằng renderer phần mềm llvmpipe của sandbox. Đã sửa: bóng đổ thật bằng
+  DirectionalShadowLight 2048 bám theo nhân vật (camera bóng 50×50, near/far siết 15–70 để hết vệt vòng acne),
+  ambient hạ 0.48 + đèn fill lạnh đối diện, MSAA 4× ở cả 2 launcher. Lưu ý: model của Tín/GPT là blockout màu phẳng,
+  ảnh concept là render Cycles/AI có ánh sáng nung sẵn — engine chạy thật trên điện thoại không thể giống 100%.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

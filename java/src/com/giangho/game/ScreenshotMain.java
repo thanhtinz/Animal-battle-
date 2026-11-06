@@ -10,6 +10,7 @@ public class ScreenshotMain {
         Lwjgl3ApplicationConfiguration cfg = new Lwjgl3ApplicationConfiguration();
         cfg.setTitle("Giang Hồ Xóm — Tour");
         cfg.setWindowedMode(960, 540);
+        cfg.setBackBufferConfig(8, 8, 8, 8, 16, 0, 4);
         cfg.setForegroundFPS(60);
         new Lwjgl3Application(new GiangHoGame(), cfg);
     }

@@ -24,6 +24,8 @@ import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.IntAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
+import com.badlogic.gdx.graphics.g3d.environment.DirectionalShadowLight;
+import com.badlogic.gdx.graphics.g3d.utils.DepthShaderProvider;
 import com.badlogic.gdx.graphics.g3d.utils.MeshPartBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -45,6 +47,9 @@ public class GiangHoGame extends ApplicationAdapter {
     private PerspectiveCamera cam;
     private ModelBatch batch;
     private Environment env;
+    private DirectionalShadowLight shadowLight;
+    private ModelBatch shadowBatch;
+    private final Vector3 lightDir = new Vector3(-0.45f, -0.8f, -0.35f).nor();
     private final List<ModelInstance> worldInstances = new ArrayList<>();
     private final List<Model> models = new ArrayList<>();
     private final List<Texture> textures = new ArrayList<>();
@@ -138,8 +143,13 @@ public class GiangHoGame extends ApplicationAdapter {
         cam.near = 0.1f; cam.far = 220;
         batch = new ModelBatch();
         env = new Environment();
-        env.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.8f, 0.79f, 0.76f, 1f));
-        env.add(new DirectionalLight().set(1f, 0.95f, 0.85f, -0.45f, -0.8f, -0.35f));
+        env.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.48f, 0.50f, 0.56f, 1f));
+        shadowLight = new DirectionalShadowLight(2048, 2048, 50, 50, 15f, 70f);
+        shadowLight.set(1f, 0.97f, 0.90f, lightDir.x, lightDir.y, lightDir.z);
+        env.add(shadowLight);
+        env.shadowMap = shadowLight;
+        env.add(new DirectionalLight().set(0.28f, 0.33f, 0.42f, 0.5f, -0.35f, 0.6f)); // fill lạnh từ phía đối diện
+        shadowBatch = new ModelBatch(new DepthShaderProvider());
 
         buildStreet();
         player = World.createPlayer("Tín Xóm", 0, 6);
@@ -456,6 +466,25 @@ public class GiangHoGame extends ApplicationAdapter {
         cam.up.set(Vector3.Y);
         cam.update();
 
+        // ---- shadow pass: bóng đổ thật, camera bóng bám theo nhân vật ----
+        {
+            Vector3 center = new Vector3(player.x, 0, player.z);
+            com.badlogic.gdx.graphics.OrthographicCamera sc = (com.badlogic.gdx.graphics.OrthographicCamera) shadowLight.getCamera();
+            sc.position.set(center).add(-lightDir.x * 38, -lightDir.y * 38, -lightDir.z * 38);
+            sc.lookAt(center);
+            sc.update();
+            shadowLight.begin();
+            shadowBatch.begin(sc);
+            if (parkMode) shadowBatch.render(parkInst);
+            else for (ModelInstance i : worldInstances) shadowBatch.render(i);
+            if (use3d) shadowBatch.render(boy3d);
+            else if (userPair) {
+                shadowBatch.render(userBoy);
+                shadowBatch.render(userGirl);
+            }
+            shadowBatch.end();
+            shadowLight.end();
+        }
         batch.begin(cam);
         if (parkMode) batch.render(parkInst, env);
         else for (ModelInstance i : worldInstances) batch.render(i, env);
