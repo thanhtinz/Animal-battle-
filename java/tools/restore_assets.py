@@ -19,4 +19,14 @@ for name in sorted(os.listdir(signs)):
 for name in sorted(os.listdir(f'{ROOT}/assets-src')):
     if name.endswith('.png.b64'):
         dec(f'{ROOT}/assets-src/{name}', f'{ROOT}/assets/{name[:-4]}')
+facades = f'{ROOT}/assets-src/facades'
+if os.path.isdir(facades):
+    for name in sorted(os.listdir(facades)):
+        if name.endswith('.png.b64'):
+            dec(os.path.join(facades, name), f'{ROOT}/assets/facades/{name[:-4]}')
+gen = f'{ROOT}/assets-src/gen'
+if os.path.isdir(gen):
+    for name in sorted(os.listdir(gen)):
+        if name.endswith('.png.b64'):
+            dec(os.path.join(gen, name), f'{ROOT}/gen/{name[:-4]}')
 print('done')

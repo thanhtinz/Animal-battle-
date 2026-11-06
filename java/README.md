@@ -15,6 +15,10 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   Có thêm 1 nhân vật phụ đứng mẫu ở vòng chiếm. Texture phụ sinh bằng `tools/make_textures.py`, đóng gói .b64 như biển hiệu.
   Lưu ý: ảnh tour chụp bằng renderer phần mềm trong sandbox (llvmpipe) — biển hiệu ở xa có vệt sọc do lỗi
   lấy mẫu texture của renderer này; chụp cận cảnh biển nét bình thường, GPU thật không bị.
+- **J1.6 xong (AI tạo ảnh mặt tiền)**: Tín chê hình khối xấu, lệnh dùng AI tạo ảnh — đã sinh 4 mẫu mặt tiền
+  phong cách đất nặn chibi đúng ảnh mẫu (lưu ở `gen/`), để bảng hiệu TRỐNG rồi ghép tên quán bằng
+  `tools/make_facades.py` (font Nunito, dấu tiếng Việt chuẩn) thành 10 texture `assets/facades/f0..f9.png`,
+  dán lên mặt trước nhà (tấm lưới 6×4 ô để giảm lỗi nội suy của renderer phần mềm). Nhà thôi dùng biển/hiên/cửa dựng bằng khối.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

@@ -24,6 +24,7 @@ import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.IntAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
+import com.badlogic.gdx.graphics.g3d.utils.MeshPartBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Matrix4;
@@ -67,10 +68,12 @@ public class GiangHoGame extends ApplicationAdapter {
         return new Color(((rgb >> 16) & 0xff) / 255f, ((rgb >> 8) & 0xff) / 255f, (rgb & 0xff) / 255f, 1f);
     }
     private Material matC(int rgb) { return new Material(ColorAttribute.createDiffuse(hex(rgb))); }
-    private Material matTex(String file, boolean transparent) {
-        Texture t = new Texture(Gdx.files.local(file), true);
-        t.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
-        try { t.setAnisotropicFilter(8f); } catch (Exception ignored) {}
+    private Material matTex(String file, boolean transparent) { return matTex(file, transparent, true); }
+    private Material matTex(String file, boolean transparent, boolean mipmaps) {
+        Texture t = new Texture(Gdx.files.local(file), mipmaps);
+        if (mipmaps) t.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
+        else t.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+        try { if (mipmaps) t.setAnisotropicFilter(8f); } catch (Exception ignored) {}
         textures.add(t);
         Material m = new Material(TextureAttribute.createDiffuse(t));
         if (transparent) {
@@ -105,6 +108,24 @@ public class GiangHoGame extends ApplicationAdapter {
     private ModelInstance rect(List<ModelInstance> l, float w, float h, Material mat, float x, float y, float z) {
         Model m = new ModelBuilder().createRect(-w / 2, -h / 2, 0, w / 2, -h / 2, 0, w / 2, h / 2, 0, -w / 2, h / 2, 0,
                 0, 0, 1, mat, Usage.Position | Usage.Normal | Usage.TextureCoordinates);
+        return addTo(l, m, x, y, z);
+    }
+
+    /** Mặt phẳng chia lưới nhiều ô nhỏ: tránh lỗi nội suy texture vệt sọc của renderer phần mềm với tam giác lớn. */
+    private ModelInstance facadePlane(List<ModelInstance> l, float w, float h, Material mat, float x, float y, float z) {
+        int cols = 6, rows = 4;
+        ModelBuilder mb = new ModelBuilder();
+        mb.begin();
+        MeshPartBuilder pb = mb.part("f", GL20.GL_TRIANGLES, Usage.Position | Usage.Normal | Usage.TextureCoordinates, mat);
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                float x0 = -w / 2 + w * c / cols, x1 = -w / 2 + w * (c + 1) / cols;
+                float y0 = -h / 2 + h * r / rows, y1 = -h / 2 + h * (r + 1) / rows;
+                pb.setUVRange(c / (float) cols, 1 - (r + 1) / (float) rows, (c + 1) / (float) cols, 1 - r / (float) rows);
+                pb.rect(x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0, 0, 0, 1);
+            }
+        }
+        Model m = mb.end();
         return addTo(l, m, x, y, z);
     }
 
@@ -172,26 +193,10 @@ public class GiangHoGame extends ApplicationAdapter {
                 box(l, o.hw * 2 + 1, 0.22f, o.hd * 2 + 1, matC(0xc96f4a), o.x, o.h + 0.45f, o.z);
                 continue;
             }
-            // mái ngói 2 dốc
-            float ridge = 1.5f, slopeLen = 5.7f, ang = 15.5f;
-            ModelInstance r1 = box(l, o.hw * 2 + 1.4f, 0.16f, slopeLen, matC(0xbc6242), o.x, o.h + ridge / 2 + 0.1f, o.z + face * 1.35f);
-            r1.transform.rotate(Vector3.X, -face * ang);
-            ModelInstance r2 = box(l, o.hw * 2 + 1.4f, 0.16f, slopeLen, matC(0xa95536), o.x, o.h + ridge / 2 + 0.1f, o.z - face * 1.35f);
-            r2.transform.rotate(Vector3.X, face * ang);
-            box(l, o.hw * 2 + 1.5f, 0.22f, 0.5f, matC(0x8a4430), o.x, o.h + ridge + 0.12f, o.z);
-            // biển hiệu
-            rect(l, 7.5f, 1.9f, matTex("assets/signs/sign" + idx + ".png", false), o.x, o.h - 1.7f, o.z + face * (o.hd + 0.06f))
+            // mặt tiền vẽ AI (J1.6): nguyên tấm texture có sẵn mái ngói/hiên/cửa/bảng hiệu
+            facadePlane(l, o.hw * 2 + 0.4f, o.h, matTex("assets/facades/f" + idx + ".png", false, false), o.x, o.h / 2, o.z + face * (o.hd + 0.07f))
                     .transform.rotate(Vector3.Y, face < 0 ? 180 : 0);
-            // mái hiên sọc nghiêng ra phố
-            Material awn = matTex(idx % 2 == 0 ? "assets/awning_green.png" : "assets/awning_red.png", false);
-            ModelInstance aw = box(l, o.hw * 2 - 1, 0.14f, 2.6f, awn, o.x, o.h - 3.2f, o.z + face * (o.hd + 1.1f));
-            aw.transform.rotate(Vector3.X, face * 14);
-            // dải gạch chân tường + cửa xanh + cửa sổ + chậu cây
-            box(l, o.hw * 2, 1.1f, 0.14f, matTex("assets/brick.png", false), o.x, 0.55f, o.z + face * (o.hd + 0.04f));
-            box(l, 1.7f, 2.7f, 0.14f, matC(0x2e6e5e), o.x - 3.4f, 1.35f, o.z + face * (o.hd + 0.05f));
-            box(l, 1.5f, 1.3f, 0.12f, matC(0xf7ead1), o.x + 3.2f, o.h * 0.48f, o.z + face * (o.hd + 0.05f));
-            cyl(l, 0.34f, 0.52f, matC(0xb56545), o.x - 5.4f, 0.26f, o.z + face * (o.hd + 1.0f));
-            sphere(l, 0.58f, matC(0x4d8f3f), o.x - 5.4f, 0.95f, o.z + face * (o.hd + 1.0f));
+            box(l, o.hw * 2 + 0.7f, 0.4f, o.hd * 2 + 0.7f, matC(0xb85c38), o.x, o.h + 0.16f, o.z); // nắp mái
             idx++;
         }
 
