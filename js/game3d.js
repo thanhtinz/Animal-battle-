@@ -203,7 +203,19 @@
     camera.aspect = w / h; camera.updateProjectionMatrix();
   }
 
-  function start(opts) {
+  // Three.js nạp từ CDN ở index.html; nếu CDN lỗi thì nạp bản đóng gói kèm js/three.min.js
+  function ensureThree(cb) {
+    if (window.THREE) { THREE = window.THREE; cb(); return; }
+    var s = document.createElement('script');
+    s.src = 'js/three.min.js';
+    s.onload = function () { THREE = window.THREE; cb(); };
+    s.onerror = function () { alert('Không tải được thư viện 3D. Kiểm tra mạng rồi thử lại.'); };
+    document.head.appendChild(s);
+  }
+
+  function start(opts) { ensureThree(function () { initGame(opts); }); }
+
+  function initGame(opts) {
     els.wrap = document.getElementById('game-wrap');
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));

@@ -96,10 +96,15 @@ ok('túm và đấm không chạy cùng lúc', () => {
 // --- nối file ---
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-ok('index nạp world + three + game3d trước lobby', () => {
+ok('index nạp world + three (CDN r149) + game3d trước lobby', () => {
   assert.ok(html.indexOf('js/world.js') < html.indexOf('js/game3d.js'));
-  assert.ok(html.indexOf('js/three.min.js') < html.indexOf('js/game3d.js'));
+  assert.ok(html.includes('cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js'));
+  assert.ok(html.indexOf('three.min.js') < html.indexOf('js/game3d.js'));
   assert.ok(html.indexOf('js/game3d.js') < html.indexOf('js/lobby.js'));
+});
+ok('game3d có nạp dự phòng three.min.js đóng gói khi CDN lỗi', () => {
+  const g = fs.readFileSync(path.join(root, 'js/game3d.js'), 'utf8');
+  assert.ok(g.includes('ensureThree') && g.includes("s.src = 'js/three.min.js'"));
 });
 ok('nút bấm luôn hiện có đủ: joystick + ĐẤM + NHẢY + TÚM', () => {
   ['id="joy"', 'id="btn-punch"', 'id="btn-jump"', 'id="btn-grab"'].forEach(s => assert.ok(html.includes(s), s));
