@@ -29,4 +29,14 @@ if os.path.isdir(gen):
     for name in sorted(os.listdir(gen)):
         if name.endswith('.png.b64'):
             dec(os.path.join(gen, name), f'{ROOT}/gen/{name[:-4]}')
+models = f'{ROOT}/assets-src/models'
+if os.path.isdir(models):
+    for name in sorted(os.listdir(models)):
+        if name.endswith('.glb.b64'):
+            dec(os.path.join(models, name), f'{ROOT}/assets/models/{name[:-4]}')
+chars = f'{ROOT}/assets-src/chars'
+if os.path.isdir(chars):
+    for name in sorted(os.listdir(chars)):
+        if name.endswith('.png.b64'):
+            dec(os.path.join(chars, name), f'{ROOT}/assets/chars/{name[:-4]}')
 print('done')

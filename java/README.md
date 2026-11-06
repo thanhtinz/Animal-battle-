@@ -19,6 +19,16 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   phong cách đất nặn chibi đúng ảnh mẫu (lưu ở `gen/`), để bảng hiệu TRỐNG rồi ghép tên quán bằng
   `tools/make_facades.py` (font Nunito, dấu tiếng Việt chuẩn) thành 10 texture `assets/facades/f0..f9.png`,
   dán lên mặt trước nhà (tấm lưới 6×4 ô để giảm lỗi nội suy của renderer phần mềm). Nhà thôi dùng biển/hiên/cửa dựng bằng khối.
+- **J1.7 xong (nhân vật sprite AI 2.5D)**: Tín chọn vẽ lại nhân vật bằng ảnh AI trước — AI sinh bảng 9 tư thế
+  (trước/sau × đứng/đi/đấm + nhảy + ngã choáng) cho bé trai áo cam và bé gái áo teal trên nền magenta,
+  `tools/make_chars.py` tách nền bằng connected components + chuẩn hoá chiều cao/đường chân thành 22 sprite.
+  Trong game nhân vật là tấm billboard luôn quay về camera, tự chọn mặt trước/sau theo hướng so với camera,
+  đổi tư thế theo trạng thái (đi luân phiên 2 khung, đấm, nhảy) + bóng ellipse dưới chân; đã gỡ nhân vật khối 3D.
+- **J1.8 mẫu so sánh (Blender 3D)**: Tín lệnh thử Blender — đã cài Blender 4.2.3 vào `~/workspace/tools/blender`,
+  script `tools/blender/make_chibi_boy.py` dựng bé trai chibi (mỗi bộ phận 1 object, origin tại khớp vai/hông/cổ),
+  xuất `assets/models/boy3d.glb`; game có `MiniGlb.java` (nạp GLB tối giản tự viết vì không tải được thư viện ngoài)
+  và cờ môi trường `BOY3D=1` để thay nhân vật chính bằng model 3D (vung tay/chân theo nhịp đi, đấm, nhảy giơ tay).
+  Mặc định vẫn dùng sprite AI; chờ Tín chốt hướng.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

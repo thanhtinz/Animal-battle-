@@ -32,6 +32,8 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.ScreenUtils;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 
 /** Giang Hồ Xóm bản Java + LibGDX.
@@ -44,12 +46,16 @@ public class GiangHoGame extends ApplicationAdapter {
     private ModelBatch batch;
     private Environment env;
     private final List<ModelInstance> worldInstances = new ArrayList<>();
-    private final List<ModelInstance> charInstances = new ArrayList<>();
     private final List<Model> models = new ArrayList<>();
     private final List<Texture> textures = new ArrayList<>();
 
     private World.Player player;
-    private Parts me, dummy;
+    private CharSprite meSpr, dummySpr;
+    private boolean use3d;
+    private ModelInstance boy3d;
+    private com.badlogic.gdx.graphics.g3d.model.Node nArmL, nArmR, nLegL, nLegR, nHead;
+    private float headBaseY;
+    private final float dummyX = -1.6f, dummyZ = -0.8f, dummyHeading = 0.15f;
     private final Vector3 camPos = new Vector3(0, 5.2f, 15.5f);
 
     private SpriteBatch hud;
@@ -98,13 +104,6 @@ public class GiangHoGame extends ApplicationAdapter {
     private ModelInstance sphere(List<ModelInstance> l, float r, Material mat, float x, float y, float z) {
         return addTo(l, new ModelBuilder().createSphere(r * 2, r * 2, r * 2, 20, 14, mat, Usage.Position | Usage.Normal), x, y, z);
     }
-    private ModelInstance capsule(List<ModelInstance> l, float r, float h, Material mat) {
-        Model m = new ModelBuilder().createCapsule(r, h, 12, mat, Usage.Position | Usage.Normal);
-        models.add(m);
-        ModelInstance i = new ModelInstance(m);
-        l.add(i);
-        return i;
-    }
     private ModelInstance rect(List<ModelInstance> l, float w, float h, Material mat, float x, float y, float z) {
         Model m = new ModelBuilder().createRect(-w / 2, -h / 2, 0, w / 2, -h / 2, 0, w / 2, h / 2, 0, -w / 2, h / 2, 0,
                 0, 0, 1, mat, Usage.Position | Usage.Normal | Usage.TextureCoordinates);
@@ -140,9 +139,20 @@ public class GiangHoGame extends ApplicationAdapter {
 
         buildStreet();
         player = World.createPlayer("Tín Xóm", 0, 6);
-        me = buildCharacter(0xf0681a, "assets/face.png", false);
-        dummy = buildCharacter(0x1f8a70, "assets/face2.png", true);
-        pose(dummy, -1.6f, 0, -0.8f, 2.7f, 0, false, true, 0, 0);
+        meSpr = buildSprite("boy");
+        dummySpr = buildSprite("girl");
+        use3d = System.getenv("BOY3D") != null;
+        if (use3d) {
+            Model m3 = MiniGlb.load("assets/models/boy3d.glb");
+            models.add(m3);
+            boy3d = new ModelInstance(m3);
+            nArmL = boy3d.getNode("ArmL", true);
+            nArmR = boy3d.getNode("ArmR", true);
+            nLegL = boy3d.getNode("LegL", true);
+            nLegR = boy3d.getNode("LegR", true);
+            nHead = boy3d.getNode("Head", true);
+            headBaseY = nHead.translation.y;
+        }
 
         hud = new SpriteBatch();
         shapes = new ShapeRenderer();
@@ -258,60 +268,77 @@ public class GiangHoGame extends ApplicationAdapter {
         }
     }
 
-    // ---------- Nhân vật chibi ----------
-    private static class Parts {
-        ModelInstance legL, legR, shoeL, shoeR, body, armL, armR, head, hair, hairBack, face;
-        List<ModelInstance> all = new ArrayList<>();
+    // ---------- Nhân vật sprite AI (J1.7) ----------
+    private static class CharSprite {
+        Map<String, ModelInstance> poses = new HashMap<>();
+        ModelInstance shadow, active;
     }
 
-    private Parts buildCharacter(int shirtColor, String faceFile, boolean longHair) {
-        Parts p = new Parts();
-        List<ModelInstance> l = p.all;
-        Material skin = matC(0xf2c094), shirt = matC(shirtColor), pants = matC(0x33393f), hairM = matC(0x2a2320);
-        p.legL = capsule(l, 0.14f, 0.30f, pants);
-        p.legR = capsule(l, 0.14f, 0.30f, pants);
-        p.shoeL = box(l, 0.3f, 0.15f, 0.48f, matC(0xf5f2ea), 0, 0, 0);
-        p.shoeR = box(l, 0.3f, 0.15f, 0.48f, matC(0xf5f2ea), 0, 0, 0);
-        p.body = capsule(l, 0.37f, 0.78f, shirt);
-        p.armL = capsule(l, 0.13f, 0.40f, skin);
-        p.armR = capsule(l, 0.13f, 0.40f, skin);
-        p.head = sphere(l, 0.44f, skin, 0, 0, 0);
-        p.hair = sphere(l, 0.465f, hairM, 0, 0, 0);
-        if (longHair) p.hairBack = box(l, 0.78f, 0.85f, 0.3f, hairM, 0, 0, 0);
-        p.face = rect(l, 0.64f, 0.54f, matTex(faceFile, true), 0, 0, 0);
-        charInstances.addAll(l);
-        return p;
+    private CharSprite buildSprite(String who) {
+        CharSprite spr = new CharSprite();
+        String[] poseNames = {"f_idle", "f_walk", "f_walk2", "f_punch", "b_idle", "b_walk", "b_walk2",
+                "b_punch", "f_jump", "b_jump", "down"};
+        for (String pn : poseNames) {
+            Material m = matTex("assets/chars/" + who + "_" + pn + ".png", true);
+            Model model = new ModelBuilder().createRect(-1.03f, 0, 0, 1.03f, 0, 0, 1.03f, 2.3f, 0, -1.03f, 2.3f, 0,
+                    0, 0, 1, m, Usage.Position | Usage.Normal | Usage.TextureCoordinates);
+            models.add(model);
+            spr.poses.put(pn, new ModelInstance(model));
+        }
+        Material shMat = new Material(ColorAttribute.createDiffuse(new Color(0, 0, 0, 0.28f)));
+        shMat.set(new BlendingAttribute(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA));
+        Model sh = new ModelBuilder().createCylinder(1.15f, 0.02f, 1.15f, 18, shMat, Usage.Position | Usage.Normal);
+        models.add(sh);
+        spr.shadow = new ModelInstance(sh);
+        spr.active = spr.poses.get("f_idle");
+        return spr;
     }
 
-    private final Matrix4 tmpL = new Matrix4();
-    private void setPart(ModelInstance inst, Matrix4 group, float lx, float ly, float lz, float rotXDeg, float drop) {
-        tmpL.setToTranslation(lx, ly, lz);
-        if (rotXDeg != 0) tmpL.rotate(Vector3.X, rotXDeg);
-        tmpL.translate(0, -drop, 0);
-        inst.transform.set(group).mul(tmpL);
+    private void updateSprite(CharSprite spr, float x, float y, float z, float heading, float animT,
+                              boolean moving, boolean grounded, float punchT, float grabT) {
+        float tcx = cam.position.x - x, tcz = cam.position.z - z;
+        float yaw = (float) Math.toDegrees(Math.atan2(tcx, tcz));
+        double len = Math.max(0.001, Math.hypot(tcx, tcz));
+        boolean front = (Math.sin(heading) * tcx + Math.cos(heading) * tcz) / len > 0;
+        String pre = front ? "f_" : "b_";
+        String name;
+        if (!grounded) name = pre + "jump";
+        else if (punchT > 0 || grabT > 0) name = pre + "punch";
+        else if (moving) name = pre + (((int) (animT * 2.2)) % 2 == 0 ? "walk" : "walk2");
+        else name = pre + "idle";
+        spr.active = spr.poses.get(name);
+        spr.active.transform.setToTranslation(x, y, z);
+        spr.active.transform.rotate(Vector3.Y, yaw);
+        spr.shadow.transform.setToTranslation(x, 0.17f, z);
     }
 
-    private void pose(Parts p, float x, float y, float z, float heading, float animT,
-                      boolean moving, boolean grounded, float punchT, float grabT) {
-        Matrix4 group = new Matrix4().setToTranslation(x, y, z).rotate(Vector3.Y, heading * 57.2958f);
-        float swing = (moving && grounded) ? (float) Math.sin(animT) * 40f : 0;
-        float legL = swing, legR = -swing;
-        if (!grounded) { legL = 22; legR = -16; }
-        setPart(p.legL, group, -0.17f, 0.55f, 0, legL, 0.22f);
-        setPart(p.legR, group, 0.17f, 0.55f, 0, legR, 0.22f);
-        setPart(p.shoeL, group, -0.17f, 0.55f, 0.05f, legL, 0.47f);
-        setPart(p.shoeR, group, 0.17f, 0.55f, 0.05f, legR, 0.47f);
-        setPart(p.body, group, 0, 0.98f, 0, 0, 0);
-        float armLS = -swing, armRS = swing;
-        if (punchT > 0) { float t = 1 - punchT / World.PUNCH_TIME; armRS = (float) -Math.sin(t * Math.PI) * 100f; }
-        if (grabT > 0) { float t = 1 - grabT / World.GRAB_TIME; armLS = armRS = (float) -Math.sin(t * Math.PI) * 80f; }
-        setPart(p.armL, group, -0.47f, 1.34f, 0, armLS, 0.24f);
-        setPart(p.armR, group, 0.47f, 1.34f, 0, armRS, 0.24f);
-        setPart(p.head, group, 0, 1.8f, 0, 0, 0);
-        tmpL.setToTranslation(0, 1.94f, -0.06f).scale(1f, 0.72f, 1f);
-        p.hair.transform.set(group).mul(tmpL);
-        if (p.hairBack != null) setPart(p.hairBack, group, 0, 1.55f, -0.36f, 0, 0);
-        setPart(p.face, group, 0, 1.76f, 0.425f, 0, 0);
+    private void updateBoy3d(float dt) {
+        float swing = player.moving ? (float) Math.sin(player.animT * 3.0) * 0.55f : 0f;
+        float bob = player.moving ? Math.abs((float) Math.sin(player.animT * 3.0)) * 0.05f : 0f;
+        setNodeRot(nArmL, swing, 0.12f);
+        setNodeRot(nArmR, -swing, -0.12f);
+        setNodeRot(nLegL, -swing, 0f);
+        setNodeRot(nLegR, swing, 0f);
+        if (player.punchT > 0 || player.grabT > 0) setNodeRot(nArmR, -1.85f, -0.12f);
+        if (!player.grounded) {
+            setNodeRot(nArmL, -2.5f, 0.5f);
+            setNodeRot(nArmR, -2.5f, -0.5f);
+            setNodeRot(nLegL, 0.45f, 0f);
+            setNodeRot(nLegR, 0.45f, 0f);
+        }
+        boy3d.transform.setToTranslation(player.x, player.y + bob, player.z);
+        boy3d.transform.rotate(Vector3.Y, (float) Math.toDegrees(player.heading));
+        boy3d.calculateTransforms();
+    }
+
+    private void setNodeRot(com.badlogic.gdx.graphics.g3d.model.Node n, float pitchX, float rollZ) {
+        if (n == null) return;
+        n.rotation.setFromAxisRad(1, 0, 0, pitchX);
+        if (rollZ != 0f) {
+            com.badlogic.gdx.math.Quaternion q = new com.badlogic.gdx.math.Quaternion();
+            q.setFromAxisRad(0, 0, 1, rollZ);
+            n.rotation.mul(q);
+        }
     }
 
     // ---------- Đầu vào ----------
@@ -367,8 +394,10 @@ public class GiangHoGame extends ApplicationAdapter {
         elapsed += dt;
         float[] in = readInput();
         World.stepPlayer(player, in[0], in[1], in[2] > 0, dt);
-        pose(me, player.x, player.y, player.z, player.heading, player.animT,
+        updateSprite(meSpr, player.x, player.y, player.z, player.heading, player.animT,
                 player.moving, player.grounded, player.punchT, player.grabT);
+        if (use3d) updateBoy3d(dt);
+        updateSprite(dummySpr, dummyX, 0, dummyZ, dummyHeading, 0, false, true, 0, 0);
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         Gdx.gl.glClearColor(0.55f, 0.74f, 0.88f, 1);
@@ -383,7 +412,11 @@ public class GiangHoGame extends ApplicationAdapter {
 
         batch.begin(cam);
         for (ModelInstance i : worldInstances) batch.render(i, env);
-        for (ModelInstance i : charInstances) batch.render(i, env);
+        batch.render(meSpr.shadow, env);
+        batch.render(dummySpr.shadow, env);
+        batch.render(dummySpr.active, env);
+        if (use3d) batch.render(boy3d, env);
+        else batch.render(meSpr.active, env);
         batch.end();
 
         drawHud();
