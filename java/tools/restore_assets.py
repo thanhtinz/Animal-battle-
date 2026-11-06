@@ -16,4 +16,7 @@ signs = f'{ROOT}/assets-src/signs'
 for name in sorted(os.listdir(signs)):
     if name.endswith('.png.b64'):
         dec(os.path.join(signs, name), f'{ROOT}/assets/signs/{name[:-4]}')
+for name in sorted(os.listdir(f'{ROOT}/assets-src')):
+    if name.endswith('.png.b64'):
+        dec(f'{ROOT}/assets-src/{name}', f'{ROOT}/assets/{name[:-4]}')
 print('done')

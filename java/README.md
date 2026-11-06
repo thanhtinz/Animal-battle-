@@ -9,6 +9,12 @@ Cùng lộ trình từng bước như bản web; logic thế giới port trung t
   nhân vật 3D đi/chạy theo joystick, va chạm nhà, nhảy, **nút bấm luôn hiện** (joystick + ĐẤM / NHẢY / TÚM;
   Đấm/Túm mới có hoạt hình tay — hiệu quả trúng đòn ở bước Đấm/Túm/Ném riêng).
   Test logic `WorldTest` 20/20 PASS; tour tự động chụp 4 ảnh kiểm chứng (local `shots/`).
+- **J1.5 xong (chỉnh hình chibi theo ảnh mẫu của bản gốc)**: nhân vật chibi đầu to (đầu cầu + tóc, thân capsule,
+  mặt vẽ texture có mắt/miệng/má hồng, giày trắng), nhà mái ngói 2 dốc + mái hiên sọc xanh/đỏ + cửa xanh +
+  dải gạch chân tường + chậu cây, xe máy + thùng gỗ góc phố, **vòng chiếm đóng** giữa phố có vương miện + cờ.
+  Có thêm 1 nhân vật phụ đứng mẫu ở vòng chiếm. Texture phụ sinh bằng `tools/make_textures.py`, đóng gói .b64 như biển hiệu.
+  Lưu ý: ảnh tour chụp bằng renderer phần mềm trong sandbox (llvmpipe) — biển hiệu ở xa có vệt sọc do lỗi
+  lấy mẫu texture của renderer này; chụp cận cảnh biển nét bình thường, GPU thật không bị.
 - Tiếp theo: J2 sảnh Java (nhập tên/chọn phòng) → camera xoay/zoom → đấm/túm hiệu quả → online → chế độ chơi → chat sẵn → bản web TeaVM cho iPhone.
 
 ## Chạy

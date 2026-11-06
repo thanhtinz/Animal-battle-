@@ -17,16 +17,16 @@ public class World {
     }
 
     public static final Obstacle[] OBSTACLES = {
-        new Obstacle(-30, -21, 7, 4.5f, 9,  "TẠP HÓA",   0xc9552e),
-        new Obstacle(-15, -21, 7, 4.5f, 11, "CHỢ MỚI",   0x1f7a6d),
-        new Obstacle(  0, -21, 7, 4.5f, 8,  "TRÀ ĐÁ",    0x8a5fb0),
-        new Obstacle( 15, -21, 7, 4.5f, 10, "TIỆM CƠM",  0xb03a2e),
-        new Obstacle( 30, -21, 7, 4.5f, 9,  "CÀ PHÊ",    0x546e7a),
-        new Obstacle(-30,  21, 7, 4.5f, 10, "HỦ TIẾU",   0xa0522d),
-        new Obstacle(-15,  21, 7, 4.5f, 8,  "SỬA XE",    0x37474f),
-        new Obstacle(  0,  21, 7, 4.5f, 11, "TẠP HÓA 2", 0x2e7d32),
-        new Obstacle( 15,  21, 7, 4.5f, 9,  "BÁNH MÌ",   0xd35400),
-        new Obstacle( 30,  21, 7, 4.5f, 8,  "NET XÓM",   0x283593),
+        new Obstacle(-30, -21, 7, 4.5f, 9,  "TẠP HÓA",   0xe9c46a),
+        new Obstacle(-15, -21, 7, 4.5f, 11, "CHỢ MỚI",   0x7fc8a9),
+        new Obstacle(  0, -21, 7, 4.5f, 8,  "TRÀ ĐÁ",    0xf2e6c9),
+        new Obstacle( 15, -21, 7, 4.5f, 10, "TIỆM CƠM",  0xefa8a0),
+        new Obstacle( 30, -21, 7, 4.5f, 9,  "CÀ PHÊ",    0x8ecae6),
+        new Obstacle(-30,  21, 7, 4.5f, 10, "HỦ TIẾU",   0xf1d87a),
+        new Obstacle(-15,  21, 7, 4.5f, 8,  "SỬA XE",    0x94a89a),
+        new Obstacle(  0,  21, 7, 4.5f, 11, "TẠP HÓA 2", 0xb5c99a),
+        new Obstacle( 15,  21, 7, 4.5f, 9,  "BÁNH MÌ",   0xe9b949),
+        new Obstacle( 30,  21, 7, 4.5f, 8,  "NET XÓM",   0xc3aed6),
         new Obstacle( -9,   6, 2.2f, 1.6f, 2.4f, "SẠP",  0x795548),
         new Obstacle( 11,  -6, 2.2f, 1.6f, 2.4f, "SẠP",  0x6d4c41),
     };
