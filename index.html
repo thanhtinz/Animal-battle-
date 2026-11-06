@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#14202e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Giang Hồ Xóm — Hẹn nhau ở đầu hẻm</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============ MÀN 1: SẢNH ============ -->
+<main id="screen-lobby" class="screen">
+  <div class="sky"></div>
+  <div class="street" aria-hidden="true">
+    <div class="shop shop-a"><span class="awning"></span><span class="sign">TẠP HÓA</span></div>
+    <div class="shop shop-b"><span class="awning alt"></span><span class="sign">CHỢ MỚI</span></div>
+    <div class="shop shop-c"><span class="awning"></span><span class="sign">TRÀ ĐÁ</span></div>
+  </div>
+
+  <section class="panel">
+    <p class="badge">16+</p>
+    <h1>GIANG HỒ XÓM</h1>
+    <p class="tagline">Rủ anh em lập nhóm, giữ từng góc phố.</p>
+
+    <label class="field-label" for="input-name">Tên của bạn</label>
+    <input id="input-name" class="field" type="text" autocomplete="off" autocapitalize="off"
+           placeholder="Ví dụ: Tín Xóm" maxlength="20">
+    <p id="name-error" class="error" role="alert" hidden></p>
+
+    <div class="rooms-head">
+      <h2>Chọn phòng</h2>
+      <span id="rooms-count" class="rooms-count"></span>
+    </div>
+    <div id="room-list" class="room-list" role="listbox" aria-label="Danh sách phòng"></div>
+
+    <p id="join-error" class="error" role="alert" hidden></p>
+    <button id="btn-join" class="btn-primary" type="button" disabled>Vào phòng</button>
+    <p class="hint">Không cần tài khoản. Nhập tên, chọn phòng là vào chơi ngay. Trên điện thoại nhớ xoay ngang khi vào trận.</p>
+  </section>
+</main>
+
+<!-- ============ MÀN 2: ĐÃ VÀO PHÒNG (khung chờ cho Bước 2) ============ -->
+<main id="screen-room" class="screen" hidden>
+  <section class="panel panel-room">
+    <p class="badge badge-ok">ĐÃ VÀO PHÒNG</p>
+    <h1 id="room-title">Phòng</h1>
+    <p id="room-welcome" class="tagline"></p>
+    <p id="room-mode" class="room-mode"></p>
+    <p class="hint">Khung phòng đã nối xong ở Bước 1. Map khu phố 3D và nhân vật sẽ vào ở Bước 2.</p>
+    <button id="btn-leave" class="btn-cancel" type="button">Rời phòng</button>
+  </section>
+</main>
+
+<script src="js/config.js"></script>
+<script src="js/lobby.js"></script>
+</body>
+</html>
