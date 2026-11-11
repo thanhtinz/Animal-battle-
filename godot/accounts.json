@@ -1,0 +1,343 @@
+{
+ "accounts": {
+  "NormA": {
+   "user": "NormA",
+   "id": 1,
+   "salt": "e851ec89153b3a93d439901b18116cdc",
+   "hash": "ee83a7fa6368dbf08c950fb00b651b49214b1ce11108ba2855c0164b0935d7d3",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794428801,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào NormA! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794428801,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "NormB": {
+   "user": "NormB",
+   "id": 2,
+   "salt": "4e1ebae06ca7483e41e77d539f2aa981",
+   "hash": "baf39bbcc7d7da475fd68ce95269fe9fc2f28af4a0a42859f17856b3d7179b23",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794428817,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào NormB! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794428817,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankA": {
+   "user": "RankA",
+   "id": 3,
+   "salt": "7dd9c8066087cf0b2a4b724f633b5789",
+   "hash": "4df40fe45c03609c3bc691753bdbc3ef95a3a11741ee7bc635e3c9137007ee66",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434160,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankA! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434160,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankB": {
+   "user": "RankB",
+   "id": 4,
+   "salt": "c6ee7902ec6cae59f186fe35ea1cc3f6",
+   "hash": "1b15354931a167b683a7a139ace33b3624e8011c9a1e2465478ef406a3e0cda7",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434168,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankB! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434168,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankC": {
+   "user": "RankC",
+   "id": 5,
+   "salt": "2ae58d33b897379093939255de6a0bb2",
+   "hash": "b8f49b7b04a127e844702a7dd5a6ee29076695e4ee1546717fb2178c2c9cff68",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434182,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankC! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434182,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankD": {
+   "user": "RankD",
+   "id": 6,
+   "salt": "20c2ef9037e1597cf0f4188fce9f4cae",
+   "hash": "0fbfd8c8b9174894583be6ed479cb684f9fa434215a5acd9ea3f747b2b48eb45",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434205,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankD! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434205,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankE": {
+   "user": "RankE",
+   "id": 7,
+   "salt": "1299b5f773c0363a1b5e8de3aeb6997f",
+   "hash": "6670af615596a8c84fb5e91883b2b265e1175b7264540b47a2f101737216a1ce",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434242,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankE! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434242,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankF": {
+   "user": "RankF",
+   "id": 8,
+   "salt": "05223e898f14015d2a2a4fba91f0d41d",
+   "hash": "f4b873673b5e2108d6c7c2c7a5cdf245e2717d1f7b085bd4de9b62c90229d6f1",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434282,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankF! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434282,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  },
+  "RankG": {
+   "user": "RankG",
+   "id": 9,
+   "salt": "02237b560a4621f2b4d3c81c236d8320",
+   "hash": "4ca6f845bdb15c19b04e6f82869718a56399cd8b87f73b82f9eefcac8f0f39a1",
+   "wins": 0,
+   "losses": 0,
+   "matches": 0,
+   "credit": 100,
+   "credit_set": true,
+   "mmr": 0,
+   "last_played": 0,
+   "created": 1794434331,
+   "rank": {
+    "tier": 0,
+    "division": 0,
+    "stars": 0,
+    "streak": 0,
+    "season": 1,
+    "peak_tier": 0,
+    "peak_division": 0
+   },
+   "letters": [
+    {
+     "id": 1,
+     "title": "Chào mừng đến với Empire Age",
+     "body": "Chào RankG! Tài khoản của bạn đã sẵn sàng.\n\nVào Đấu Thường để chơi nhanh hoặc lập phòng cùng bạn bè. Khi muốn leo hạng, hãy vào Đấu Hạng: thắng trận để gom sao, thăng qua các bậc Tân Binh, Chiến Binh, Kỵ Sĩ… cho tới Hoàng Đế.\n\nChúc bạn xây dựng một đế chế hùng mạnh!",
+     "at": 1794434331,
+     "read": false
+    }
+   ],
+   "letter_seq": 1
+  }
+ },
+ "tokens": {
+  "02f53546cad23087dd4cbb969590c70ac3b692d297edd4bbc081752815ed2ca7": {
+   "user": "RankE",
+   "expires": 1797026242
+  },
+  "194de0915ff4d6d080b60006d6435c97413b240f7ac7fe9b110eb723f77a06df": {
+   "user": "RankC",
+   "expires": 1797026182
+  },
+  "2c6d78d6ba61378a1d13fa1b94fd822a3750658a6b921aa86ebd7b23d704d32d": {
+   "user": "RankA",
+   "expires": 1797026160
+  },
+  "3a312efde36c4e418134b1d328348014c602dc32ee20508fae0264ceb1ef2bf5": {
+   "user": "NormB",
+   "expires": 1797020817
+  },
+  "4048a78a2e6ccbfd14fdb38a4e3415dc918308b081c6c34283cd76fb3c3c65bc": {
+   "user": "RankB",
+   "expires": 1797026168
+  },
+  "676b1f1905ad20db3832b78d6ac1d1edb53c0c46bf19a05052aa6f15daf8e3ed": {
+   "user": "RankF",
+   "expires": 1797026282
+  },
+  "6ab2eab12128ae7f81ca2db08427487240b98eed382c31f68d9844fd549e3055": {
+   "user": "NormA",
+   "expires": 1797020802
+  },
+  "de608ebfb44d08eafc68a4d00a91e35f91c7cc45705427dfb0c686f58c1bb147": {
+   "user": "RankD",
+   "expires": 1797026206
+  },
+  "ff6f70aac1808782b9158764942be33e32a5a3215e9afae0f2fc7a5dd871ce7f": {
+   "user": "RankG",
+   "expires": 1797026332
+  }
+ },
+ "meta": {
+  "account_id_seq": "10",
+  "season_epoch": "1794428802"
+ }
+}

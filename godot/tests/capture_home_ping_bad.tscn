@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_home_ping_bad"]
+
+[ext_resource type="Script" path="res://tests/capture_home_ping_bad.gd" id="1"]
+
+[node name="CaptureHomePingBad" type="Node"]
+script = ExtResource("1")

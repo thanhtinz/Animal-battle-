@@ -1,0 +1,15 @@
+{
+ "cell_w": 285,
+ "cell_h": 182,
+ "baseline": 176,
+ "walk": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "idle": 2,
+ "attack": 4,
+ "die": 5,
+ "scale": 0.2635
+}

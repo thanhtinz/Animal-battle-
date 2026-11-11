@@ -1,0 +1,4 @@
+[gd_scene load_steps=2 format=3 uid="uid://capture_biomes_scene"]
+[ext_resource type="Script" path="res://tests/capture_biomes.gd" id="1"]
+[node name="CaptureBiomes" type="Node"]
+script = ExtResource("1")

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_fanfix_match_v3"]
+
+[ext_resource type="Script" path="res://tests/capture_fanfix_match_v3.gd" id="1"]
+
+[node name="CaptureFanfixMatch" type="Node"]
+script = ExtResource("1")

@@ -1,0 +1,4 @@
+[gd_scene load_steps=2 format=3 uid="uid://capture_anim_audit_scene"]
+[ext_resource type="Script" path="res://tests/capture_anim_audit.gd" id="1"]
+[node name="CaptureAnimAudit" type="Node"]
+script = ExtResource("1")

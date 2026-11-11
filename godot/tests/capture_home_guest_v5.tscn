@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_home_guest_v5"]
+
+[ext_resource type="Script" path="res://tests/capture_home_guest_v5.gd" id="1"]
+
+[node name="CaptureHomeGuestV5" type="Node"]
+script = ExtResource("1")

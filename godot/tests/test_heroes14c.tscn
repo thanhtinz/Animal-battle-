@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_test_heroes14c"]
+
+[ext_resource type="Script" path="res://tests/test_heroes14c.gd" id="1"]
+
+[node name="TestHeroes14c" type="Node"]
+script = ExtResource("1")

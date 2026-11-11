@@ -1,0 +1,1150 @@
+{
+ "cliff_dirt_0": {
+  "col": 3,
+  "row": 5,
+  "size": [
+   86,
+   112
+  ],
+  "src_box": [
+   341,
+   683,
+   433,
+   803
+  ]
+ },
+ "cliff_dirt_1": {
+  "col": 4,
+  "row": 5,
+  "size": [
+   85,
+   82
+  ],
+  "src_box": [
+   446,
+   683,
+   537,
+   771
+  ]
+ },
+ "cliff_dirt_2": {
+  "col": 5,
+  "row": 5,
+  "size": [
+   88,
+   112
+  ],
+  "src_box": [
+   550,
+   683,
+   644,
+   803
+  ]
+ },
+ "cliff_grass_0": {
+  "col": 0,
+  "row": 5,
+  "size": [
+   86,
+   111
+  ],
+  "src_box": [
+   18,
+   683,
+   110,
+   802
+  ]
+ },
+ "cliff_grass_1": {
+  "col": 1,
+  "row": 5,
+  "size": [
+   85,
+   80
+  ],
+  "src_box": [
+   123,
+   684,
+   214,
+   770
+  ]
+ },
+ "cliff_grass_2": {
+  "col": 2,
+  "row": 5,
+  "size": [
+   85,
+   112
+  ],
+  "src_box": [
+   227,
+   683,
+   318,
+   803
+  ]
+ },
+ "cliff_sand_0": {
+  "col": 6,
+  "row": 5,
+  "size": [
+   84,
+   111
+  ],
+  "src_box": [
+   668,
+   683,
+   758,
+   802
+  ]
+ },
+ "cliff_sand_1": {
+  "col": 7,
+  "row": 5,
+  "size": [
+   84,
+   80
+  ],
+  "src_box": [
+   769,
+   684,
+   859,
+   770
+  ]
+ },
+ "cliff_sand_2": {
+  "col": 8,
+  "row": 5,
+  "size": [
+   82,
+   111
+  ],
+  "src_box": [
+   870,
+   684,
+   958,
+   803
+  ]
+ },
+ "cliff_stone_0": {
+  "col": 9,
+  "row": 5,
+  "size": [
+   83,
+   110
+  ],
+  "src_box": [
+   984,
+   684,
+   1073,
+   802
+  ]
+ },
+ "cliff_stone_1": {
+  "col": 10,
+  "row": 5,
+  "size": [
+   82,
+   80
+  ],
+  "src_box": [
+   1086,
+   684,
+   1174,
+   770
+  ]
+ },
+ "cliff_stone_2": {
+  "col": 11,
+  "row": 5,
+  "size": [
+   83,
+   111
+  ],
+  "src_box": [
+   1185,
+   684,
+   1274,
+   803
+  ]
+ },
+ "dirt": {
+  "col": 3,
+  "row": 0,
+  "size": [
+   112,
+   120
+  ],
+  "src_box": [
+   402,
+   22,
+   522,
+   152
+  ]
+ },
+ "dirt_brown": {
+  "col": 7,
+  "row": 1,
+  "size": [
+   112,
+   123
+  ],
+  "src_box": [
+   901,
+   162,
+   1021,
+   295
+  ]
+ },
+ "edge_dirt_0": {
+  "col": 3,
+  "row": 2,
+  "size": [
+   82,
+   85
+  ],
+  "src_box": [
+   342,
+   321,
+   430,
+   412
+  ]
+ },
+ "edge_dirt_1": {
+  "col": 4,
+  "row": 2,
+  "size": [
+   88,
+   70
+  ],
+  "src_box": [
+   443,
+   321,
+   537,
+   397
+  ]
+ },
+ "edge_dirt_2": {
+  "col": 5,
+  "row": 2,
+  "size": [
+   85,
+   85
+  ],
+  "src_box": [
+   550,
+   321,
+   641,
+   412
+  ]
+ },
+ "edge_dirt_3": {
+  "col": 3,
+  "row": 3,
+  "size": [
+   84,
+   90
+  ],
+  "src_box": [
+   342,
+   424,
+   432,
+   520
+  ]
+ },
+ "edge_dirt_4": {
+  "col": 4,
+  "row": 3,
+  "size": [
+   86,
+   83
+  ],
+  "src_box": [
+   445,
+   429,
+   537,
+   518
+  ]
+ },
+ "edge_dirt_5": {
+  "col": 5,
+  "row": 3,
+  "size": [
+   84,
+   89
+  ],
+  "src_box": [
+   551,
+   424,
+   641,
+   519
+  ]
+ },
+ "edge_grass_0": {
+  "col": 0,
+  "row": 2,
+  "size": [
+   81,
+   84
+  ],
+  "src_box": [
+   18,
+   322,
+   105,
+   412
+  ]
+ },
+ "edge_grass_1": {
+  "col": 1,
+  "row": 2,
+  "size": [
+   88,
+   69
+  ],
+  "src_box": [
+   118,
+   322,
+   212,
+   397
+  ]
+ },
+ "edge_grass_2": {
+  "col": 2,
+  "row": 2,
+  "size": [
+   84,
+   85
+  ],
+  "src_box": [
+   225,
+   321,
+   315,
+   412
+  ]
+ },
+ "edge_grass_3": {
+  "col": 0,
+  "row": 3,
+  "size": [
+   83,
+   90
+  ],
+  "src_box": [
+   18,
+   424,
+   107,
+   520
+  ]
+ },
+ "edge_grass_4": {
+  "col": 1,
+  "row": 3,
+  "size": [
+   86,
+   83
+  ],
+  "src_box": [
+   120,
+   429,
+   212,
+   518
+  ]
+ },
+ "edge_grass_5": {
+  "col": 2,
+  "row": 3,
+  "size": [
+   83,
+   89
+  ],
+  "src_box": [
+   226,
+   424,
+   315,
+   519
+  ]
+ },
+ "edge_sand_0": {
+  "col": 6,
+  "row": 2,
+  "size": [
+   81,
+   85
+  ],
+  "src_box": [
+   667,
+   321,
+   754,
+   412
+  ]
+ },
+ "edge_sand_1": {
+  "col": 7,
+  "row": 2,
+  "size": [
+   86,
+   70
+  ],
+  "src_box": [
+   767,
+   321,
+   859,
+   397
+  ]
+ },
+ "edge_sand_2": {
+  "col": 8,
+  "row": 2,
+  "size": [
+   80,
+   85
+  ],
+  "src_box": [
+   871,
+   321,
+   957,
+   412
+  ]
+ },
+ "edge_sand_3": {
+  "col": 6,
+  "row": 3,
+  "size": [
+   83,
+   90
+  ],
+  "src_box": [
+   667,
+   424,
+   756,
+   520
+  ]
+ },
+ "edge_sand_4": {
+  "col": 7,
+  "row": 3,
+  "size": [
+   84,
+   83
+  ],
+  "src_box": [
+   769,
+   429,
+   859,
+   518
+  ]
+ },
+ "edge_sand_5": {
+  "col": 8,
+  "row": 3,
+  "size": [
+   80,
+   88
+  ],
+  "src_box": [
+   872,
+   424,
+   958,
+   518
+  ]
+ },
+ "edge_stone_0": {
+  "col": 9,
+  "row": 2,
+  "size": [
+   81,
+   83
+  ],
+  "src_box": [
+   983,
+   322,
+   1070,
+   411
+  ]
+ },
+ "edge_stone_1": {
+  "col": 10,
+  "row": 2,
+  "size": [
+   84,
+   69
+  ],
+  "src_box": [
+   1084,
+   322,
+   1174,
+   397
+  ]
+ },
+ "edge_stone_2": {
+  "col": 11,
+  "row": 2,
+  "size": [
+   80,
+   83
+  ],
+  "src_box": [
+   1187,
+   322,
+   1273,
+   411
+  ]
+ },
+ "edge_stone_3": {
+  "col": 9,
+  "row": 3,
+  "size": [
+   82,
+   89
+  ],
+  "src_box": [
+   984,
+   424,
+   1072,
+   519
+  ]
+ },
+ "edge_stone_4": {
+  "col": 10,
+  "row": 3,
+  "size": [
+   83,
+   82
+  ],
+  "src_box": [
+   1085,
+   430,
+   1174,
+   518
+  ]
+ },
+ "edge_stone_5": {
+  "col": 11,
+  "row": 3,
+  "size": [
+   81,
+   88
+  ],
+  "src_box": [
+   1187,
+   424,
+   1274,
+   518
+  ]
+ },
+ "grass_0": {
+  "col": 0,
+  "row": 0,
+  "size": [
+   115,
+   120
+  ],
+  "src_box": [
+   18,
+   22,
+   141,
+   152
+  ]
+ },
+ "grass_1": {
+  "col": 1,
+  "row": 0,
+  "size": [
+   114,
+   120
+  ],
+  "src_box": [
+   147,
+   22,
+   269,
+   152
+  ]
+ },
+ "grass_2": {
+  "col": 2,
+  "row": 0,
+  "size": [
+   112,
+   120
+  ],
+  "src_box": [
+   275,
+   22,
+   395,
+   152
+  ]
+ },
+ "plowed": {
+  "col": 4,
+  "row": 0,
+  "size": [
+   110,
+   120
+  ],
+  "src_box": [
+   528,
+   22,
+   646,
+   152
+  ]
+ },
+ "sand_0": {
+  "col": 6,
+  "row": 0,
+  "size": [
+   112,
+   120
+  ],
+  "src_box": [
+   775,
+   22,
+   895,
+   152
+  ]
+ },
+ "sand_1": {
+  "col": 7,
+  "row": 0,
+  "size": [
+   112,
+   120
+  ],
+  "src_box": [
+   901,
+   22,
+   1021,
+   152
+  ]
+ },
+ "sand_2": {
+  "col": 5,
+  "row": 1,
+  "size": [
+   109,
+   123
+  ],
+  "src_box": [
+   652,
+   162,
+   769,
+   295
+  ]
+ },
+ "sand_shells": {
+  "col": 6,
+  "row": 1,
+  "size": [
+   111,
+   123
+  ],
+  "src_box": [
+   776,
+   162,
+   895,
+   295
+  ]
+ },
+ "shore_grass_cl": {
+  "col": 0,
+  "row": 4,
+  "size": [
+   84,
+   110
+  ],
+  "src_box": [
+   18,
+   542,
+   108,
+   660
+  ]
+ },
+ "shore_grass_cr": {
+  "col": 2,
+  "row": 4,
+  "size": [
+   85,
+   111
+  ],
+  "src_box": [
+   225,
+   542,
+   316,
+   661
+  ]
+ },
+ "shore_grass_e": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   110,
+   86
+  ]
+ },
+ "shore_grass_n": {
+  "col": 1,
+  "row": 4,
+  "size": [
+   86,
+   110
+  ],
+  "src_box": [
+   121,
+   542,
+   213,
+   660
+  ]
+ },
+ "shore_grass_ne": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_grass_nw": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   84,
+   110
+  ]
+ },
+ "shore_grass_s": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   86,
+   110
+  ]
+ },
+ "shore_grass_se": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   84,
+   110
+  ]
+ },
+ "shore_grass_sw": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_grass_w": {
+  "derived": "shore_grass_n/cl/cr rotation",
+  "size": [
+   110,
+   86
+  ]
+ },
+ "shore_sand2_cl": {
+  "col": 6,
+  "row": 4,
+  "size": [
+   83,
+   111
+  ],
+  "src_box": [
+   668,
+   542,
+   757,
+   661
+  ]
+ },
+ "shore_sand2_cr": {
+  "col": 8,
+  "row": 4,
+  "size": [
+   81,
+   111
+  ],
+  "src_box": [
+   870,
+   542,
+   957,
+   661
+  ]
+ },
+ "shore_sand2_e": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   111,
+   84
+  ]
+ },
+ "shore_sand2_n": {
+  "col": 7,
+  "row": 4,
+  "size": [
+   84,
+   111
+  ],
+  "src_box": [
+   769,
+   542,
+   859,
+   661
+  ]
+ },
+ "shore_sand2_ne": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   81,
+   111
+  ]
+ },
+ "shore_sand2_nw": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   83,
+   111
+  ]
+ },
+ "shore_sand2_s": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   84,
+   111
+  ]
+ },
+ "shore_sand2_se": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   83,
+   111
+  ]
+ },
+ "shore_sand2_sw": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   81,
+   111
+  ]
+ },
+ "shore_sand2_w": {
+  "derived": "shore_sand2_n/cl/cr rotation",
+  "size": [
+   111,
+   84
+  ]
+ },
+ "shore_sand_cl": {
+  "col": 3,
+  "row": 4,
+  "size": [
+   85,
+   111
+  ],
+  "src_box": [
+   342,
+   542,
+   433,
+   661
+  ]
+ },
+ "shore_sand_cr": {
+  "col": 5,
+  "row": 4,
+  "size": [
+   85,
+   111
+  ],
+  "src_box": [
+   550,
+   542,
+   641,
+   661
+  ]
+ },
+ "shore_sand_e": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   111,
+   86
+  ]
+ },
+ "shore_sand_n": {
+  "col": 4,
+  "row": 4,
+  "size": [
+   86,
+   111
+  ],
+  "src_box": [
+   445,
+   542,
+   537,
+   661
+  ]
+ },
+ "shore_sand_ne": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_sand_nw": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_sand_s": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   86,
+   111
+  ]
+ },
+ "shore_sand_se": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_sand_sw": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   85,
+   111
+  ]
+ },
+ "shore_sand_w": {
+  "derived": "shore_sand_n/cl/cr rotation",
+  "size": [
+   111,
+   86
+  ]
+ },
+ "shore_stone_cl": {
+  "col": 9,
+  "row": 4,
+  "size": [
+   83,
+   111
+  ],
+  "src_box": [
+   985,
+   542,
+   1074,
+   661
+  ]
+ },
+ "shore_stone_cr": {
+  "col": 11,
+  "row": 4,
+  "size": [
+   81,
+   111
+  ],
+  "src_box": [
+   1187,
+   542,
+   1274,
+   661
+  ]
+ },
+ "shore_stone_e": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   111,
+   83
+  ]
+ },
+ "shore_stone_n": {
+  "col": 10,
+  "row": 4,
+  "size": [
+   83,
+   111
+  ],
+  "src_box": [
+   1086,
+   542,
+   1175,
+   661
+  ]
+ },
+ "shore_stone_ne": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   81,
+   111
+  ]
+ },
+ "shore_stone_nw": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   83,
+   111
+  ]
+ },
+ "shore_stone_s": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   83,
+   111
+  ]
+ },
+ "shore_stone_se": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   83,
+   111
+  ]
+ },
+ "shore_stone_sw": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   81,
+   111
+  ]
+ },
+ "shore_stone_w": {
+  "derived": "shore_stone_n/cl/cr rotation",
+  "size": [
+   111,
+   83
+  ]
+ },
+ "soil_dark": {
+  "col": 5,
+  "row": 0,
+  "size": [
+   109,
+   120
+  ],
+  "src_box": [
+   652,
+   22,
+   769,
+   152
+  ]
+ },
+ "stone_0": {
+  "col": 8,
+  "row": 0,
+  "size": [
+   112,
+   120
+  ],
+  "src_box": [
+   1028,
+   22,
+   1148,
+   152
+  ]
+ },
+ "stone_1": {
+  "col": 9,
+  "row": 0,
+  "size": [
+   111,
+   120
+  ],
+  "src_box": [
+   1155,
+   22,
+   1274,
+   152
+  ]
+ },
+ "stone_brick": {
+  "col": 9,
+  "row": 1,
+  "size": [
+   111,
+   123
+  ],
+  "src_box": [
+   1155,
+   162,
+   1274,
+   295
+  ]
+ },
+ "stone_rocky": {
+  "col": 8,
+  "row": 1,
+  "size": [
+   112,
+   123
+  ],
+  "src_box": [
+   1028,
+   162,
+   1148,
+   295
+  ]
+ },
+ "water_0": {
+  "col": 0,
+  "row": 1,
+  "size": [
+   115,
+   124
+  ],
+  "src_box": [
+   18,
+   161,
+   141,
+   295
+  ]
+ },
+ "water_1": {
+  "col": 1,
+  "row": 1,
+  "size": [
+   114,
+   124
+  ],
+  "src_box": [
+   147,
+   161,
+   269,
+   295
+  ]
+ },
+ "water_2": {
+  "col": 2,
+  "row": 1,
+  "size": [
+   112,
+   124
+  ],
+  "src_box": [
+   275,
+   161,
+   395,
+   295
+  ]
+ },
+ "water_foam": {
+  "col": 3,
+  "row": 1,
+  "size": [
+   112,
+   124
+  ],
+  "src_box": [
+   402,
+   161,
+   522,
+   295
+  ]
+ },
+ "water_over_sand": {
+  "col": 4,
+  "row": 1,
+  "size": [
+   110,
+   123
+  ],
+  "src_box": [
+   528,
+   162,
+   646,
+   295
+  ]
+ }
+}

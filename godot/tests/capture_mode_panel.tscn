@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_mode_panel"]
+
+[ext_resource type="Script" path="res://tests/capture_mode_panel.gd" id="1"]
+
+[node name="CaptureModePanel" type="Node"]
+script = ExtResource("1")

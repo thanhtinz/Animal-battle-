@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_p3_victory"]
+
+[ext_resource type="Script" path="res://tests/capture_p3_victory.gd" id="1"]
+
+[node name="CaptureP3Victory" type="Node"]
+script = ExtResource("1")

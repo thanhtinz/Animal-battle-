@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_vfx_base"]
+
+[ext_resource type="Script" path="res://tests/capture_vfx_base.gd" id="1"]
+
+[node name="CaptureVfxBase" type="Node"]
+script = ExtResource("1")

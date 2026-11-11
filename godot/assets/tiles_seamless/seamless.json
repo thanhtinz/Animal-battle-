@@ -1,0 +1,155 @@
+{
+ "crop_per_side": 0.12,
+ "tiles": {
+  "dirt": {
+   "crop_px": [
+    13,
+    14
+   ],
+   "size": [
+    112,
+    120
+   ]
+  },
+  "grass_0": {
+   "crop_px": [
+    14,
+    14
+   ],
+   "size": [
+    115,
+    120
+   ]
+  },
+  "grass_1": {
+   "crop_px": [
+    14,
+    14
+   ],
+   "size": [
+    114,
+    120
+   ]
+  },
+  "grass_2": {
+   "crop_px": [
+    13,
+    14
+   ],
+   "size": [
+    112,
+    120
+   ]
+  },
+  "shore_sand_e": {
+   "crop_px": [
+    13,
+    10
+   ],
+   "size": [
+    111,
+    86
+   ]
+  },
+  "shore_sand_n": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    86,
+    111
+   ]
+  },
+  "shore_sand_ne": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    85,
+    111
+   ]
+  },
+  "shore_sand_nw": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    85,
+    111
+   ]
+  },
+  "shore_sand_s": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    86,
+    111
+   ]
+  },
+  "shore_sand_se": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    85,
+    111
+   ]
+  },
+  "shore_sand_sw": {
+   "crop_px": [
+    10,
+    13
+   ],
+   "size": [
+    85,
+    111
+   ]
+  },
+  "shore_sand_w": {
+   "crop_px": [
+    13,
+    10
+   ],
+   "size": [
+    111,
+    86
+   ]
+  },
+  "water_0": {
+   "crop_px": [
+    14,
+    15
+   ],
+   "size": [
+    115,
+    124
+   ]
+  },
+  "water_1": {
+   "crop_px": [
+    14,
+    15
+   ],
+   "size": [
+    114,
+    124
+   ]
+  },
+  "water_2": {
+   "crop_px": [
+    13,
+    15
+   ],
+   "size": [
+    112,
+    124
+   ]
+  }
+ }
+}

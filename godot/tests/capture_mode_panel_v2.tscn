@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cmodpanelv2"]
+
+[ext_resource type="Script" path="res://tests/capture_mode_panel_v2.gd" id="1"]
+
+[node name="CaptureModePanelV2" type="Node"]
+script = ExtResource("1")

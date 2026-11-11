@@ -1,0 +1,32 @@
+{
+ "cell_w": 184,
+ "cell_h": 82,
+ "baseline": 78,
+ "animations": {
+  "idle": {
+   "row": 0,
+   "count": 16,
+   "per_dir": 4
+  },
+  "walk": {
+   "row": 1,
+   "count": 20,
+   "per_dir": 5
+  },
+  "attack": {
+   "row": 2,
+   "count": 20,
+   "per_dir": 5
+  },
+  "die": {
+   "row": 3,
+   "count": 16,
+   "per_dir": 4
+  },
+  "hurt": {
+   "row": 4,
+   "count": 16,
+   "per_dir": 4
+  }
+ }
+}

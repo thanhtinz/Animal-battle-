@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_ping_bands"]
+
+[ext_resource type="Script" path="res://tests/capture_ping_bands.gd" id="1"]
+
+[node name="CapturePingBands" type="Node"]
+script = ExtResource("1")

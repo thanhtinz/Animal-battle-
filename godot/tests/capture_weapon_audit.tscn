@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_weapon_audit"]
+
+[ext_resource type="Script" path="res://tests/capture_weapon_audit.gd" id="1"]
+
+[node name="CaptureWeaponAudit" type="Node"]
+script = ExtResource("1")

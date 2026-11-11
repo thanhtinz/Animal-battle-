@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_sprite"]
+
+[ext_resource type="Script" path="res://tests/capture_sprite.gd" id="1"]
+
+[node name="CaptureSprite" type="Node"]
+script = ExtResource("1")

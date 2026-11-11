@@ -1,0 +1,53 @@
+{
+ "cell_w": 82,
+ "cell_h": 82,
+ "baseline": 78,
+ "animations": {
+  "idle": {
+   "row": 0,
+   "count": 16,
+   "per_dir": 4
+  },
+  "walk": {
+   "row": 1,
+   "count": 16,
+   "per_dir": 4
+  },
+  "work": {
+   "row": 2,
+   "count": 8,
+   "per_dir": 8
+  },
+  "harvest": {
+   "row": 3,
+   "count": 8,
+   "per_dir": 8
+  },
+  "build": {
+   "row": 4,
+   "count": 8,
+   "per_dir": 8
+  },
+  "carry": {
+   "row": 5,
+   "count": 8,
+   "per_dir": 8
+  },
+  "die": {
+   "row": 6,
+   "count": 7,
+   "per_dir": 7
+  }
+ },
+ "work_loop": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "note": "idle/walk side+up frames are static poses from the 8-dir sheet; down uses the real front cycle"
+}

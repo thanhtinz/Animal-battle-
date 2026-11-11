@@ -1,0 +1,17 @@
+# Godot import cache (regenerated locally)
+godot/.godot/
+
+# Verification screenshots/videos (kept locally, not source)
+godot/shots/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Build outputs
+server/relay
+server/*.exe
+
+# Logs
+logs/
+*.log

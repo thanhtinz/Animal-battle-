@@ -1,0 +1,858 @@
+package main
+
+// Empire Age P4 foundation relay server.
+//
+// Usage: go run . [-addr :8765]   (or the built binary)
+// HTTP:  GET /        -> plain status line
+//        GET /healthz -> "ok"
+// WS:    GET /ws      -> the game relay protocol (JSON messages)
+//
+// Protocol (client -> server):
+//   {"t":"create","name":N,"biome":B,"layout":L}   -> {"t":"created",...} + room state
+//        15a options: "room_name", "public", "room_pass", "allow_obs"
+//        15b option:  "diplomacy" (in-match diplomacy opt-in, custom only)
+//   {"t":"join","code":C,"name":N,"room_pass":P}   -> {"t":"joined",...} + room state / error
+//   {"t":"config","biome":B,"layout":L}            host-only lobby change
+//        15a fields: "room_name", "public", "allow_obs", "set_pass"+"room_pass"
+//        15b field:   "diplomacy" (rides the same full-state config)
+//   {"t":"chat","scope":"team","allies":[slots]}   15b: in a diplomacy room the
+//        team channel follows the sender's CURRENT allies (sim state)
+//   {"t":"match_result","winner_slots":[slots]}   15b: shared allied victory
+//        in a diplomacy custom room (host-reported, custom only)
+//   {"t":"list_rooms"}                             -> {"t":"room_list","rooms":[...]} (15a)
+//   {"t":"observe","code":C,"name":N,"room_pass":P} watch-only room attach (15a)
+//   {"t":"kick","slot":N} / {"t":"transfer_host","slot":N}   host powers (15a)
+//   {"t":"obs_snapshot","tick":N,"state":{...}}    host serves a mid-match observer (15a)
+//   {"t":"ready","ready":bool}
+//   {"t":"start"}                                  host-only; all must be ready
+//   {"t":"cmd","cmd":{...}}                        in-match; relayed with exec tick
+//   {"t":"checksum","tick":N,"hash":"..."}
+//   {"t":"leave"}
+//   {"t":"set_avatar","avatar":C}                   account profile-avatar pick (13j)
+//   {"t":"set_name","name":N}                       account display-name pick (13r)
+//   {"t":"set_active_skin","skin":S}                activate an OWNED cosmetic skin (13j; dormant — no shop yet)
+//   {"t":"queue_join","mode":"1v1"} / {"t":"queue_leave"}   ranked matchmaking
+//   {"t":"queue_join","queue":"normal","name":...}          normal (unranked) matchmaking, 13t
+//   {"t":"referee_join","code":C,"token":T}        referee processes only
+// Protocol (server -> client): room / created / joined / match_start /
+// tick / cmd / player_left / desync / error / queue_joined / match_found
+// / referee_ok — see hub.go and README.md.
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+)
+
+type clientMsg struct {
+	T        string          `json:"t"`
+	Name     string          `json:"name"`
+	Code     string          `json:"code"`
+	Biome    string          `json:"biome"`
+	Layout   string          `json:"layout"`
+	Ready    bool            `json:"ready"`
+	Tick     int64           `json:"tick"`
+	Hash     string          `json:"hash"`
+	Cmd      json.RawMessage `json:"cmd"`
+	Scope    string          `json:"scope"`
+	Text     string          `json:"text"`
+	User     string          `json:"user"`
+	Pass     string          `json:"pass"`
+	Token    string          `json:"token"`
+	Team     int             `json:"winner_team"`
+	State    json.RawMessage `json:"state"`
+	Mode     string          `json:"mode"`      // queue mode / leaderboard mode
+	Queue    string          `json:"queue"`     // queue_join: "" = ranked, "normal" = unranked (13t)
+	Reason   string          `json:"reason"`    // referee result reason
+	TS       int64           `json:"ts"`        // ping echo payload (client clock, opaque)
+	ID       int64           `json:"id"`        // mail_read: letter id (0 = all)
+	Ticks    int             `json:"ticks"`     // referee result: match length in lockstep ticks
+	ReplayID string          `json:"replay_id"` // replay fetch: the recording id
+	Skin     string          `json:"skin"`      // set_active_skin: cosmetic skin id ("" = clear)
+	Avatar   string          `json:"avatar"`    // set_avatar: profile avatar (a main character id)
+	Close    bool            `json:"close"`     // friend_close: the "bạn thân" flag state
+	// Custom-match expansion (15a): room access + host powers.
+	RoomName string `json:"room_name"` // create/config: browser display name
+	RoomPass string `json:"room_pass"` // create/join/observe/config: room password
+	Public   bool   `json:"public"`    // create/config: list in the room browser
+	AllowObs bool   `json:"allow_obs"` // create/config: observers allowed
+	SetPass  bool   `json:"set_pass"`  // config: replace the room password
+	Slot     int    `json:"slot"`      // kick/transfer_host: target slot
+	// Diplomacy (15b): room opt-in at create/config; the sender's
+	// current ally slots on team chat; the winner SET of a shared
+	// allied victory on match_result (custom rooms only).
+	Diplomacy   bool  `json:"diplomacy"`
+	Allies      []int `json:"allies"`
+	WinnerSlots []int `json:"winner_slots"`
+	// Spectator (15e): the room's observer delay in seconds on
+	// create/config; the target observer's display name on
+	// kick_obs rides the shared Name field.
+	ObsDelay int `json:"obs_delay"`
+	// Free-for-all results (13z): slots ordered 1st -> last, and
+	// the slots whose elimination was a disconnect (referee only).
+	Placements      []int `json:"placements"`
+	DisconnectSlots []int `json:"disconnect_slots"`
+	// Replay timeline sidecar (14a): elimination tick per slot
+	// (index = slot; -1 or absent = never eliminated), reported
+	// by the same trusted reporter as the result itself.
+	ElimTicks []int64 `json:"elim_ticks"`
+}
+
+type session struct {
+	hub   *Hub
+	conn  *wsConn
+	acc   *Accounts
+	code  string
+	slot  int
+	in    bool   // has a room slot
+	user  string // logged-in account name ("" = guest)
+	token string // session token issued at login
+	// Referee sessions (ranked rooms): the connection IS a room's
+	// dedicated referee process, authenticated by token.
+	isReferee bool
+	refCode   string
+	out       sender // test seam: when set, outbound sends go here
+	// Observer sessions (15a): the connection watches a custom
+	// room without holding a slot. obsCode is its room.
+	obs     *observerConn
+	obsCode string
+}
+
+// senderOrConn is the session's outbound channel: the test seam if
+// set, else the websocket connection.
+func (s *session) senderOrConn() sender {
+	if s.out != nil {
+		return s.out
+	}
+	return s.conn
+}
+
+func (s *session) sendJSON(v map[string]any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	s.conn.SendText(data)
+}
+
+func (s *session) sendErr(err error) {
+	s.sendJSON(map[string]any{"t": "error", "msg": err.Error()})
+}
+
+func (s *session) sendAuthErr(err error) {
+	s.sendJSON(map[string]any{"t": "auth_error", "msg": err.Error()})
+}
+
+// onAuthed runs after a successful register/login: if the session
+// is already sitting in a room, bind the slot to the account.
+// (Characters are drawn at match start and cosmetic skins resolve
+// from the account then — nothing per-slot to apply here anymore.)
+func (s *session) onAuthed() {
+	if s.in && s.user != "" {
+		s.hub.AttachAccount(s.code, s.slot, s.user)
+	}
+}
+
+func (s *session) authOK(token string, p Profile) {
+	if s.user != "" && s.user != p.User {
+		s.hub.SetOnline(s.user, false) // account switch on one session
+	}
+	s.token = token
+	s.user = p.User
+	s.hub.SetOnline(p.User, true)
+	s.sendJSON(map[string]any{
+		"t": "auth_ok", "token": token,
+		"profile": p, // {user, wins, losses, matches, mmr, rank{...}, unread_mail}
+	})
+	s.onAuthed()
+}
+
+// leaderRowMap is the wire shape of one leaderboard row (shared
+// by the board rows and the "me" footer payload).
+func leaderRowMap(r LeaderRow) map[string]any {
+	return map[string]any{
+		"user": r.User, "display_name": r.DisplayName, "wins": r.Wins, "losses": r.Losses,
+		"matches": r.Matches, "mmr": r.MMR,
+		"rank_tier": r.RankTier, "rank_text": r.RankText,
+		"rank_short": r.RankShort, "rank_stars": r.RankStars,
+		"rank_star_cap": r.StarCap, "emperor": r.Emperor,
+	}
+}
+
+// sendFriends pushes the caller's current friend list (with live
+// presence resolved from the hub).
+func (s *session) sendFriends() {
+	rows := []FriendEntry{}
+	if s.user != "" {
+		rows = s.acc.FriendsOf(s.user)
+		for i := range rows {
+			rows[i].Online = s.hub.IsOnline(rows[i].User)
+		}
+		if rows == nil {
+			rows = []FriendEntry{}
+		}
+	}
+	s.sendJSON(map[string]any{"t": "friends", "rows": rows})
+}
+
+// sendMail pushes the caller's mailbox (newest first) + unread.
+func (s *session) sendMail() {
+	rows := []Letter{}
+	unread := 0
+	if s.user != "" {
+		rows = s.acc.LettersOf(s.user)
+		if rows == nil {
+			rows = []Letter{}
+		}
+		for _, l := range rows {
+			if !l.Read {
+				unread++
+			}
+		}
+	}
+	s.sendJSON(map[string]any{"t": "mail", "rows": rows, "unread": unread})
+}
+
+func (s *session) handle(raw []byte) {
+	var m clientMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		s.sendJSON(map[string]any{"t": "error", "msg": "bad json"})
+		return
+	}
+	switch m.T {
+	case "ping":
+		// Latency probe for the home lobby's connection readout:
+		// the ts is the client's own clock, echoed untouched.
+		s.sendJSON(map[string]any{"t": "pong", "ts": m.TS})
+	case "replay":
+		// Replay fetch (13h): ranked recordings are ladder-public
+		// for logged-in accounts; custom-room recordings belong
+		// to their account participants only.
+		if s.hub.replays == nil {
+			s.sendJSON(map[string]any{"t": "replay_error", "msg": "Máy chủ không lưu bản ghi lại."})
+			return
+		}
+		rp, ok := s.hub.replays.Get(m.ReplayID)
+		if !ok {
+			s.sendJSON(map[string]any{"t": "replay_error", "msg": "Không tìm thấy bản ghi lại (có thể đã quá hạn lưu trữ)."})
+			return
+		}
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "replay_error", "msg": "Đăng nhập để xem lại trận đấu."})
+			return
+		}
+		if !rp.Ranked {
+			allowed := false
+			for _, u := range rp.Participants() {
+				if u == s.user {
+					allowed = true
+				}
+			}
+			if !allowed {
+				s.sendJSON(map[string]any{"t": "replay_error", "msg": "Chỉ người chơi trong trận mới xem lại được trận thường này."})
+				return
+			}
+		}
+		s.sendJSON(map[string]any{"t": "replay_data", "replay": rp})
+	case "history":
+		// The caller's own ranked match history (13g home lobby).
+		// Guests have no account, hence no history.
+		rows := []MatchRecord{}
+		if s.user != "" {
+			rows = s.acc.MatchHistory(s.user)
+		}
+		if rows == nil {
+			rows = []MatchRecord{}
+		}
+		s.sendJSON(map[string]any{"t": "history", "rows": rows})
+	case "register":
+		if err := s.acc.Register(m.User, m.Pass); err != nil {
+			s.sendAuthErr(err)
+			return
+		}
+		token, prof, err := s.acc.Login(m.User, m.Pass)
+		if err != nil {
+			s.sendAuthErr(err)
+			return
+		}
+		s.authOK(token, prof)
+	case "login":
+		// A token in the message re-authenticates an earlier login
+		// (client reconnect); user/pass is the normal path.
+		if m.Token != "" && m.User == "" {
+			prof, ok := s.acc.Authenticate(m.Token)
+			if !ok {
+				s.sendAuthErr(ErrBadCredentials)
+				return
+			}
+			s.authOK(m.Token, prof)
+			return
+		}
+		token, prof, err := s.acc.Login(m.User, m.Pass)
+		if err != nil {
+			s.sendAuthErr(err)
+			return
+		}
+		s.authOK(token, prof)
+	case "friends":
+		s.sendFriends()
+	case "friend_add":
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": "Đăng nhập để dùng Bạn bè."})
+			return
+		}
+		if err := s.acc.AddFriend(s.user, m.User); err != nil {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": err.Error()})
+			return
+		}
+		s.sendFriends()
+	case "friend_remove":
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": "Đăng nhập để dùng Bạn bè."})
+			return
+		}
+		if err := s.acc.RemoveFriend(s.user, m.User); err != nil {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": err.Error()})
+			return
+		}
+		s.sendFriends()
+	case "friend_close":
+		// "Bạn thân" flag toggle (13m): per-owner, drives the
+		// home rail's close-friend portraits.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": "Đăng nhập để dùng Bạn bè."})
+			return
+		}
+		if err := s.acc.SetCloseFriend(s.user, m.User, m.Close); err != nil {
+			s.sendJSON(map[string]any{"t": "friend_error", "msg": err.Error()})
+			return
+		}
+		s.sendFriends()
+	case "mail":
+		s.sendMail()
+	case "mail_read":
+		if s.user != "" {
+			if _, err := s.acc.MarkMailRead(s.user, m.ID); err != nil {
+				s.sendErr(err)
+				return
+			}
+		}
+		s.sendMail()
+	case "logout":
+		s.acc.Logout(s.token)
+		if s.user != "" {
+			s.hub.SetOnline(s.user, false)
+		}
+		s.token = ""
+		s.user = ""
+		if s.in {
+			s.hub.AttachAccount(s.code, s.slot, "")
+		}
+		s.sendJSON(map[string]any{"t": "auth_out"})
+	case "set_avatar":
+		// Profile avatar pick (13j): one of the four mains'
+		// portraits, persisted on the account; the reply echoes
+		// the stored value. Decoupled from the character draw.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để lưu avatar."})
+			return
+		}
+		if _, err := s.acc.SetAvatar(s.user, m.Avatar); err != nil {
+			s.sendAuthErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": NormalizeCharID(m.Avatar)})
+	case "set_name":
+		// Display-name pick (13r): the name panel after register /
+		// first login. Validated + uniqueness-checked in accounts;
+		// the reply carries the stored name so the client can
+		// refresh every label from one payload.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để đặt tên."})
+			return
+		}
+		if _, err := s.acc.SetDisplayName(s.user, m.Name); err != nil {
+			s.sendJSON(map[string]any{"t": "name_error", "msg": err.Error()})
+			return
+		}
+		s.sendJSON(map[string]any{"t": "display_name", "display_name": s.acc.DisplayNameOf(s.user)})
+		// If the session already sits in a room, its room label
+		// follows the new name too.
+		if s.in {
+			s.hub.AttachAccount(s.code, s.slot, s.user)
+		}
+	case "set_active_skin":
+		// Cosmetic skin activation (13j): the skin must be OWNED.
+		// No shop exists yet, so every account owns none and every
+		// activation is rejected — the slot ships dormant.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để kích hoạt skin."})
+			return
+		}
+		if _, err := s.acc.SetActiveSkin(s.user, m.Skin); err != nil {
+			s.sendAuthErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "active_skin", "skin": NormalizeSkinID(m.Skin)})
+	case "leaderboard":
+		mode := m.Mode
+		if mode != "ranked" && mode != "friends" {
+			mode = "wl"
+		}
+		rows, mePos, meRow := s.acc.LeaderboardV2(mode, s.user)
+		out := make([]map[string]any, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, leaderRowMap(r))
+		}
+		var me any
+		if meRow != nil {
+			me = map[string]any{"pos": mePos, "row": leaderRowMap(*meRow)}
+		}
+		s.sendJSON(map[string]any{"t": "leaderboard", "mode": mode, "rows": out, "me": me})
+	case "queue_join":
+		if m.Queue == "normal" {
+			// Unranked queue (13t): guests allowed, no MMR/rank data
+			// in the acknowledgement — there is none to report.
+			if err := s.hub.NormalQueueJoin(s, m.Name); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendJSON(map[string]any{
+				"t": "queue_joined", "queue": "normal", "mode": NormalMode1v1,
+			})
+			return
+		}
+		prof, err := s.hub.QueueJoin(s, m.Mode)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{
+			"t": "queue_joined", "mode": RankedMode1v1, "mmr": prof.MMR,
+			"rank": prof.Rank,
+		})
+	case "queue_leave":
+		if s.hub.QueueLeave(s) {
+			s.sendJSON(map[string]any{"t": "queue_left"})
+		}
+	case "referee_join":
+		if err := s.hub.RefereeJoin(m.Code, m.Token, s.conn); err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.isReferee = true
+		s.refCode = strings.ToUpper(strings.TrimSpace(m.Code))
+		s.sendJSON(map[string]any{"t": "referee_ok", "code": s.refCode})
+		log.Printf("referee joined room %s", s.refCode)
+	case "match_result":
+		if s.isReferee && len(m.Placements) > 0 {
+			// 13z: free-for-all ranked result — the referee reports
+			// the full placement list; the server banks stars/MMR
+			// per placement for the whole field at once.
+			byUser, ordered, err := s.hub.RecordRefereePlacements(s.refCode, m.Placements, m.DisconnectSlots, m.ElimTicks)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			_ = byUser
+			// 14a: the referee's recording is canonical — hand
+			// every player its id for the result screen.
+			s.hub.NotifyRoomReplay(s.refCode)
+			biome, layout, _ := s.hub.RoomMapInfo(s.refCode)
+			// Which accounts disconnected (reputation −5): resolve
+			// the referee's slot list against the placement map.
+			disc := make(map[string]bool)
+			slotUser := s.hub.RoomSlotUsers(s.refCode)
+			for _, sl := range m.DisconnectSlots {
+				if u := slotUser[sl]; u != "" {
+					disc[u] = true
+				}
+			}
+			ocs, err := s.acc.RecordRankedPlacements(ordered,
+				biome, layout, m.Ticks, s.hub.RoomReplayID(s.refCode), disc)
+			if err != nil {
+				log.Printf("ranked %s: banking placements failed: %v", s.refCode, err)
+				return
+			}
+			for _, oc := range ocs {
+				log.Printf("ranked %s: #%d %s — MMR %d -> %d, sao %+d (%s)",
+					s.refCode, oc.Placement, oc.User, oc.MMRBefore, oc.MMRAfter,
+					oc.Rank.StarDelta, oc.Rank.After.Text())
+				s.hub.NotifyRankedResult(s.refCode, oc.User, map[string]any{
+					"t":           "rank_result",
+					"won":         oc.Won,
+					"placement":   oc.Placement,
+					"mmr_before":  oc.MMRBefore,
+					"mmr_after":   oc.MMRAfter,
+					"star_delta":  oc.Rank.StarDelta,
+					"bonus":       oc.Rank.Bonus,
+					"daily_bonus": oc.Rank.DailyBonus,
+					"promoted":    oc.Rank.Promoted,
+					"demoted":     oc.Rank.Demoted,
+					"before":      rankViewFromState(oc.Rank.Before, false),
+					"after":       rankViewFromState(oc.Rank.After, false),
+				})
+			}
+			return
+		}
+		if s.isReferee {
+			// The ONLY trusted result channel for ranked rooms.
+			results, err := s.hub.RecordRefereeResult(s.refCode, m.Team, m.Reason, m.ElimTicks)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			// 14a: hand every player the sealed replay id.
+			s.hub.NotifyRoomReplay(s.refCode)
+			var winner, loser string
+			for user, won := range results {
+				if won {
+					winner = user
+				} else {
+					loser = user
+				}
+			}
+			if winner != "" && loser != "" && winner != loser {
+				biome, layout, _ := s.hub.RoomMapInfo(s.refCode)
+				wo, lo, err := s.acc.RecordRankedResultReason(winner, loser,
+					biome, layout, m.Ticks, s.hub.RoomReplayID(s.refCode), m.Reason)
+				if err != nil {
+					log.Printf("ranked %s: banking result failed: %v", s.refCode, err)
+					return
+				}
+				log.Printf("ranked %s: %s beat %s (reason %q) — MMR %d / %d"+
+					" — sao: %s %+d (%s), %s %+d (%s)",
+					s.refCode, winner, loser, m.Reason, wo.MMRAfter, lo.MMRAfter,
+					winner, wo.Rank.StarDelta, wo.Rank.After.Text(),
+					loser, lo.Rank.StarDelta, lo.Rank.After.Text())
+				// Each player gets their own ladder movement for
+				// the ranked end panel.
+				for _, oc := range []RankedOutcome{wo, lo} {
+					s.hub.NotifyRankedResult(s.refCode, oc.User, map[string]any{
+						"t":           "rank_result",
+						"won":         oc.Won,
+						"mmr_before":  oc.MMRBefore,
+						"mmr_after":   oc.MMRAfter,
+						"star_delta":  oc.Rank.StarDelta,
+						"bonus":       oc.Rank.Bonus,
+						"daily_bonus": oc.Rank.DailyBonus,
+						"promoted":    oc.Rank.Promoted,
+						"demoted":     oc.Rank.Demoted,
+						"before":      rankViewFromState(oc.Rank.Before, false),
+						"after":       rankViewFromState(oc.Rank.After, false),
+					})
+				}
+			}
+			return
+		}
+		if s.in && len(m.WinnerSlots) > 0 {
+			// 15b: a diplomacy custom match that ended in a
+			// shared allied victory — the host reports the
+			// winner SET (no single winning team exists). The
+			// hub refuses queue rooms structurally.
+			results, err := s.hub.RecordMatchResultSlots(s.code, s.slot, m.WinnerSlots, m.ElimTicks)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			for user, won := range results {
+				s.acc.RecordMatch(user, won)
+			}
+			if rid := s.hub.RoomReplayID(s.code); rid != "" {
+				s.hub.NotifyRoom(s.code, map[string]any{
+					"t": "custom_replay", "replay_id": rid, "room": s.code,
+				})
+			}
+			return
+		}
+		if s.in && len(m.Placements) > 0 {
+			// 13z: a queued NORMAL match — the host reports the
+			// full placement list; banking stays W/L only (1st
+			// place = the win), never MMR or ladder.
+			placements, err := s.hub.RecordMatchPlacements(s.code, s.slot, m.Placements, m.ElimTicks)
+			if err != nil {
+				if err == ErrRankedRoom {
+					return // ranked rooms belong to the referee
+				}
+				s.sendErr(err)
+				return
+			}
+			for user, placement := range placements {
+				s.acc.RecordMatch(user, placement == 1)
+			}
+			// 14a: queue matches hand out the replay id under
+			// the match_replay type (custom rooms keep theirs).
+			s.hub.NotifyRoomReplay(s.code)
+			return
+		}
+		if s.in {
+			results, err := s.hub.RecordMatchResult(s.code, s.slot, m.Team, m.ElimTicks)
+			if err != nil {
+				if err == ErrRankedRoom {
+					// Player-sent result for a ranked room: the
+					// referee owns results here. Ignore quietly.
+					return
+				}
+				s.sendErr(err)
+				return
+			}
+			for user, won := range results {
+				s.acc.RecordMatch(user, won)
+			}
+			// Hand every participant the replay id so their
+			// device-local history entry can link the recording.
+			if rid := s.hub.RoomReplayID(s.code); rid != "" {
+				s.hub.NotifyRoom(s.code, map[string]any{
+					"t": "custom_replay", "replay_id": rid, "room": s.code,
+				})
+			}
+		}
+	case "create":
+		if s.in || s.obs != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": "already in a room"})
+			return
+		}
+		r := s.hub.CreateRoomEx(s.senderOrConn(), m.Name, m.Biome, m.Layout,
+			RoomCreateOptions{Name: m.RoomName, Public: m.Public,
+				Password: m.RoomPass, AllowObs: m.AllowObs,
+				Diplomacy: m.Diplomacy, ObsDelaySec: m.ObsDelay})
+		s.code, s.slot, s.in = r.Code, 0, true
+		s.sendJSON(map[string]any{"t": "created", "code": r.Code, "slot": 0})
+		if s.user != "" {
+			s.hub.AttachAccount(s.code, s.slot, s.user)
+		}
+	case "join":
+		if s.in || s.obs != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": "already in a room"})
+			return
+		}
+		r, p, err := s.hub.JoinRoomEx(s.senderOrConn(), m.Code, m.Name, m.RoomPass, s.user)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.code, s.slot, s.in = r.Code, p.Slot, true
+		s.sendJSON(map[string]any{"t": "joined", "code": r.Code, "slot": p.Slot})
+		if s.user != "" {
+			s.hub.AttachAccount(s.code, s.slot, s.user)
+		}
+	case "observe":
+		// 15a: watch-only attach to a custom room. The session
+		// holds NO slot afterwards: cmd/checksum/snapshot from it
+		// are rejected below, chat routes to the observer path.
+		if s.in || s.obs != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": "already in a room"})
+			return
+		}
+		r, obs, err := s.hub.JoinObserver(s.senderOrConn(), m.Code, m.Name, m.RoomPass, s.user)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.obs, s.obsCode = obs, r.Code
+		s.sendJSON(map[string]any{"t": "observing", "code": r.Code})
+	case "list_rooms":
+		// 15a room browser: public custom rooms waiting in lobby.
+		s.sendJSON(map[string]any{"t": "room_list", "rooms": s.hub.ListPublicRooms()})
+	case "obs_ready":
+		// 15a: the observer's match scene is bound and listening
+		// — only now does the server ask the host for its join
+		// snapshot, so the snapshot can never be lost in boot.
+		if s.obs != nil {
+			s.hub.ObserverReady(s.obsCode, s.obs)
+		}
+	case "kick":
+		if s.in {
+			if err := s.hub.KickPlayer(s.code, s.slot, m.Slot); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "kick_obs":
+		// 15e: the host removes an observer (target = display
+		// name in the shared name field) and bans their return.
+		if s.in {
+			if err := s.hub.KickObserver(s.code, s.slot, m.Name); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "transfer_host":
+		if s.in {
+			if err := s.hub.TransferHost(s.code, s.slot, m.Slot); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "ready":
+		if s.in {
+			if err := s.hub.SetReady(s.code, s.slot, m.Ready); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "config":
+		if s.in {
+			err := s.hub.SetConfigEx(s.code, s.slot, RoomConfigUpdate{
+				Biome: m.Biome, Layout: m.Layout, Name: m.RoomName,
+				Public: m.Public, AllowObs: m.AllowObs, Diplomacy: m.Diplomacy,
+				ObsDelaySec: m.ObsDelay,
+				TouchAccess: true,
+				SetPassword: m.SetPass, Password: m.RoomPass,
+			})
+			if err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "start":
+		if s.in {
+			if err := s.hub.Start(s.code, s.slot); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "cmd":
+		// Observers hold no slot: their commands are rejected at
+		// the relay, never relayed (15a).
+		if s.obs != nil {
+			s.sendErr(ErrObserverCmd)
+		} else if s.in {
+			if err := s.hub.RelayCmd(s.code, s.slot, m.Cmd); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "checksum":
+		if s.isReferee {
+			s.hub.ReportRefereeChecksum(s.refCode, m.Tick, m.Hash)
+		} else if s.in {
+			s.hub.ReportChecksum(s.code, s.slot, m.Tick, m.Hash)
+		} // observer checksums are dropped: they are not reporters
+	case "snapshot":
+		if s.isReferee {
+			s.hub.RelaySnapshot(s.refCode, RefereeChecksumSlot, m.Tick, m.State)
+		} else if s.in {
+			s.hub.RelaySnapshot(s.code, s.slot, m.Tick, m.State)
+		} // observer snapshots are dropped: they are never a source
+	case "obs_snapshot":
+		// 15a: a player (the host) serving a mid-match observer.
+		if s.in {
+			if err := s.hub.RelayObsSnapshot(s.code, s.slot, m.Tick, m.State); err != nil {
+				s.sendErr(err)
+			}
+		}
+	case "chat":
+		if s.obs != nil {
+			if err := s.hub.RelayObserverChat(s.obsCode, s.obs, m.Scope, m.Text); err != nil {
+				s.sendErr(err)
+			}
+		} else if s.in {
+			s.hub.RelayChatEx(s.code, s.slot, m.Scope, m.Text, m.Allies) // errors are silent by design
+		}
+	case "leave":
+		if s.obs != nil {
+			s.hub.LeaveObserver(s.obsCode, s.obs)
+			s.obs, s.obsCode = nil, ""
+		} else if s.in {
+			s.hub.Disconnect(s.code, s.slot)
+			s.in = false
+		}
+	}
+}
+
+func (s *session) gone() {
+	s.hub.QueueLeave(s)
+	if s.obs != nil {
+		s.hub.LeaveObserver(s.obsCode, s.obs)
+		s.obs, s.obsCode = nil, ""
+	}
+	if s.user != "" {
+		s.hub.SetOnline(s.user, false)
+		s.user = ""
+	}
+	if s.isReferee {
+		s.hub.RefereeDisconnect(s.refCode)
+		s.isReferee = false
+		return
+	}
+	if s.in {
+		s.hub.Disconnect(s.code, s.slot)
+		s.in = false
+	}
+}
+
+func main() {
+	addr := flag.String("addr", ":8765", "listen address")
+	storePath := flag.String("store", "accounts.json", "account store file (JSON)")
+	seasonDays := flag.Int("season-days", DefaultSeasonDays, "ranked season length in days (season 1 starts at the store's first boot)")
+	refGodot := flag.String("referee-godot", "", "headless Godot binary used to spawn ranked referees (empty = orchestration off)")
+	refProject := flag.String("referee-project", "../godot", "Godot project path handed to referee processes")
+	refURL := flag.String("referee-url", "", "ws URL referees connect back to (default: derived from -addr)")
+	refExtra := flag.String("referee-extra-args", "", "extra args appended to every referee command line (space-separated)")
+	refTimeout := flag.Duration("referee-timeout", DefaultRefereeTimeout, "hard cap for one ranked match")
+	flag.Parse()
+	store, err := NewFileStore(*storePath)
+	if err != nil {
+		log.Fatalf("account store: %v", err)
+	}
+	acc := NewAccounts(store)
+	acc.SeasonDays = *seasonDays
+	hub := NewHub()
+	hub.acc = acc
+	// Replay archive (13h): one JSON file beside the account store.
+	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
+		log.Fatalf("replay store: %v", err)
+	} else {
+		hub.replays = rps
+		log.Printf("replay archive: %s (%d stored)", *storePath+".replays.json", rps.Count())
+	}
+	orch := &Orchestrator{
+		GodotPath:   *refGodot,
+		ProjectPath: *refProject,
+		ExtraArgs:   strings.Fields(*refExtra),
+		Timeout:     *refTimeout,
+		hub:         hub,
+	}
+	orch.RelayURL = *refURL
+	if orch.RelayURL == "" {
+		host := *addr
+		if strings.HasPrefix(host, ":") {
+			host = "127.0.0.1" + host
+		}
+		orch.RelayURL = "ws://" + host + "/ws"
+	}
+	hub.Orch = orch
+	hub.OnRoomClosed = orch.ReapReferee
+	go func() { // matchmaking pairing loop (ranked + normal queues)
+		t := time.NewTicker(250 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			hub.TryPairAll()
+			hub.TryPairNormalAll()
+			hub.SendQueueStatus()
+		}
+	}()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, "Empire Age relay server — %d room(s)\n", hub.RoomCount())
+	})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ok")
+	})
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgradeWS(w, r)
+		if err != nil {
+			http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
+			return
+		}
+		s := &session{hub: hub, conn: conn, acc: acc}
+		conn.onText = s.handle
+		conn.onGone = s.gone
+		log.Printf("client connected from %s", r.RemoteAddr)
+		go conn.readLoop()
+	})
+	log.Printf("Empire Age relay listening on %s (ws at /ws)", *addr)
+	log.Fatal(http.ListenAndServe(*addr, mux))
+}

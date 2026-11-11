@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_transport15g"]
+
+[ext_resource type="Script" path="res://tests/capture_transport.gd" id="1"]
+
+[node name="CaptureTransport" type="Node"]
+script = ExtResource("1")

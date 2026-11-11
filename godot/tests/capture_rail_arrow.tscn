@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://crailarr1"]
+
+[ext_resource type="Script" path="res://tests/capture_rail_arrow.gd" id="1"]
+
+[node name="CaptureRailArrow" type="Node"]
+script = ExtResource("1")
