@@ -691,16 +691,17 @@ emoji (mọi hoạ tiết là hình vẽ).
 của game: avatar là ảnh vuông; không làm khung tròn):
 
 - **Bộ khung THẬT của Tín (thay toàn bộ danh mục tự chế ở bản
-  trước)**: Tín đã cung cấp sẵn **12 khung động** — file gốc
-  lưu ở `art_candidates/avatar_frames/raw/frame_01.gif` …
-  `frame_12.gif`. Số đo thật: cả 12 đều là **GIF động
-  1064×1064**, tổng ~27 MB, mỗi khung 7–119 frame con; **11/12
-  khung có tâm trong suốt**, riêng **frame_02 (quán cà phê)
-  có tâm đặc màu kem đã nướng sẵn vào hình**. Mỗi khung có
-  **cửa sổ trong (aperture) ở vị trí/kích thước khác nhau** —
-  hệ quả kỹ thuật ở mục Tích hợp bên dưới. Danh mục khung của
-  game từ nay = **12 khung này + khung mặc định trơn**, không
-  còn khung tự chế nào khác.
+  trước)**: Tín đã cung cấp sẵn một bộ khung động; danh mục
+  đang dùng gồm **11 khung** — file gốc lưu ở
+  `art_candidates/avatar_frames/raw/frame_01.gif`,
+  `frame_03.gif` … `frame_12.gif` (**giữ nguyên số file gốc,
+  không đánh số lại**). Số đo thật: cả 11 đều là **GIF động
+  1064×1064**, mỗi khung 7–119 frame con và **đều có tâm
+  trong suốt**. Mỗi khung có **cửa sổ trong (aperture) ở vị
+  trí/kích thước khác nhau** — hệ quả kỹ thuật ở mục Tích hợp
+  bên dưới. Danh mục khung của game từ nay = **11 khung này +
+  khung mặc định trơn**, không còn khung tự chế nào khác.
+- frame_02 Quán Cà Phê — Tín loại bỏ 2026-11-12 (file giữ ở art_candidates/avatar_frames/dropped/)
 - **Nơi hiện**: bọc quanh avatar ở **mọi nơi avatar xuất
   hiện** — chip danh tính ở sảnh, thẻ hồ sơ, hàng bạn bè,
   panel Người chơi trong trận, hàng Bảng xếp hạng, hàng người
@@ -716,7 +717,6 @@ của game: avatar là ảnh vuông; không làm khung tròn):
   |---|---|---|---|
   | — | Mặc định (viền vàng mảnh) | Có sẵn cho mọi tài khoản | Vĩnh viễn |
   | 01 | Dây Dâu Tây | Cấp tài khoản 5 | Vĩnh viễn |
-  | 02 | Quán Cà Phê | Thành tích: hoàn thành 30 nhiệm vụ ngày | Vĩnh viễn |
   | 03 | Mặt Mèo | Cấp tài khoản 15 | Vĩnh viễn |
   | 04 | Hoa Hồng Bướm Xanh | Là thành viên khi liên minh đạt cấp 3 | Khi còn ở liên minh đạt mốc đó |
   | 05 | Sân Khấu Trái Tim | Thành tích: thắng 50 trận (mọi chế độ ghi sổ) | Vĩnh viễn |
@@ -729,7 +729,7 @@ của game: avatar là ảnh vuông; không làm khung tròn):
   | 12 | Ruy Băng Sao | Thuộc liên minh đương kim vô địch tháng Đại chiến — cùng luật giữ ngôi như danh hiệu §7.1 (ảnh chụp lúc đăng quang, vào sau không được, rời là mất) | **Chỉ khi đang giữ ngôi** — hết ngôi tự gỡ; nếu đang đeo thì rơi về khung mặc định |
 
   Phân tầng chủ đích: khung theo cấp tài khoản (01/03/08) và
-  thành tích cá nhân (02/05/11) ai chơi đều với tới được;
+  thành tích cá nhân (05/11) ai chơi đều với tới được;
   khung theo liên minh (04/09/10) buộc gắn bó với liên minh;
   06 theo Hạng và 07 theo giải đấu người chơi là tầng giỏi;
   **12 Ruy Băng Sao là khung danh giá nhất** — chỉ nhà vô
@@ -740,7 +740,7 @@ của game: avatar là ảnh vuông; không làm khung tròn):
   là áp dụng ngay ở mọi nơi.
 - **Tích hợp kỹ thuật (việc thật ở bước code, ghi trước để
   khỏi bất ngờ)**:
-  - **Godot không chạy GIF gốc**: cả 12 file phải qua một
+  - **Godot không chạy GIF gốc**: cả 11 file phải qua một
     pipeline chiết xuất ở build-time (tool tái lập được, cùng
     mẫu với các tool xử lý pack của Tín trước đây): tách từng
     GIF thành **sprite sheet** (hoặc WebP động) kèm nhịp
@@ -753,18 +753,20 @@ của game: avatar là ảnh vuông; không làm khung tròn):
     trong tool khi code); riêng cỡ thẻ hồ sơ giữ chuyển động
     mượt, các hàng danh sách nhỏ có thể chạy cùng bản động đã
     hạ cỡ — không phóng từ bản 1064.
-  - **Hiệu chuẩn cửa sổ (aperture)**: 12 khung có cửa sổ
-    trong lệch nhau, nên tool chiết xuất phải sinh kèm **bảng
-    hiệu chuẩn aperture** (hình chữ nhật cửa sổ theo toạ độ
-    chuẩn hoá 0–1 cho từng frame_XX) lưu thành dữ liệu đi
-    cùng asset; hàm vẽ khung dùng bảng này để **co avatar
-    vào đúng cửa sổ của từng khung** — thiếu bảng này là
-    avatar lệch/thừa ra ngoài hoạ tiết.
-  - **frame_02 là ngoại lệ**: tâm của nó là nền kem đặc đã
-    nướng sẵn, không có lỗ trong — avatar phải vẽ **đè lên
-    trên** và **cắt (clip) đúng vào vùng cửa sổ** đã hiệu
-    chuẩn của frame_02 (vùng cửa sổ quán trong hình), không
-    vẽ theo đường trong-suốt như 11 khung còn lại.
+  - **Hiệu chuẩn cửa sổ (aperture) — đã có bảng đo thật**:
+    `art_candidates/avatar_frames/aperture_calibration.json`
+    là **bảng bắt đầu cho build**, không còn là việc ước
+    lượng ở bước code. Bảng này được đo bằng phép **quét
+    alpha theo hai đường ngang/dọc qua tâm (centre-cross)
+    trên frame đầu của từng GIF**, cho ra hình chữ nhật cửa
+    sổ `[x0, y0, x1, y1]` theo toạ độ chuẩn hoá 0–1 cho 11
+    khoá `frame_01`, `frame_03` … `frame_12`. Hàm vẽ đặt
+    avatar thành **một hình vuông nằm giữa cửa sổ và nội
+    tiếp trong hình chữ nhật đó**. Khi build vẫn phải kiểm
+    tra lại bằng mắt/tay từng khung trước khi chốt số, nhất
+    là các cửa sổ không thật sự chữ nhật như **frame_03 Mặt
+    Mèo**; nếu số chốt cuối khác bảng đo, cập nhật JSON cùng
+    thay đổi asset để tài liệu và dữ liệu không lệch nhau.
 
 **B. Bong bóng chat** — lời chat hiện ngay trên đầu nhân vật
 trong trận:
@@ -1188,13 +1190,16 @@ Mỗi mục ghi kèm **đề xuất mặc định của Bé**:
     chụp thành viên lúc đăng quang (vào sau không được nhận,
     rời liên minh là mất), giữ tới khi có nhà vô địch tháng
     tiếp theo. *(Đề xuất: đúng luật chống đu theo này.)*
-16. **Khung avatar (§7.2A)**: bộ khung là **12 khung GIF thật
-    của Tín** (đã thay danh mục tự chế ở bản trước) — **bảng
-    gán nguồn mở khoá ở §7.2A là mặc định đề xuất** chờ chốt
-    (phân tầng: cấp tài khoản/thành tích → liên minh → Hạng/
-    giải đấu → vô địch Đại chiến). Riêng khung 12 (Ruy Băng
-    Sao): chỉ đeo được **khi đang giữ ngôi** (hết ngôi tự gỡ)
-    hay giữ vĩnh viễn như khung 07 của giải đấu người chơi?
+16. **Khung avatar (§7.2A)**: bộ khung là **11 khung GIF thật
+    của Tín** (đã thay danh mục tự chế ở bản trước; frame_02
+    Quán Cà Phê đã bị loại khỏi danh mục) — **bảng gán nguồn
+    mở khoá ở §7.2A là mặc định đề xuất** chờ chốt (phân
+    tầng: cấp tài khoản/thành tích → liên minh → Hạng/giải
+    đấu → vô địch Đại chiến; nguồn “hoàn thành 30 nhiệm vụ
+    ngày” của frame_02 được bỏ hẳn, không gán chồng lên khung
+    khác). Riêng khung 12 (Ruy Băng Sao): chỉ đeo được **khi
+    đang giữ ngôi** (hết ngôi tự gỡ) hay giữ vĩnh viễn như
+    khung 07 của giải đấu người chơi?
     *(Đề xuất: chỉ khi giữ ngôi — khớp luật danh hiệu §7.1,
     và làm ngôi vô địch tháng luôn hiện diện trên avatar
     khắp server.)*
