@@ -99,7 +99,7 @@ var _cavalry_btn: Button
 var _ram_btn: Button
 var _king_btn: Button
 var _skill_row: HBoxContainer
-var _skill_btns: Array = [] # Array[Button] x3 (Chiêu 1 / 2 / Ulti)
+var _skill_btns: Array = [] # Array[Button] x1 (16b: ONE skill per hero)
 var _skill_icons: Array = [] # Array[TextureRect]
 var _skill_sweeps: Array = [] # Array[TextureProgressBar]
 var _skill_secs: Array = [] # Array[Label] cooldown seconds
@@ -1094,10 +1094,10 @@ func _build_skill_button() -> void:
 	# the action panel) and grew a name label under every button.
 	# Geometry (offsets from the bottom-right corner): the action
 	# bar's top edge is at -78; this row's bottom is -92, leaving
-	# 14 px of daylight under the labels. Row height 93 = the ulti
-	# button (76) + 2 spacing + a ~15 px name label; columns are
-	# 104/104/112 wide (336 total) so full skill names fit.
-	_skill_row.offset_left = -352
+	# 14 px of daylight under the label. Row height 93 = the one
+	# skill button (76) + 2 spacing + a ~15 px name label; the
+	# single column is 112 wide so the full skill name fits.
+	_skill_row.offset_left = -128
 	_skill_row.offset_top = -185
 	_skill_row.offset_right = -16
 	_skill_row.offset_bottom = -92
@@ -1106,9 +1106,9 @@ func _build_skill_button() -> void:
 	var wimg := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	wimg.fill(Color.WHITE)
 	var sweep_tex := ImageTexture.create_from_image(wimg)
-	for i in range(3):
+	for i in range(1):
 		var idx := i + 1
-		var big := idx == 3
+		var big := true # 16b: the one skill gets the gold frame
 		var btn := _text_button("")
 		btn.custom_minimum_size = Vector2(76, 76) if big else Vector2(58, 58)
 		btn.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -1202,15 +1202,14 @@ func _on_skill_pressed(idx: int) -> void:
 	if hero == null:
 		return
 	var ch: String = game.char_for(hero.owner_id)
-	# 14c: Chiêu 1 can be targeted too (the new heroes) — the
-	# original four keep their instant flow via cast_local_skill.
-	if idx == 1 and not game.skill_is_targeted(ch, 1):
-		game.cast_local_skill()
+	# 16b: exactly ONE skill (idx 1). Ground-targeted skills arm
+	# the targeting flow; self-centred ones cast instantly.
+	if idx != 1:
 		return
-	if game.skill_is_targeted(ch, idx):
-		game.begin_skill_targeting(idx)
+	if game.skill_is_targeted(ch, 1):
+		game.begin_skill_targeting(1)
 	else:
-		game.cast_local_skill_at(idx, hero.global_position)
+		game.cast_local_skill()
 
 
 ## 15c: press-and-hold on a skill button. A press is timed by
@@ -1272,7 +1271,7 @@ func _update_skill_hold() -> void:
 ## column (the owner asked for full names, shrunk — never cut).
 func _fit_skill_name_label(i: int) -> void:
 	var lbl := _skill_name_labels[i] as Label
-	var col_w := 112.0 if i == 2 else 104.0
+	var col_w := 112.0
 	var f := lbl.get_theme_default_font()
 	var size := 12
 	while size > 8 and f.get_string_size(lbl.text,
@@ -1324,12 +1323,9 @@ func _show_skill_info(idx: int) -> void:
 		return
 	var ch: String = game.char_for(hero.owner_id)
 	var kit := Characters.kit_of(ch)
-	var key := "skill" if idx == 1 else ("skill2" if idx == 2 else "skill3")
-	_skill_info_title.text = String(kit.get(key, ""))
-	var cd := Stats.hero_cd(ch) if idx == 1 else (
-			Stats.hero_cd2(ch) if idx == 2 else Stats.hero_cd3(ch))
-	_skill_info_cd.text = "Hồi chiêu: %d giây" % int(round(cd))
-	_skill_info_desc.text = String(kit.get(key + "_desc", ""))
+	_skill_info_title.text = String(kit.get("skill", ""))
+	_skill_info_cd.text = "Hồi chiêu: %d giây" % int(round(Stats.hero_cd(ch)))
+	_skill_info_desc.text = String(kit.get("skill_desc", ""))
 	_skill_info_icon.texture = (_skill_icons[idx - 1] as TextureRect).texture
 	_skill_info_card.visible = true
 	var h := _skill_info_card.get_combined_minimum_size().y
@@ -1385,23 +1381,21 @@ func _refresh_skill_button() -> void:
 	if ch != _skill_for_char:
 		_skill_for_char = ch
 		var kit := Characters.kit_of(ch)
-		for i in range(3):
-			var idx := i + 1
-			var key := "skill" if idx == 1 else ("skill2" if idx == 2 else "skill3")
-			var tex: Texture2D = load("res://assets/skill_icons/%s_%d.png" % [ch, idx])
+		for i in range(1):
+			var tex: Texture2D = load("res://assets/skill_icons/%s_1.png" % ch)
 			(_skill_icons[i] as TextureRect).texture = tex
 			(_skill_btns[i] as Button).tooltip_text = "%s — %s" % [
-					String(kit.get(key, "")), String(kit.get(key + "_desc", ""))]
+					String(kit.get("skill", "")), String(kit.get("skill_desc", ""))]
 			# 15c: the name label under the button + the same
 			# tooltip on the input catcher (it is what the cursor
 			# actually hovers).
-			(_skill_name_labels[i] as Label).text = String(kit.get(key, ""))
+			(_skill_name_labels[i] as Label).text = String(kit.get("skill", ""))
 			_fit_skill_name_label(i)
 			(_skill_hits[i] as Control).tooltip_text = \
 					(_skill_btns[i] as Button).tooltip_text
-	var cds := [Stats.hero_cd(ch), Stats.hero_cd2(ch), Stats.hero_cd3(ch)]
-	var lefts := [hero.skill_cd_t, hero.skill2_cd_t, hero.skill3_cd_t]
-	for i in range(3):
+	var cds := [Stats.hero_cd(ch)]
+	var lefts := [hero.skill_cd_t]
+	for i in range(1):
 		var frac := clampf(lefts[i] / cds[i], 0.0, 1.0) if cds[i] > 0.0 else 0.0
 		(_skill_sweeps[i] as TextureProgressBar).value = frac * 100.0
 		(_skill_btns[i] as Button).disabled = lefts[i] > 0.0

@@ -1,7 +1,7 @@
 {
- "cell_w": 200,
- "cell_h": 120,
- "baseline": 110,
+ "cell_w": 240,
+ "cell_h": 150,
+ "baseline": 146,
  "animations": {
   "idle": {
    "row": 0,

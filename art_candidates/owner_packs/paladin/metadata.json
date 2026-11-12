@@ -1,0 +1,181 @@
+{
+  "group_id": "a2458019-66c4-44d5-b872-f85d6cb58149",
+  "states": [
+    {
+      "character": {
+        "id": "ef02cdb6-b811-4e06-8547-2dc0994c55e2",
+        "name": "Idle",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:42:24.039878+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "807e4df8-452d-494e-83ab-bd108495f717",
+        "name": "Run",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:54:36.785031+00:00"
+      },
+      "folder": "Run",
+      "frames": {
+        "rotations": {
+          "south": "Run/rotations/south.png",
+          "south-east": "Run/rotations/south-east.png",
+          "east": "Run/rotations/east.png",
+          "north-east": "Run/rotations/north-east.png",
+          "north": "Run/rotations/north.png",
+          "north-west": "Run/rotations/north-west.png",
+          "west": "Run/rotations/west.png",
+          "south-west": "Run/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "e0b51f53-b9fc-4ffc-9a97-32678503b8f3",
+        "name": "Walk",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:54:44.919944+00:00"
+      },
+      "folder": "Walk",
+      "frames": {
+        "rotations": {
+          "south": "Walk/rotations/south.png",
+          "south-east": "Walk/rotations/south-east.png",
+          "east": "Walk/rotations/east.png",
+          "north-east": "Walk/rotations/north-east.png",
+          "north": "Walk/rotations/north.png",
+          "north-west": "Walk/rotations/north-west.png",
+          "west": "Walk/rotations/west.png",
+          "south-west": "Walk/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "95a393c8-2ba1-4adf-8d56-3c9cfa0910b1",
+        "name": "Bassic attack",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:55:05.864282+00:00"
+      },
+      "folder": "Bassic_attack",
+      "frames": {
+        "rotations": {
+          "south": "Bassic_attack/rotations/south.png",
+          "south-east": "Bassic_attack/rotations/south-east.png",
+          "east": "Bassic_attack/rotations/east.png",
+          "north-east": "Bassic_attack/rotations/north-east.png",
+          "north": "Bassic_attack/rotations/north.png",
+          "north-west": "Bassic_attack/rotations/north-west.png",
+          "west": "Bassic_attack/rotations/west.png",
+          "south-west": "Bassic_attack/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "5e266fa5-14a4-4876-a1f8-2115eaf29ec1",
+        "name": "Hurt",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:56:46.222085+00:00"
+      },
+      "folder": "Hurt",
+      "frames": {
+        "rotations": {
+          "south": "Hurt/rotations/south.png",
+          "south-east": "Hurt/rotations/south-east.png",
+          "east": "Hurt/rotations/east.png",
+          "north-east": "Hurt/rotations/north-east.png",
+          "north": "Hurt/rotations/north.png",
+          "north-west": "Hurt/rotations/north-west.png",
+          "west": "Hurt/rotations/west.png",
+          "south-west": "Hurt/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "896d0851-0421-4a6c-9735-77c77ab438bc",
+        "name": "Die",
+        "prompt": "Adult male holy paladin knight in his thirties, neat golden blond hair and short trimmed blond beard, solemn kind expression, gleaming WHITE enamel plate armor with ornate GOLD trim, large golden cross emblazoned on his chest and on his white heater shield, white tabard with a golden holy cross, warm radiant holy aura details, longsword with golden crossguard in hand, full body 2D pixel art game character, chibi big-head proportions, front view standing pose, highly detailed sacred engravings on armor, clean solid background, fantasy RPG character design",
+        "size": {
+          "width": 48,
+          "height": 48
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-12T02:56:58.466761+00:00"
+      },
+      "folder": "Die",
+      "frames": {
+        "rotations": {
+          "south": "Die/rotations/south.png",
+          "south-east": "Die/rotations/south-east.png",
+          "east": "Die/rotations/east.png",
+          "north-east": "Die/rotations/north-east.png",
+          "north": "Die/rotations/north.png",
+          "north-west": "Die/rotations/north-west.png",
+          "west": "Die/rotations/west.png",
+          "south-west": "Die/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-11-12T03:00:42.208188"
+}

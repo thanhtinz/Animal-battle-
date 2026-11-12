@@ -583,10 +583,12 @@ func _refresh_avatar_row() -> void:
 				else Color(0.62, 0.62, 0.66, 0.85)
 
 
-## The character collection ("Nhân vật"): the four mains with
+## The character collection ("Nhân vật"): the eight mains with
 ## portrait + kit lines (they are ASSIGNED by draw each match —
-## there is nothing to equip), then the cosmetic skins as locked
-## premium teasers (appearance only, no kit; shop comes later).
+## there is nothing to equip). 16b: the wuxia skin teasers are
+## UNBOUND from this page (the skin sets belonged to the old
+## roster) — the dormant skin data stays in Characters for a
+## future cosmetic system, but nothing here draws it.
 func _build_characters() -> void:
 	_chars_root = Control.new()
 	_chars_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -631,14 +633,6 @@ func _build_characters() -> void:
 	vb.add_child(grid)
 	for id in Characters.CHAR_IDS:
 		grid.add_child(_char_card(id))
-	vb.add_child(_label("SKIN NGOẠI HÌNH — chỉ thay ngoại hình của nhân vật, không đổi kỹ năng", 15, GOLD_TXT))
-	var sgrid := GridContainer.new()
-	sgrid.columns = 4
-	sgrid.add_theme_constant_override("h_separation", 10)
-	sgrid.add_theme_constant_override("v_separation", 8)
-	vb.add_child(sgrid)
-	for id in Characters.SKIN_IDS:
-		sgrid.add_child(_skin_card(id))
 
 
 func _char_card(id: String) -> PanelContainer:
@@ -674,28 +668,6 @@ func _char_card(id: String) -> PanelContainer:
 			int(Stats.hero_cd(id)), String(kit.get("skill_desc", ""))], 11)
 	s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(s)
-	return card
-
-
-func _skin_card(id: String) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel", _lb_sb(Color(0.05, 0.08, 0.16, 0.85), 10))
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL # 14c: align with the hero grid
-	card.modulate = Color(0.72, 0.72, 0.78, 0.9)
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 4)
-	card.add_child(vb)
-	var tr := TextureRect.new()
-	tr.texture = Characters.texture_for(id, "s")
-	tr.custom_minimum_size = Vector2(72, 88)
-	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(tr)
-	vb.add_child(_label(Characters.skin_name(id), 17, GOLD_TXT))
-	var t := _label("Chỉ thay ngoại hình · Skin cao cấp — sắp mở bán", 11, TXT_DIM)
-	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(t)
 	return card
 
 

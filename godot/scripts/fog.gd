@@ -131,7 +131,7 @@ func update_fog() -> void:
 	for u in game.units:
 		if _reveals(u.team, u.owner_id, local_team, vslot) and not u.is_dead():
 			reveal.call(world.world_to_cell(u.global_position),
-					int(Stats.unit_stat(u.unit_type, "sight")))
+					int(Stats.unit_stat(u.unit_type, "sight")) + _ranger_bonus(u))
 	if game.get("ships") != null:
 		for s in game.ships:
 			if _reveals(s.team, s.owner_id, local_team, vslot) and not s.is_dead():
@@ -169,7 +169,7 @@ func _vision_for(team: int) -> Dictionary:
 	for u in game.units:
 		if _reveals(u.team, u.owner_id, team, vslot) and not u.is_dead():
 			reveal.call(world.world_to_cell(u.global_position),
-					int(Stats.unit_stat(u.unit_type, "sight")))
+					int(Stats.unit_stat(u.unit_type, "sight")) + _ranger_bonus(u))
 	if game.get("ships") != null:
 		for s in game.ships:
 			if _reveals(s.team, s.owner_id, team, vslot) and not s.is_dead():
@@ -181,6 +181,15 @@ func _vision_for(team: int) -> Dictionary:
 			reveal.call(centre, int(BUILDING_SIGHT.get(b.btype, 5)))
 	return visible
 
+
+
+## 16b: the Ranger's "Viễn Thị" aura — +sight for every allied
+## unit inside his aura (fog is presentation of sim positions;
+## the bonus is derived, never stored).
+func _ranger_bonus(u) -> int:
+	if game != null and game.hero_aura_covers(u, "ranger", true):
+		return int(Stats.HERO_KITS["ranger"]["aura_sight"])
+	return 0
 
 func _ensure_team_states() -> void:
 	if game == null:

@@ -52,10 +52,14 @@ const DISPLAY_SCALE := 0.49 # cell 82 tall, character ~72 px -> ~35 px on screen
 ## unmistakably as the smallest person on the field. Enemy villagers
 ## share the sheet geometry and inherit the same scale.
 const DISPLAY_SCALES := {"villager": 0.46, "spearman": 0.434, "cavalry": 0.36, "ram": 0.36,
-	# 15g vehicles (sheets by tools/build_transport_assets.py):
-	# cart side length 161 sheet px -> ~64 world px (~2 tiles);
-	# wagon 212 px -> ~85 world px (~2.6 tiles), heights land at
-	# infantry height / a shade above, like the Ram.
+	# 15g vehicles (sheets by tools/build_transport_assets.py,
+	# scale pass 2026-11-11): the first cut stood the cart 38 world
+	# px tall and the wagon 41 — shorter than a hero (45) — so the
+	# sheets were redrawn at true vehicle scale on this same 0.40:
+	# cart side 225 sheet px -> 90 world px (body ~1.4 tiles) and
+	# 47 px tall at the canopy; wagon side 277 px -> 111 world px
+	# (body ~2 tiles) and 55 px tall — both unmistakably vehicles
+	# next to the 34.3 infantry ruler, horse included in the length.
 	"cart": 0.40, "wagon": 0.40}
 ## Idle-frame alpha content per sheet, sheet px (PIL alpha scan):
 ## [front width, full height, body height, side length]. Body height
@@ -67,10 +71,10 @@ const CONTENT_SIZE := {
 	"spearman": [59, 84, 79, 60],
 	"cavalry": [53, 124, 124, 118],
 	"ram": [192, 124, 124, 192],
-	# 15g: measured from the generated sheets (alpha bbox of the
-	# front idle frame / full height / side length).
-	"cart": [98, 96, 96, 161],
-	"wagon": [120, 103, 103, 212],
+	# 15g: measured from the generated sheets (alpha>16 bbox of
+	# the front idle frame / full height / side length).
+	"cart": [164, 117, 117, 225],
+	"wagon": [186, 137, 137, 277],
 }
 
 
@@ -538,10 +542,13 @@ func is_targetable() -> bool:
 
 func attack_range() -> float:
 	var r := Stats.unit_stat(unit_type, "range")
-	# 14c: Phong Linh is a RANGED hero — her basic attack is a bow
-	# shot at archer-like range (see strike()).
-	if unit_type == "king" and hero_char() == "phong_linh":
-		return float(Stats.HERO_KITS["phong_linh"]["bow_range_tiles"]) * World.TILE
+	# 16b: per-hero attack-range override — the Archer and the
+	# Mage are RANGED heroes (160 px, see strike()) and the
+	# Dragoon's lance outreaches a sword (57 px).
+	if unit_type == "king":
+		var kit: Dictionary = Stats.HERO_KITS.get(hero_char(), {})
+		if kit.has("range_px"):
+			return float(kit["range_px"])
 	# Ballistics (Castle tech, GDD sections 5–6): archers shoot
 	# further (towers/castles get the same bonus in Main's loop).
 	if unit_type == "archer" and game != null \
@@ -698,14 +705,13 @@ func _follow_path(delta: float) -> void:
 
 
 ## Movement-speed multiplier from timed skill effects (own buffs
-## and debuffs) and from Lam Bào's enemy aura "Hàn Khí" (queried
-## live from sim positions — no state of its own to drift).
+## and debuffs) and from the Dragoon's allied aura "Long Hành"
+## (queried live from sim positions — no state of its own to
+## drift; Main.hero_speed_factor owns the aura arithmetic).
 func eff_speed_mult() -> float:
 	if frozen_t > 0.0 or stun_t > 0.0:
 		return 0.0
 	var m := eff_spd_mult if eff_spd_t > 0.0 else 1.0
-	if chill_t > 0.0:
-		m *= float(Stats.HERO_SKILL3["lam_bao"]["slow_mult"])
 	if game != null and game.has_method("hero_speed_factor"):
 		m *= game.hero_speed_factor(self)
 	return m
@@ -719,9 +725,10 @@ func control_locked() -> bool:
 	return stun_t > 0.0 or frozen_t > 0.0
 
 
-## Hoa Vũ Hồi Sinh cleanse: clears slow-type debuffs and the hard
-## freeze. Deliberately does NOT clear stun (a different class of
-## control) or the caster-side buffs (mult >= 1 is kept).
+## Thánh Quang Hồi Phục cleanse (the Paladin's skill): clears
+## every negative timed effect — slow / attack-speed debuffs,
+## the attack cut, hard control (stun / freeze) and any pending
+## taunt. Caster-side buffs (mult >= 1) are kept.
 func cleanse_effects() -> void:
 	if eff_spd_t > 0.0 and eff_spd_mult < 1.0:
 		eff_spd_mult = 1.0
@@ -729,18 +736,25 @@ func cleanse_effects() -> void:
 	if eff_atkspd_t > 0.0 and eff_atkspd_f < 1.0:
 		eff_atkspd_f = 1.0
 		eff_atkspd_t = 0.0
+	if eff_dmg_t > 0.0 and eff_dmg_mult < 1.0:
+		eff_dmg_mult = 1.0
+		eff_dmg_t = 0.0
+	atk_down_mult = 1.0
+	atk_down_t = 0.0
 	frozen_t = 0.0
-	chill_t = 0.0
+	stun_t = 0.0
+	taunt_t = 0.0
+	taunt_id = -1
 
 
 func eff_atkspd_mult() -> float:
 	var m := eff_atkspd_f if eff_atkspd_t > 0.0 else 1.0
-	# 14c: Lôi Chấn's aura "Lôi Vực" — allies in radius strike
-	# faster (the hero never buffs himself, hero_aura_covers
-	# excludes him for offensive auras).
+	# 16b: the Berserker's aura "Cuồng Chiến" — allies in radius
+	# strike faster (the hero never buffs himself, hero_aura_
+	# covers excludes him for offensive auras).
 	if game != null and game.has_method("hero_aura_covers") \
-			and game.hero_aura_covers(self, "loi_chan"):
-		m *= float(Stats.HERO_KITS["loi_chan"]["aura_atkspd"])
+			and game.hero_aura_covers(self, "berserker"):
+		m *= float(Stats.HERO_KITS["berserker"]["aura_atkspd"])
 	return m
 
 
@@ -759,10 +773,6 @@ func _tick_effects(delta: float) -> void:
 		eff_atkspd_t -= delta
 	if skill_cd_t > 0.0:
 		skill_cd_t -= delta
-	if skill2_cd_t > 0.0:
-		skill2_cd_t -= delta
-	if skill3_cd_t > 0.0:
-		skill3_cd_t -= delta
 	if stun_t > 0.0:
 		stun_t -= delta
 	if frozen_t > 0.0:
@@ -773,40 +783,24 @@ func _tick_effects(delta: float) -> void:
 			atk_down_mult = 1.0
 	if immune_t > 0.0:
 		immune_t -= delta
-	if chill_t > 0.0:
-		chill_t -= delta
-	# 14c: Xích Diệm burn — fixed 0.5 s ticks, damage flagged as
-	# DoT so it cannot re-apply the aura burn to itself.
-	if burn_ticks > 0:
-		burn_acc += delta
-		while burn_acc >= 0.5 and burn_ticks > 0:
-			burn_acc -= 0.5
-			burn_ticks -= 1
-			if burn_ticks == 0:
-				burn_t = 0.0
-			var src: Unit = burn_from if (burn_from != null \
-					and is_instance_valid(burn_from)) else null
-			take_damage(burn_amt, src, true)
-			if state == "dead":
-				break
-		if burn_ticks == 0:
-			burn_t = 0.0
-			burn_acc = 0.0
-	elif burn_t > 0.0:
-		burn_t = maxf(0.0, burn_t - delta)
-	# 14c: Hỏa Ấn — the mark detonates on schedule (Main resolves
-	# the blast; a dying bearer detonates early in die()).
-	if mark_t > 0.0:
-		mark_t -= delta
-		if mark_t <= 0.0:
-			mark_t = 0.0
-			if game != null and game.has_method("explode_hero_mark"):
-				game.explode_hero_mark(self)
-	# Kim Hoa "Sinh Tồn": +1 HP per 2 s while inside her aura.
+	# 16b: the Knight's Khiên Sư Tử shield pool expires with its
+	# timer (the pool itself is consumed in take_damage).
+	if shield_t > 0.0:
+		shield_t -= delta
+		if shield_t <= 0.0:
+			shield_hp = 0.0
+	# 16b: Khiên Sư Tử taunt — while it lasts, target acquisition
+	# is forced onto the taunting hero (see _taunt_hero).
+	if taunt_t > 0.0:
+		taunt_t -= delta
+		if taunt_t <= 0.0:
+			taunt_id = -1
+	# The Mage's aura "Sinh Lực": +1.2 HP per second while
+	# inside her aura (herself included).
 	if game != null and game.has_method("hero_aura_covers") \
-			and game.hero_aura_covers(self, "kim_hoa", true):
+			and game.hero_aura_covers(self, "mage", true):
 		_regen_t += delta
-		var kit: Dictionary = Stats.HERO_KITS["kim_hoa"]
+		var kit: Dictionary = Stats.HERO_KITS["mage"]
 		while _regen_t >= float(kit["regen_period"]):
 			_regen_t -= float(kit["regen_period"])
 			if hp < max_hp:
@@ -1292,6 +1286,11 @@ func _nearest_hostile_unit(radius: float):
 func _acquire_near_guard():
 	if game == null:
 		return null
+	# 16b: a live taunt overrides target acquisition outright —
+	# the taunted unit engages the Knight wherever he stands.
+	var th := _taunt_hero()
+	if th != null:
+		return th
 	var leash := sight_px() + 64.0
 	var best = null
 	var bd := sight_px()
@@ -1341,6 +1340,13 @@ func _after_target_lost() -> void:
 
 
 func _combat_tick(delta: float, _moving: bool) -> void:
+	# 16b: a live taunt drags even a mid-fight unit onto the
+	# taunting Knight (its current victim is simply dropped).
+	var th := _taunt_hero()
+	if th != null and attack_target != th:
+		attack_target = th
+		state = "to_attack"
+		_repath_t = 0.0
 	if attack_target == null or not is_instance_valid(attack_target) \
 			or (attack_target is Unit and not attack_target.is_targetable()) \
 			or (attack_target is Building and attack_target.destroyed) \
@@ -1363,7 +1369,14 @@ func _combat_tick(delta: float, _moving: bool) -> void:
 		_atk_cd -= delta
 		if _atk_cd <= 0.0:
 			strike()
-			_atk_cd = Stats.unit_stat(unit_type, "cooldown") / eff_atkspd_mult()
+			var cd_base := Stats.unit_stat(unit_type, "cooldown")
+			if unit_type == "king":
+				# 16b: per-hero swing cadence (the Berserker's
+				# heavy axe, the Assassin's twin daggers...).
+				var kkit: Dictionary = Stats.HERO_KITS.get(hero_char(), {})
+				if kkit.has("atk_cd"):
+					cd_base = float(kkit["atk_cd"])
+			_atk_cd = cd_base / eff_atkspd_mult()
 		return
 	if state != "to_attack":
 		state = "to_attack"
@@ -1389,18 +1402,33 @@ func strike() -> void:
 	if game != null and game.has_method("owner_age"):
 		atk_age = game.owner_age(owner_id)
 	var dmg := Stats.damage(unit_type, attack_target, atk_age)
-	# Ngân Kỵ's aura "Huyết Bào": an allied military unit striking
-	# within its own hero's aura radius hits harder when the hero
-	# is Ngân Kỵ. Positions are sim state, so the check is
-	# deterministic; the hero never buffs himself this way.
+	# 16b: per-hero basic-attack power — Stats.damage ran on the
+	# shared "king" frame (26 per hit); a kit "atk" rescales the
+	# hit (counters were applied to the frame value, so the
+	# rescale preserves the counter table exactly).
+	if unit_type == "king":
+		var hkit: Dictionary = Stats.HERO_KITS.get(hero_char(), {})
+		if hkit.has("atk"):
+			dmg *= float(hkit["atk"]) / Stats.unit_stat("king", "atk")
+	# The Archer's aura "Ngắm Chuẩn": an allied military unit
+	# striking within its own hero's aura radius hits harder when
+	# the hero is the Archer. Positions are sim state, so the
+	# check is deterministic; the hero never buffs herself.
 	if is_military() and unit_type != "king" and game != null \
 			and game.has_method("hero_aura_covers") \
-			and game.hero_aura_covers(self, "ngan_ky"):
-		dmg *= Stats.KING_AURA_MULT
-	# Xung Phong (the hero's own timed buff): +100% damage.
+			and game.hero_aura_covers(self, "archer"):
+		dmg *= float(Stats.HERO_KITS["archer"]["aura_dmg"])
+	# The Assassin's aura "Thích Sát": allied military striking
+	# an enemy HERO inside the Assassin's aura hit harder.
+	if is_military() and unit_type != "king" and attack_target is Unit \
+			and (attack_target as Unit).unit_type == "king" \
+			and game != null and game.has_method("hero_aura_covers") \
+			and game.hero_aura_covers(self, "assassin"):
+		dmg *= float(Stats.HERO_KITS["assassin"]["aura_hero_dmg"])
+	# The hero's own timed buff (eff_dmg_mult, generic).
 	if eff_dmg_t > 0.0:
 		dmg *= eff_dmg_mult
-	# Thánh Quang Phán Xét (13v): the judged hit weaker.
+	# The attack cut (generic debuff state).
 	if atk_down_t > 0.0:
 		dmg *= atk_down_mult
 	# Attack technologies (GDD section 4, at the Barracks): flat
@@ -1428,9 +1456,12 @@ func strike() -> void:
 					dv, Color(1.0, 0.85, 0.4, 0.95), 0.22)
 			game.vfx.flash(global_position + Vector2(0, -22) + dv * 22.0,
 					Color(1.0, 0.88, 0.45, 0.7), 34.0, 0.16)
-	if unit_type == "archer" or (unit_type == "king" and hero_char() == "phong_linh"):
-		# Archers — and Phong Linh, the ranged hero — loose a
-		# projectile through Main; damage was fixed above.
+	if unit_type == "archer" or (unit_type == "king" \
+			and bool(Stats.HERO_KITS.get(hero_char(), {}).get("ranged", false))):
+		# Archers — and the RANGED heroes (Archer / Mage, the
+		# kits flagged "ranged") — loose a projectile through
+		# Main; damage was fixed above. (The Dragoon's range_px
+		# is a melee lance reach, NOT a projectile.)
 		if game != null and game.has_method("fire_arrow"):
 			game.fire_arrow(global_position + Vector2(0, -34), attack_target, dmg, self)
 	else:
@@ -1440,9 +1471,9 @@ func strike() -> void:
 func take_damage(amount: float, _attacker = null, dot := false) -> void:
 	if state == "dead":
 		return
-	# Bạch Sa's kit (defender side): her aura "Thánh Quang" softens
-	# damage to allies in radius (herself included); her "Kết Giới"
-	# zone softens it further for allies standing inside.
+	# The Knight's kit (defender side): his aura "Hộ Vệ" softens
+	# damage to allies in radius (himself included) — Main owns
+	# the factor so aura arithmetic lives in one place.
 	if game != null and game.has_method("hero_damage_factor"):
 		amount *= game.hero_damage_factor(self)
 	# Armour technologies (13s): flat per-hit reduction from the
@@ -1452,24 +1483,14 @@ func take_damage(amount: float, _attacker = null, dot := false) -> void:
 		var arm: float = game.tech_armor(owner_id, unit_type)
 		if arm > 0.0:
 			amount = maxf(1.0, amount - arm)
-	# 14c: Thạch Sơn's aura "Thổ Giáp" — a flat 3 off every hit for
-	# allies inside (himself included), same at-least-1 rule.
+	# 16b: the Paladin's aura "Thánh Giáp" — a flat 3 off every
+	# hit for allies inside (himself included), same at-least-1
+	# rule.
 	if game != null and game.has_method("hero_aura_covers") \
-			and game.hero_aura_covers(self, "thach_son", true):
-		amount = maxf(1.0, amount - float(Stats.HERO_KITS["thach_son"]["aura_armor"]))
-	# 14c: Xích Diệm's aura "Hỏa Tâm" — a hostile unit striking
-	# while covered by an allied Xích Diệm hero sets its victim
-	# burning. Direct hits only: DoT ticks (dot) never re-apply.
-	if not dot and _attacker is Unit and game != null \
-			and game.attack_allowed((_attacker as Unit).owner_id, owner_id) \
-			and amount > 0.0 \
-			and game.has_method("hero_aura_covers") \
-			and game.hero_aura_covers(_attacker, "xich_diem"):
-		apply_burn(float(Stats.HERO_KITS["xich_diem"]["aura_burn_amt"]),
-				float(Stats.HERO_KITS["xich_diem"]["aura_burn_t"]),
-				_attacker)
-	# 13v: Vạn Hoa Khai Thiên immunity swallows the hit whole;
-	# a Thiên Màn shield pool absorbs before HP is touched.
+			and game.hero_aura_covers(self, "paladin", true):
+		amount = maxf(1.0, amount - float(Stats.HERO_KITS["paladin"]["aura_armor"]))
+	# Damage immunity swallows the hit whole; an absorb shield
+	# pool (the Knight's Khiên Sư Tử) soaks before HP is touched.
 	if immune_t > 0.0:
 		amount = 0.0
 	elif shield_hp > 0.0 and amount > 0.0:
@@ -1516,10 +1537,6 @@ func die() -> void:
 		cargo.clear()
 		unload_cell = Vector2i(-1, -1)
 	clear_trade_route()
-	# 14c: a bearer dying under Hỏa Ấn detonates the mark at the
-	# spot where it fell (Main resolves the blast).
-	if mark_t > 0.0 and game != null and game.has_method("explode_hero_mark"):
-		game.explode_hero_mark(self)
 	garrisoned = false
 	visible = true
 	flee_haven = null
@@ -1548,16 +1565,13 @@ func die() -> void:
 ##     idle breathing bob + skew sway, walk step bob + lean +
 ##     dust puffs, attack lunge + gold slash-arc VFX, hurt white
 ##     flash, death tip-over fall.
-##   13n (the four MAIN CHARACTERS): a cutout LIMB RIG built by
-##     tools/build_hero_rig.py — each still is partitioned into
-##     jointed parts (back/under/legs/torso/arms) plus a drawn
-##     WEAPON per character (longsword / flower sceptre / ice
-##     spear / holy staff). _rig_pose poses the parts:
-##     real alternating leg swings, counter-swinging arms,
-##     keyframed sword slash / spear thrust / staff tap on the
-##     attack cadence, a weapon-raised cast pose, a flinch —
-##     see _rig_pose. The single sprite remains as the rig's
-##     hidden fallback carrier (shadow/HP-bar anchor in _draw).
+##   13n (rig era): a cutout LIMB RIG — each still partitioned
+##     into jointed parts plus a drawn weapon, posed by
+##     _rig_pose. DORMANT since 16b: hero_rig.json ships no rig
+##     entries, so every current character renders on the 13j
+##     single-sprite path above with the OWNER PACK stills
+##     (tools/build_owner_pack_sprites.py). The rig machinery
+##     stays for a possible future appearance format.
 ## Facing: 8-sector mapping of the movement/attack vector.
 ## APPEARANCE vs CHARACTER: the sprite follows the owner's
 ## APPEARANCE (Main.appearance_for — the active cosmetic skin if
@@ -1588,33 +1602,29 @@ var eff_dmg_mult := 1.0
 var eff_dmg_t := 0.0
 var eff_atkspd_f := 1.0
 var eff_atkspd_t := 0.0
-## 13v skill state (SIM — set only by Main's skill sim): the two
-## extra hero cooldowns, hard control locks (stun from Vương Kiếm,
-## freeze from Thương Băng), the Phán Xét attack cut, the Thiên
-## Màn absorb shield, Vạn Hoa damage immunity, and the blizzard
-## chill (refreshed by Main's zone tick while inside Băng Hà).
-var skill2_cd_t := 0.0
-var skill3_cd_t := 0.0
+## Skill state (SIM — set only by Main's skill sim): hard
+## control locks (stun / freeze — generic control plumbing the
+## Paladin's cleanse clears), the attack cut, the absorb shield
+## pool (the Knight's Khiên Sư Tử; shield_t is its lifetime) and
+## damage immunity.
 var stun_t := 0.0
 var frozen_t := 0.0
 var atk_down_mult := 1.0
 var atk_down_t := 0.0
 var shield_hp := 0.0
+var shield_t := 0.0
 var immune_t := 0.0
-var chill_t := 0.0
-## 14c skill state (SIM — set only by Main's skill sim / aura
-## hooks): the Xích Diệm burn (HP per 0.5 s tick, refreshed not
-## stacked) and her Hỏa Ấn delayed mark (Main detonates it via
-## explode_hero_mark when the timer ends or the bearer dies).
-var burn_t := 0.0
-var burn_amt := 0.0
-var burn_ticks := 0
-var burn_acc := 0.0
-var burn_from: Unit = null
-var mark_t := 0.0
-var mark_dmg := 0.0
-var mark_radius := 0.0
-var mark_owner := -1
+## 16b: Khiên Sư Tử taunt (SIM): while taunt_t lasts, this unit's
+## target acquisition is forced onto the taunting hero, resolved
+## by net id (taunt_id) so snapshots restore it exactly.
+var taunt_t := 0.0
+var taunt_id := -1
+## 16b: the Ranger's Kiếm Vũ Lữ Hành in flight (SIM, ticked by
+## Main): slashes remaining, time to the next slash, and the
+## round-robin cursor (net id of the last enemy slashed).
+var flurry_left := 0
+var flurry_t := 0.0
+var flurry_cursor := -1
 
 
 ## The drawn character of this hero unit (kit identity), or ""
@@ -1626,20 +1636,22 @@ func hero_char() -> String:
 	return game.char_for(owner_id)
 
 
-## Xích Diệm burns: `amt` HP per 0.5 s for `dur` seconds. A fresh
-## hit REFRESHES the burn (duration + tick count restart, the
-## amount never stacks — a stronger active burn keeps its amount).
-func apply_burn(amt: float, dur: float, from: Unit) -> void:
-	if state == "dead":
-		return
-	if burn_t > 0.0:
-		burn_amt = maxf(burn_amt, amt)
-	else:
-		burn_amt = amt
-	burn_t = dur
-	burn_ticks = int(round(dur / 0.5))
-	burn_acc = 0.0
-	burn_from = from
+## The taunting hero while Khiên Sư Tử's taunt lasts (null when
+## the taunt has lapsed, the hero died, or relations no longer
+## allow the attack — diplomacy can end a taunt early).
+func _taunt_hero() -> Unit:
+	if taunt_t <= 0.0 or taunt_id < 0 or game == null \
+			or not game.has_method("unit_of_net_id"):
+		return null
+	var h: Unit = game.unit_of_net_id(taunt_id)
+	if h == null or not is_instance_valid(h) or not h.is_targetable():
+		return null
+	if game.has_method("attack_allowed") \
+			and not game.attack_allowed(owner_id, h.owner_id):
+		return null
+	return h
+
+
 ## The hero's active-skill cooldown, seconds remaining (sim).
 var skill_cd_t := 0.0
 var _regen_t := 0.0
@@ -1967,10 +1979,7 @@ func _rig_pose(delta: float, moving: bool) -> void:
 		if _rig_parts.has("back"):
 			rots["back"] = -0.05 * raise
 		_hero_root.position += Vector2(0, 1.6 * sin(PI * u)) # crouch mid-cast
-		var cast_abs: float = float({"ngan_ky": -18.0, "lam_bao": -24.0,
-				"kim_hoa": -8.0, "bach_sa": -6.0,
-				"loi_chan": -28.0, "xich_diem": -14.0,
-				"phong_linh": -22.0, "thach_son": -18.0}.get(hero_appearance, -10.0))
+		var cast_abs := -14.0 # rig-era cast apex (rig is dormant in 16b)
 		var rest_auth := float(wp.get("rest", 0.0)) * f
 		weapon_abs = deg_to_rad(lerpf(rest_auth, cast_abs, raise) * f)
 		weapon_is_abs = true

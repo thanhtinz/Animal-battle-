@@ -245,24 +245,21 @@ func end_shot(handle: int, impact_col: Color) -> void:
 			"spread": 180.0})
 
 
-## Vương Kiếm Giáng Thế: the greatsword falls from the sky and
-## slams in — dust ring, debris burst, crater glow. Calls back for
-## the camera shake at the impact frame.
+## Thiên Thạch Ma Thuật (16b): a violet-glowing arcane meteor
+## falls from the sky and slams in — dust ring, debris burst,
+## crater glow. Calls back for the camera shake at the impact
+## frame. (Same plunge body the old roster's falling-blade
+## visual used; the projectile is now a glowing orb, tinted
+## arcane violet — no hero-specific asset.)
 func plunge_fx(pos: Vector2, on_impact: Callable) -> void:
-	var tex: Texture2D = load("res://assets/hero_weapons/ngan_ky.png")
 	var root := Node2D.new()
 	root.position = pos
-	var sword := Sprite2D.new()
-	sword.texture = tex
-	sword.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	sword.scale = Vector2.ONE * 1.9
-	sword.rotation = PI # blade down
-	sword.position = Vector2(0, -330)
-	sword.z_index = 8
+	var sword := _sprite(_tex_glow, Vector2(0, -330), 120.0,
+			Color(0.72, 0.5, 1.0, 0.95), 8)
 	root.add_child(sword)
 	# Warning ring on the ground while the sword falls.
 	var ring := _sprite(_tex_ring, Vector2.ZERO, 128.0,
-			Color(1.0, 0.45, 0.2, 0.75), 3)
+			Color(0.72, 0.5, 1.0, 0.75), 3)
 	root.add_child(ring)
 	add_child(root)
 	_live.append(root)
@@ -272,7 +269,7 @@ func plunge_fx(pos: Vector2, on_impact: Callable) -> void:
 		on_impact.call()
 		ring.queue_free()
 		_burst(pos, _tex_glow, 22, 0.6,
-				[Color(1.0, 0.72, 0.3), Color(0.9, 0.35, 0.12, 0.0)],
+				[Color(0.85, 0.65, 1.0), Color(0.5, 0.3, 0.9, 0.0)],
 				{"emit_radius": 16.0, "vel_min": 60.0, "vel_max": 190.0,
 				"dir": Vector2(0, -0.4), "spread": 180.0, "gravity": 260.0})
 		var dust := _sprite(_tex_ring, pos, 60.0, Color(0.85, 0.7, 0.5, 0.65), 3)
@@ -280,7 +277,7 @@ func plunge_fx(pos: Vector2, on_impact: Callable) -> void:
 		var dtw := create_tween()
 		dtw.tween_property(dust, "scale", dust.scale * 4.6, 0.6)
 		dtw.parallel().tween_property(dust, "modulate:a", 0.0, 0.6)
-		var glow := _sprite(_tex_glow, pos, 150.0, Color(1.0, 0.6, 0.25, 0.5), 2)
+		var glow := _sprite(_tex_glow, pos, 150.0, Color(0.7, 0.5, 1.0, 0.5), 2)
 		_track(glow, 0.5)
 		var gtw := create_tween()
 		gtw.tween_property(glow, "modulate:a", 0.0, 0.5)

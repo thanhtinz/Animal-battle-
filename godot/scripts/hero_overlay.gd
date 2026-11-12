@@ -1,21 +1,21 @@
 class_name HeroOverlay
 extends Node2D
-## Hero presentation layers (13j) — two instances live in Main:
-##   mode "zones" (z 5, under the units): Bạch Sa's Kết Giới
-##     rings — pure presentation of sim state in Main.hero_zones.
+## Hero presentation layer (13j) — one instance lives in Main:
 ##   mode "names" (z 120, a late pass over everything): the
 ##     owning PLAYER'S NAME above each hero's head, tinted with
 ##     the owner's slot colour. Characters carry no team colour
 ##     on their bodies (Tín's rule), so this label + the HP bar
 ##     are how allegiance reads in a fight.
-## Both layers honour Unit.visible, so fog of war and garrison
-## hiding apply to names and rings exactly as to the heroes.
+## (A second "zones" instance existed for the old roster's
+## barrier rings; 16b removed it — the mode value now draws
+## nothing.) The layer honours Unit.visible, so fog of war and
+## garrison hiding apply to names exactly as to the heroes.
 
 var game = null # Main
 var mode := "names"
 
 ## 13u: the in-match Settings toggle "Hiển thị tên" flips this —
-## when false the names pass draws nothing (zones still draw).
+## when false the names pass draws nothing.
 static var show_names := true
 
 
@@ -29,12 +29,6 @@ func _draw() -> void:
 	if mode == "names" and not show_names:
 		return
 	if mode == "zones":
-		var r := Stats.AURA_RANGE_TILES * World.TILE
-		for z in game.hero_zones:
-			var pos: Vector2 = z["pos"]
-			var frac: float = clampf(float(z["t"]) / float(Stats.HERO_KITS["bach_sa"]["zone_t"]), 0.0, 1.0)
-			draw_arc(pos, r, 0.0, TAU, 48, Color(1.0, 0.96, 0.82, 0.20 + 0.25 * frac), 3.0)
-			draw_arc(pos, r * 0.92, 0.0, TAU, 48, Color(1.0, 0.96, 0.82, 0.10 + 0.12 * frac), 1.5)
 		return
 	var font := ThemeDB.fallback_font
 	for u in game.units:

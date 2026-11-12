@@ -465,7 +465,14 @@ func _refresh() -> void:
 	_body.add_child(HSeparator.new())
 	var title_row := HBoxContainer.new()
 	title_row.add_theme_constant_override("separation", 8)
-	var tv := _label("Chưa dùng Danh hiệu", 16)
+	# 15h: earned titles ride the profile payload (a
+	# tournament champion gains "Vô địch giải đấu"); the row
+	# shows the first one, else the honest empty state.
+	var titles: Array = p.get("titles", [])
+	var title_text := "Chưa dùng Danh hiệu"
+	if not titles.is_empty():
+		title_text = "Danh hiệu: " + String(titles[0])
+	var tv := _label(title_text, 16)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(tv)
 	var pen_holder := Control.new()

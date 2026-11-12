@@ -56,8 +56,6 @@ const BUILDING_HP := {
 	"castle": 1600.0,
 	"wallwood": 400.0,
 	"wallstone": 800.0,
-	# 14c: Thạch Sơn's Nham Tường segments (300 HP per cell).
-	"skillwall": 300.0,
 	"gatewood": 500.0,
 	"gatestone": 900.0,
 }
@@ -140,138 +138,76 @@ static func castle_atk(age: int) -> float:
 ## (enforced in Main.can_train_unit / _mp_apply_train;
 ## retrainable after death).
 ##
-## PER-CHARACTER KITS (Tín's final model): the hero's kit comes
-## from its DRAWN character (cosmetic skins never carry a kit).
-## Auras check sim positions inside Unit.strike / take_damage /
-## movement, so everything stays deterministic and lockstep-safe.
-##   ngan_ky  Huyết Bào: allied military (not the hero) in aura
-##            deal KING_AURA_MULT x damage. Xung Phong (CD 45 s):
-##            self +50% speed, +100% damage for 5 s.
-##   kim_hoa  Sinh Tồn: allies in aura (hero incl.) regenerate
-##            +1 HP per 2 s. Vương Mệnh Hồi Phục (CD 60 s): heal
-##            all allies in aura for 80 HP instantly.
-##   lam_bao  Hàn Khí: enemies in aura move x0.85. Băng Phong
-##            (CD 60 s): enemies within 2.5 tiles get x0.40 move
-##            speed and x0.60 attack speed for 3 s.
-##   bach_sa  Thánh Quang: allies in aura (hero incl.) take
-##            x0.90 damage. Kết Giới (CD 70 s): a zone fixed at
-##            the cast position for 8 s; allies inside take
-##            x0.70 damage (multiplies with the aura).
+## PER-CHARACTER KITS (16b — NHAN-VAT-TAY-TRUNG-CO.md is the
+## design source of truth): the hero's kit comes from its DRAWN
+## character (cosmetic skins never carry a kit). Every hero has
+## ONE passive aura (radius AURA_RANGE_TILES) + exactly ONE
+## active skill on the UNIFIED 75 s cooldown. Auras check sim
+## positions inside Unit.strike / take_damage / movement / fog,
+## so everything stays deterministic and lockstep-safe.
+## Optional per-hero basic-attack overrides of the shared "king"
+## frame: "atk" (damage per hit), "atk_cd" (seconds per hit),
+## "range_px" (attack range; archer/mage are ranged at 160).
 const KING_TRAIN_TIME := 60.0
 const AURA_RANGE_TILES := 3.0
 const KING_AURA_RANGE_TILES := AURA_RANGE_TILES # legacy alias
-const KING_AURA_MULT := 1.15
+const SKILL_CAST_RANGE_TILES := 6.0
 
 const HERO_KITS := {
-	"ngan_ky": {"cd": 45.0, "buff_t": 5.0, "buff_spd": 1.5, "buff_dmg": 2.0},
-	"kim_hoa": {"cd": 60.0, "regen_hp": 1.0, "regen_period": 2.0, "heal": 80.0},
-	"lam_bao": {"cd": 60.0, "aura_slow": 0.85, "skill_range": 2.5,
-			"skill_spd": 0.40, "skill_atkspd": 0.60, "skill_t": 3.0},
-	"bach_sa": {"cd": 70.0, "aura_mitig": 0.90, "zone_mitig": 0.70, "zone_t": 8.0},
-	# 14c — Temple Masters (NHAN-VAT-MOI-5-8.md, numbers verbatim):
-	# Lôi Chấn: aura +12% attack speed. Lôi Độn (CD 50): dash up to
-	# 5 tiles, 40 dmg within 1 tile of the landing, +20% move 4 s.
-	"loi_chan": {"cd": 50.0, "aura_atkspd": 1.12, "dash_tiles": 5.0,
-			"land_dmg": 40.0, "land_radius_tiles": 1.0,
-			"buff_spd": 1.2, "buff_t": 4.0},
-	# Xích Diệm: aura — allies' hits burn 3 HP / 0.5 s for 2 s.
-	# Hỏa Ấn (CD 60): mark a unit in 6 tiles; it explodes after 2 s
-	# for 70 dmg in 1.5 tiles (at the death spot if it dies first).
-	"xich_diem": {"cd": 60.0, "aura_burn_amt": 3.0, "aura_burn_t": 2.0,
-			"mark_dmg": 70.0, "mark_t": 2.0, "mark_radius_tiles": 1.5,
-			"mark_range_tiles": 6.0},
-	# Phong Linh (RANGED hero, bow range 5 tiles): aura +12% move.
-	# Truy Phong Tiễn (CD 45): piercing snipe, range 8, 75 dmg.
-	"phong_linh": {"cd": 45.0, "aura_spd": 1.12, "bow_range_tiles": 5.0,
-			"snipe_dmg": 75.0, "snipe_range_tiles": 8.0},
-	# Thạch Sơn: aura +3 flat armour. Sơn Băng Đạp (CD 55): leap up
-	# to 4 tiles, 40 dmg in 2 tiles + knockback 1 tile + 30% slow 2 s.
-	"thach_son": {"cd": 55.0, "aura_armor": 3.0, "leap_tiles": 4.0,
-			"land_dmg": 40.0, "land_radius_tiles": 2.0,
-			"knock_tiles": 1.0, "slow_mult": 0.70, "slow_t": 2.0},
-}
-
-## 13v: Chiêu 2 + Chiêu cuối (Ulti) numbers — Tín's approved kit
-## designs (2026-11-10). Ranges/radii in TILES unless suffixed _px;
-## targeted skills share SKILL_CAST_RANGE_TILES. All values feed
-## Main's deterministic skill sim (zones + travelling shots).
-const SKILL_CAST_RANGE_TILES := 6.0
-const HERO_SKILL2 := {
-	# Kiếm Khí Tung Hoành: a sword-wave shot along the facing line.
-	"ngan_ky": {"cd": 30.0, "dmg": 45.0, "range_tiles": 5.0,
-			"speed": 380.0, "width": 26.0},
-	# Hoa Vũ Hồi Sinh: petal-rain zone — HoT + cleanse for allies.
-	"kim_hoa": {"cd": 40.0, "hot": 6.0, "zone_t": 6.0,
-			"radius_tiles": 2.5},
-	# Thương Băng Xuyên Tâm: piercing shot; first enemy hit freezes.
-	"lam_bao": {"cd": 35.0, "dmg": 35.0, "range_tiles": 6.0,
-			"speed": 460.0, "width": 20.0, "freeze_t": 1.5},
-	# Thánh Quang Phán Xét: targeted light pillar on an enemy group.
-	"bach_sa": {"cd": 40.0, "dmg": 55.0, "radius_tiles": 2.0,
-			"atk_mult": 0.70, "atk_t": 5.0},
-	# 14c Chiêu 2:
-	# Song Lôi Liên Kích: chain lightning — 55 to the primary target
-	# (unit within 5 tiles), then 3 bounces of 30 to the nearest
-	# enemies within 2 tiles of the previous victim.
-	"loi_chan": {"cd": 35.0, "dmg": 55.0, "range_tiles": 5.0,
-			"bounce_dmg": 30.0, "bounces": 3, "bounce_tiles": 2.0},
-	# Diệm Phiến Toàn: facing cone 120° / 3 tiles — 50 dmg + burn
-	# 4 HP / 0.5 s for 3 s.
-	"xich_diem": {"cd": 35.0, "dmg": 50.0, "range_tiles": 3.0,
-			"cone_cos": 0.5, "burn_amt": 4.0, "burn_t": 3.0},
-	# Tiễn Vũ: arrow rain — 3 waves of 20 dmg over 3 s in 2.5 tiles.
-	"phong_linh": {"cd": 30.0, "dmg": 20.0, "waves": 3, "zone_t": 3.0,
-			"radius_tiles": 2.5},
-	# Nham Tường: stone wall, 3 cells along the facing, 300 HP per
-	# cell, 12 s. A Building of btype "skillwall" (obstacle rules).
-	"thach_son": {"cd": 40.0, "range_tiles": 5.0, "wall_cells": 3,
-			"wall_hp": 300.0, "wall_t": 12.0},
-}
-const HERO_SKILL3 := {
-	# Vương Kiếm Giáng Thế: plunging greatsword — units AND
-	# buildings, brief stun.
-	"ngan_ky": {"cd": 120.0, "dmg_unit": 120.0, "dmg_bld": 250.0,
-			"radius_tiles": 2.0, "stun_t": 1.0},
-	# Vạn Hoa Khai Thiên: huge instant heal + brief immunity.
-	"kim_hoa": {"cd": 150.0, "heal": 200.0, "radius_tiles": 4.0,
-			"immune_t": 3.0},
-	# Băng Hà Vĩnh Cửu: lingering blizzard — slow + DoT, and
-	# buildings inside freeze (production/training/research pause).
-	"lam_bao": {"cd": 130.0, "zone_t": 8.0, "radius_tiles": 3.0,
-			"dot": 5.0, "slow_mult": 0.45},
-	# Thiên Màn Bất Diệt: holy dome — ally shield + building immunity.
-	"bach_sa": {"cd": 150.0, "zone_t": 8.0, "radius_tiles": 3.0,
-			"shield": 120.0},
-	# 14c Chiêu cuối:
-	# Thiên Lôi Phạt Trận: storm zone 3 tiles / 6 s — a lightning
-	# strike every 1 s for 45 (buildings 50%), 20% slow inside.
-	"loi_chan": {"cd": 130.0, "zone_t": 6.0, "radius_tiles": 3.0,
-			"dmg": 45.0, "bld_mult": 0.5, "slow_mult": 0.80},
-	# Phượng Hỏa Giáng: 130 dmg in 3 tiles (150 vs buildings), then
-	# burning ground 12 HP / 0.5 s for 5 s.
-	"xich_diem": {"cd": 140.0, "dmg_unit": 130.0, "dmg_bld": 150.0,
-			"radius_tiles": 3.0, "zone_t": 5.0, "zone_dot": 12.0},
-	# Cuồng Phong Nộ: cyclone 3.5 tiles / 6 s — pulls enemies 0.5
-	# tile per 0.5 s toward the centre, 15 dmg per 0.5 s, enemies
-	# inside at -30% attack.
-	"phong_linh": {"cd": 120.0, "zone_t": 6.0, "radius_tiles": 3.5,
-			"dot": 15.0, "pull_tiles": 0.5, "atk_mult": 0.70},
-	# Địa Long Lật Đất: quake in 3.5 tiles — 90 dmg units / 300
-	# buildings + 40% slow for 3 s.
-	"thach_son": {"cd": 150.0, "dmg_unit": 90.0, "dmg_bld": 300.0,
-			"radius_tiles": 3.5, "slow_mult": 0.60, "slow_t": 3.0},
+	# Knight: aura — allies (hero incl.) take x0.92 damage.
+	# Khiên Sư Tử: 250 absorb shield on himself for 6 s + every
+	# enemy within the aura radius is taunted onto him for 4 s.
+	"knight": {"cd": 75.0, "aura_mitig": 0.92,
+			"shield": 250.0, "shield_t": 6.0, "taunt_t": 4.0},
+	# Berserker: aura — allies (not himself) strike 10% faster.
+	# Rìu Xoáy Cuồng Nộ: 110 damage to enemies within 2 tiles.
+	# Slow heavy axe: 34 per hit every 1.5 s.
+	"berserker": {"cd": 75.0, "aura_atkspd": 1.10,
+			"atk": 34.0, "atk_cd": 1.5,
+			"dmg": 110.0, "radius_tiles": 2.0},
+	# Archer (RANGED, bow 160): aura — allied military (not
+	# herself) deal x1.08 damage. Mưa Tên: targeted point up to
+	# 8 tiles away; 3 waves of 40 over 2 s in a 2.5-tile zone.
+	"archer": {"cd": 75.0, "aura_dmg": 1.08,
+			"atk": 22.0, "atk_cd": 1.2, "range_px": 160.0, "ranged": true,
+			"rain_dmg": 40.0, "rain_waves": 3, "rain_t": 2.0,
+			"radius_tiles": 2.5, "cast_tiles": 8.0},
+	# Mage (RANGED, bolt 160): aura — allies (hero incl.)
+	# regenerate 1.2 HP per second. Thiên Thạch Ma Thuật: 120
+	# magic damage in 2.5 tiles at a targeted point.
+	"mage": {"cd": 75.0, "regen_hp": 1.2, "regen_period": 1.0,
+			"atk": 24.0, "atk_cd": 1.3, "range_px": 160.0, "ranged": true,
+			"dmg": 120.0, "radius_tiles": 2.5},
+	# Paladin: aura — allies (hero incl.) get +3 flat armour.
+	# Thánh Quang Hồi Phục: heal allies in aura radius for 160
+	# and cleanse every negative effect on them.
+	"paladin": {"cd": 75.0, "aura_armor": 3.0, "heal": 160.0},
+	# Dragoon: aura — allies (hero incl.) move x1.10. His lance
+	# outreaches a sword (57 px ≈ 1.3x the 44 px melee frame).
+	# Long Thương Xuyên Tâm: dash up to 5 tiles in a line, 120
+	# damage to every enemy within path_half_px of the path.
+	"dragoon": {"cd": 75.0, "aura_spd": 1.10,
+			"atk": 27.0, "atk_cd": 1.15, "range_px": 57.0,
+			"dash_tiles": 5.0, "dmg": 120.0, "path_half_px": 20.0},
+	# Assassin: aura — allies (not himself) deal x1.10 damage
+	# against enemy HEROES. Ám Sát: blink behind an enemy unit
+	# within 6 tiles and stab it for 160. Fastest basic attacks
+	# of the roster: 20 per hit every 0.7 s.
+	"assassin": {"cd": 75.0, "aura_hero_dmg": 1.10,
+			"atk": 20.0, "atk_cd": 0.7,
+			"dmg": 160.0, "range_tiles": 6.0},
+	# Ranger: aura — allies (hero incl.) gain +1 tile of sight.
+	# Kiếm Vũ Lữ Hành: 5 slashes of 32 over 1 s, dealt round-
+	# robin to the enemies within 2 tiles. Quick sword: 23 per
+	# hit every 0.85 s.
+	"ranger": {"cd": 75.0, "aura_sight": 1,
+			"atk": 23.0, "atk_cd": 0.85,
+			"slashes": 5, "slash_dmg": 32.0, "slash_interval": 0.2,
+			"radius_tiles": 2.0},
 }
 
 static func hero_cd(char_id: String) -> float:
-	return float(HERO_KITS.get(char_id, {}).get("cd", 60.0))
-
-
-static func hero_cd2(char_id: String) -> float:
-	return float(HERO_SKILL2.get(char_id, {}).get("cd", 30.0))
-
-
-static func hero_cd3(char_id: String) -> float:
-	return float(HERO_SKILL3.get(char_id, {}).get("cd", 120.0))
+	return float(HERO_KITS.get(char_id, {}).get("cd", 75.0))
 
 ## Villager fleeing (gameplay-completion pass): a villager hurt by a
 ## hostile flees to its nearest drop-off at FLEE_SPEED_MULT x speed

@@ -72,6 +72,11 @@ signal room_list_received(rows: Array)
 signal kicked_notice
 signal room_closed_notice
 signal obs_snapshot_requested
+# 15h tournaments: list/detail payloads + dedicated-room entry.
+signal tourn_list_received(rows: Array)
+signal tourn_detail_received(tourn: Dictionary)
+signal tourn_created_notice(id: String)
+signal tourn_room_joined(code: String, slot: int)
 
 const DEFAULT_URL := "ws://127.0.0.1:8765/ws"
 ## Sim compatibility tag; must match the server's GameVersion.
@@ -135,6 +140,9 @@ var queued_room: bool = false
 var leaderboard_mode: String = "wl"
 var leaderboard_me: Dictionary = {} # {pos, row} of the caller (13g BXH footer)
 var last_rank_result: Dictionary = {} # latest rank_result payload (stage 4)
+var tourn_list_rows: Array = [] # latest tourn_list payload (15h)
+var tourn_detail: Dictionary = {} # latest tourn_detail payload (15h)
+var tourn_room: Dictionary = {} # {code, slot, tourn_id, match} once bound (15h)
 # Stage 5 (home lobby): social + history caches and the latency
 # readout (app-level ping/pong against the relay).
 var history_rows: Array = []
@@ -197,6 +205,17 @@ var _auto_spec_last_print: int = -1 # last tick a spec debug line was printed
 var _auto_spec_scout_moved: bool = false
 var _auto_lb_rows: Array = []
 var _auto_home_at: int = 0 # msec when the home-shot driver authed
+# 15h tournament smoke driver state (--mp-tourn=create|join|joinany).
+var _tourn_id: String = ""
+var _tourn_next_poll: int = 0
+var _tourn_create_sent: bool = false
+var _tourn_registered: bool = false
+var _tourn_started: bool = false
+var _tourn_checked: Dictionary = {} # match id -> true once our check-in was sent
+var _tourn_play_sent: Dictionary = {} # match id -> msec the play request was sent
+var _tourn_finished_printed: bool = false
+var _tourn_quit_at: int = 0
+var _tourn_shot_stage: int = 0
 
 
 
@@ -224,6 +243,8 @@ func _ready() -> void:
 			or args.has("mp-register-flow") \
 			or args.has("mp-shot-create") or args.has("mp-shot-browser") \
 			or args.has("mp-shot-create-delay") \
+			or args.has("mp-tourn") or args.has("mp-shot-tourn-list") \
+			or args.has("mp-shot-tourn-bracket") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -425,6 +446,39 @@ func _handle_message(txt: String) -> void:
 			room_list_rows = m.get("rooms", [])
 			print("MPLOG room list rows=", room_list_rows.size())
 			room_list_received.emit(room_list_rows)
+		"tourn_list":
+			tourn_list_rows = m.get("rows", [])
+			print("MPLOG tourn list rows=", tourn_list_rows.size())
+			tourn_list_received.emit(tourn_list_rows)
+		"tourn_detail":
+			tourn_detail = m.get("tourn", {})
+			print("MPLOG tourn detail id=", String(tourn_detail.get("id", "")),
+					" state=", String(tourn_detail.get("state", "")),
+					" entries=", (tourn_detail.get("entries", []) as Array).size(),
+					" matches=", (tourn_detail.get("matches", []) as Array).size(),
+					" champion=", String(tourn_detail.get("champion_name", "")))
+			tourn_detail_received.emit(tourn_detail)
+		"tourn_created":
+			print("MPLOG tourn created id=", String(m.get("id", "")))
+			tourn_created_notice.emit(String(m.get("id", "")))
+		"tourn_match":
+			# A tournament match's dedicated room: referee-owned
+			# like ranked (nobody reports), entered directly (no
+			# queue). The room broadcast that follows carries the
+			# roster; match_start drives the match as usual.
+			room_code = String(m.get("code", ""))
+			my_slot = int(m.get("slot", -1))
+			ranked = true
+			queued_room = true
+			is_host = false
+			tourn_room = {"code": room_code, "slot": my_slot,
+					"tourn_id": String(m.get("tourn_id", "")),
+					"match": int(m.get("match", 0))}
+			print("MPLOG tourn room code=", room_code, " slot=", my_slot,
+					" tourn=", String(tourn_room["tourn_id"]),
+					" match=", int(tourn_room["match"]))
+			joined_room.emit(room_code, my_slot)
+			tourn_room_joined.emit(room_code, my_slot)
 		"kicked":
 			print("MPLOG kicked")
 			leave_room()
@@ -541,12 +595,12 @@ func _handle_message(txt: String) -> void:
 			# The account's stored avatar becomes the local pick;
 			# cosmetic-skin ownership arrives with the profile too.
 			if auth_profile.has("avatar_id"):
-				Characters.set_local_avatar(String(auth_profile.get("avatar_id", "ngan_ky")))
+				Characters.set_local_avatar(String(auth_profile.get("avatar_id", "knight")))
 			Characters.set_owned_skins(auth_profile.get("owned_skins", []))
 			auth_ok.emit(auth_token, auth_profile)
 		"avatar":
 			# Server echo of the persisted avatar pick (set_avatar).
-			var avatar_id := Characters.normalize_char(String(m.get("avatar_id", "ngan_ky")))
+			var avatar_id := Characters.normalize_char(String(m.get("avatar_id", "knight")))
 			auth_profile["avatar_id"] = avatar_id
 			Characters.set_local_avatar(avatar_id)
 			avatar_changed.emit(avatar_id)
@@ -661,6 +715,65 @@ func observe_room(code: String, player_name: String, room_pass: String = "") -> 
 ## Room browser (15a): the answer lands on room_list_received.
 func request_room_list() -> void:
 	_send({"t": "list_rooms"})
+
+
+## Tournaments (15h): every answer lands on tourn_list_received
+## / tourn_detail_received; errors ride the shared error ->
+## lobby_error channel. All require a logged-in account.
+func tourn_request_list() -> void:
+	_send({"t": "tourn_list"})
+
+
+func tourn_create(name_: String, format: String, bracket: String, size: int) -> void:
+	_send({"t": "tourn_create", "name": name_, "format": format,
+			"bracket": bracket, "size": size})
+
+
+func tourn_request_detail(id: String) -> void:
+	_send({"t": "tourn_detail", "tourn_id": id})
+
+
+func tourn_register(id: String, partner: String = "") -> void:
+	_send({"t": "tourn_register", "tourn_id": id, "partner": partner})
+
+
+func tourn_unregister(id: String) -> void:
+	_send({"t": "tourn_unregister", "tourn_id": id})
+
+
+func tourn_start(id: String) -> void:
+	_send({"t": "tourn_start", "tourn_id": id})
+
+
+func tourn_cancel(id: String) -> void:
+	_send({"t": "tourn_cancel", "tourn_id": id})
+
+
+func tourn_checkin(id: String, match_id: int) -> void:
+	_send({"t": "tourn_checkin", "tourn_id": id, "tourn_match": match_id})
+
+
+func tourn_play(id: String, match_id: int) -> void:
+	_send({"t": "tourn_play", "tourn_id": id, "tourn_match": match_id})
+
+
+func tourn_dispute(id: String, match_id: int, replay_id: String) -> void:
+	_send({"t": "tourn_dispute", "tourn_id": id, "tourn_match": match_id,
+			"replay_id": replay_id})
+
+
+func tourn_resolve(id: String, match_id: int, uphold: bool) -> void:
+	_send({"t": "tourn_resolve", "tourn_id": id, "tourn_match": match_id,
+			"uphold": uphold})
+
+
+func tourn_walkover(id: String, match_id: int, side: int) -> void:
+	_send({"t": "tourn_walkover", "tourn_id": id, "tourn_match": match_id,
+			"side": side})
+
+
+func tourn_reset_match(id: String, match_id: int) -> void:
+	_send({"t": "tourn_reset", "tourn_id": id, "tourn_match": match_id})
 
 
 ## Host powers (15a, custom rooms): kick also bans the target
@@ -929,7 +1042,7 @@ func report_match_result(winner_team: int, placements: Array = [],
 ## slots whose elimination was a disconnect (reputation).
 func report_referee_result(winner_team: int, reason: String, ticks: int = 0,
 		placements: Array = [], disconnect_slots: Array = [],
-		elim_ticks: Array = []) -> void:
+		elim_ticks: Array = [], scores: Array = []) -> void:
 	var msg := {"t": "match_result", "winner_team": winner_team,
 			"reason": reason, "referee": true, "ticks": ticks}
 	if not placements.is_empty():
@@ -939,6 +1052,10 @@ func report_referee_result(winner_team: int, reason: String, ticks: int = 0,
 	# events sidecar for ranked replays.
 	if not elim_ticks.is_empty():
 		msg["elim_ticks"] = elim_ticks
+	# 15h: per-slot match scores (index = slot) — only
+	# tournament rooms consume them (league tie-breaks).
+	if not scores.is_empty():
+		msg["scores"] = scores
 	_send(msg)
 
 
@@ -1075,7 +1192,8 @@ func _auto_on_connected() -> void:
 			or _auto_phase == "queue" or _auto_phase == "lbcheck" \
 			or _auto_phase == "ranked-shot" or _auto_phase == "ranklb-shot" \
 			or _auto_phase == "normal-shot" \
-			or _auto_phase == "home-shot" or _auto_phase == "replay-fetch":
+			or _auto_phase == "home-shot" or _auto_phase == "replay-fetch" \
+			or _auto_phase == "tourn":
 		return
 	# Account flows register (or log in) BEFORE any room action; the
 	# auth_ok handler flips _auto_authed and _auto_process re-enters.
@@ -1113,6 +1231,12 @@ func _auto_on_connected() -> void:
 		_auto_ranked_queued = true
 		_auto_phase = "queue"
 		queue_join_normal(String(auto.get("mp-name", "Auto")))
+		return
+	# 15h tournament smoke driver: the state machine runs in
+	# _auto_process; here we only arm it (after auth).
+	if auto.has("mp-tourn"):
+		_auto_phase = "tourn"
+		_tourn_id = String(auto.get("mp-tourn-id", ""))
 		return
 	# Leaderboard probe: fetch the ranked board, print it, quit.
 	if auto.has("mp-lbcheck"):
@@ -1346,6 +1470,16 @@ func _auto_process() -> void:
 			and _auto_phase != "lobby" and _auto_phase != "match" \
 			and _auto_phase != "starting":
 		_auto_on_connected()
+	# 15h tournament smoke driver + captures.
+	if auto.has("mp-tourn") and _auto_authed:
+		if _auto_tourn_process(cs):
+			return
+	if auto.has("mp-shot-tourn-list") and _auto_authed and not _auto_shot_done:
+		_auto_tourn_shot(cs, false)
+		return
+	if auto.has("mp-shot-tourn-bracket") and _auto_authed and not _auto_shot_done:
+		_auto_tourn_shot(cs, true)
+		return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
 	# shoot and quit.
@@ -1853,9 +1987,232 @@ func _auto_process() -> void:
 			get_tree().quit()
 
 
+## 15h tournament smoke driver: create/join a solo
+## single-elim, register, check in, launch each playable
+## match, leave when it ends, and loop until the tournament
+## finishes — then print the champion every client agrees on
+## (read from the same server-rendered detail payload).
+## Returns true when it consumed the frame (not in a match).
+func _auto_tourn_process(cs) -> bool:
+	if _auto_phase == "starting":
+		return false
+	if _auto_phase == "match":
+		# Match over -> leave the room, reload to the home-mode
+		# scene and resume the tournament loop.
+		if cs != null and bool(cs.get("mp_over")):
+			print("MPLOG tourn match over, leaving room")
+			leave_room()
+			tourn_room = {}
+			_auto_phase = "tourn"
+			_tourn_next_poll = 0
+			get_tree().reload_current_scene()
+			return false
+		# The referee's result is canonical: if the server has
+		# already banked our current match (its finish can be
+		# referee-side only, e.g. a scripted test kill the local
+		# sim never sees), leave the decided room and resume the
+		# tournament loop instead of idling in it forever.
+		var now2 := Time.get_ticks_msec()
+		if _tourn_id != "" and not tourn_room.is_empty() \
+				and now2 >= _tourn_next_poll:
+			_tourn_next_poll = now2 + 2000
+			tourn_request_detail(_tourn_id)
+			var mid2 := int(tourn_room.get("match", 0))
+			if mid2 > 0 and String(tourn_detail.get("id", "")) == _tourn_id:
+				for m in (tourn_detail.get("matches", []) as Array):
+					if int(m.get("id", 0)) == mid2:
+						var st2 := String(m.get("state", ""))
+						if st2 == "done" or st2 == "disputed":
+							print("MPLOG tourn match banked by server, leaving room")
+							leave_room()
+							tourn_room = {}
+							_auto_phase = "tourn"
+							_tourn_next_poll = 0
+							get_tree().reload_current_scene()
+						break
+		return false
+	if _auto_phase != "tourn":
+		return false
+	var now := Time.get_ticks_msec()
+	if now < _tourn_next_poll:
+		return true
+	_tourn_next_poll = now + 700
+	# Drop a stale local room binding (a scene reload can
+	# rebuild a phantom match from leftover config and keep
+	# room_code set) so the play gates below follow the
+	# server's state, not the client's leftover one.
+	if room_code != "" and tourn_room.is_empty():
+		leave_room()
+	var role := String(auto.get("mp-tourn", "join"))
+	var tname := String(auto.get("mp-tourn-name", "Smoke Cup"))
+	# Creator: create once; the created push brings the detail
+	# (with the id) back.
+	if role == "create" and not _tourn_create_sent:
+		_tourn_create_sent = true
+		tourn_create(tname, String(auto.get("mp-tourn-format", "solo")),
+				String(auto.get("mp-tourn-bracket", "single_elim")),
+				int(auto.get("mp-tourn-size", "4")))
+		return true
+	# Joiner-by-name: find our tournament in the list.
+	if role == "joinany" and _tourn_id == "":
+		tourn_request_list()
+		for row in tourn_list_rows:
+			if String(row.get("name", "")) == tname:
+				_tourn_id = String(row.get("id", ""))
+				print("MPLOG tourn joinany found id=", _tourn_id)
+				break
+		return true
+	if _tourn_id == "":
+		if not tourn_detail.is_empty():
+			_tourn_id = String(tourn_detail.get("id", ""))
+			if _tourn_id != "":
+				print("MPLOG tourn id=", _tourn_id)
+		return true
+	tourn_request_detail(_tourn_id)
+	var d := tourn_detail
+	if d.is_empty() or String(d.get("id", "")) != _tourn_id:
+		return true
+	var state := String(d.get("state", ""))
+	if state == "open":
+		if int(d.get("my_entry", 0)) == 0 and not _tourn_registered:
+			_tourn_registered = true
+			print("MPLOG tourn registering user=", account_name)
+			tourn_register(_tourn_id)
+			return true
+		var expect := int(auto.get("mp-tourn-expect", "4"))
+		if role == "create" and not _tourn_started \
+				and (d.get("entries", []) as Array).size() >= expect:
+			_tourn_started = true
+			print("MPLOG tourn starting checkin entries=",
+					(d.get("entries", []) as Array).size())
+			tourn_start(_tourn_id)
+		return true
+	if state == "finished":
+		if not _tourn_finished_printed:
+			_tourn_finished_printed = true
+			_tourn_quit_at = now + 1500
+			print("MPLOG tourn finished champion=",
+					String(d.get("champion_name", "")),
+					" runner=", String(d.get("runner_up_name", "")),
+					" user=", account_name)
+		elif _tourn_quit_at > 0 and now >= _tourn_quit_at:
+			get_tree().quit()
+		return true
+	if state != "checkin" and state != "running":
+		return true
+	# Find my earliest actionable match.
+	for m in (d.get("matches", []) as Array):
+		var my_side := int(m.get("my_side", -1))
+		if my_side < 0:
+			continue
+		var mstate := String(m.get("state", ""))
+		var mid := int(m.get("id", 0))
+		if mstate == "ready":
+			var checked := bool(m.get("check_a", false)) if my_side == 0 \
+					else bool(m.get("check_b", false))
+			if not checked and not _tourn_checked.has(mid):
+				_tourn_checked[mid] = true
+				print("MPLOG tourn checkin match=", mid, " user=", account_name)
+				tourn_checkin(_tourn_id, mid)
+				return true
+			var both := bool(m.get("check_a", false)) and bool(m.get("check_b", false))
+			var bound := not tourn_room.is_empty() \
+					and int(tourn_room.get("match", 0)) == mid \
+					and room_code != ""
+			var sent_at := int(_tourn_play_sent.get(mid, 0))
+			if both and not bound and (sent_at == 0 or now - sent_at > 6000):
+				_tourn_play_sent[mid] = now
+				print("MPLOG tourn play match=", mid, " user=", account_name)
+				tourn_play(_tourn_id, mid)
+				return true
+		elif mstate == "live" and (tourn_room.is_empty() \
+				or int(tourn_room.get("match", 0)) != mid):
+			var sent_at2 := int(_tourn_play_sent.get(mid, 0))
+			if sent_at2 == 0 or now - sent_at2 > 6000:
+				_tourn_play_sent[mid] = now
+				print("MPLOG tourn play (live) match=", mid, " user=", account_name)
+				tourn_play(_tourn_id, mid)
+				return true
+	return true
+
+
+## 15h captures: list view (a freshly created open
+## tournament) and bracket view (a started 4-entry
+## single-elim, filled by --mp-tourn=joinany filler clients).
+func _auto_tourn_shot(cs, bracket: bool) -> void:
+	var now := Time.get_ticks_msec()
+	if _auto_home_at == 0:
+		_auto_home_at = now
+	if now < _tourn_next_poll:
+		return
+	_tourn_next_poll = now + 700
+	var tname := String(auto.get("mp-tourn-name", "Giải Vô Địch Mở Rộng"))
+	match _tourn_shot_stage:
+		0:
+			if bracket:
+				# Adopt the tournament the list shot created
+				# (same name) instead of creating a second one
+				# the fillers would never find.
+				tourn_request_list()
+				for row in tourn_list_rows:
+					if String(row.get("name", "")) == tname:
+						_tourn_id = String(row.get("id", ""))
+						break
+				if _tourn_id != "":
+					_tourn_shot_stage = 2
+					tourn_request_detail(_tourn_id)
+			else:
+				_tourn_shot_stage = 1
+				tourn_create(tname, "solo", "single_elim", 8)
+		1:
+			if not tourn_detail.is_empty():
+				_tourn_id = String(tourn_detail.get("id", ""))
+				if _tourn_id != "":
+					_tourn_shot_stage = 2
+					_tourn_registered = true
+					tourn_register(_tourn_id)
+		2:
+			if int(tourn_detail.get("my_entry", 0)) != 0:
+				if not bracket:
+					_tourn_shot_stage = 4
+				else:
+					_tourn_shot_stage = 3
+					tourn_request_detail(_tourn_id)
+			else:
+				if not _tourn_registered and _tourn_id != "":
+					_tourn_registered = true
+					tourn_register(_tourn_id)
+				tourn_request_detail(_tourn_id)
+		3:
+			# Bracket shot: wait for the 3 filler clients, then
+			# open check-in so the bracket exists.
+			tourn_request_detail(_tourn_id)
+			if (tourn_detail.get("entries", []) as Array).size() >= 4:
+				_tourn_shot_stage = 4
+				tourn_start(_tourn_id)
+		4:
+			tourn_request_detail(_tourn_id)
+			if not bracket and cs != null and cs.has_method("open_tournament_shot"):
+				_auto_shot_done = true
+				cs.open_tournament_shot("list")
+				await get_tree().create_timer(1.4).timeout
+				_save_shot(String(auto["mp-shot-tourn-list"]))
+				print("MPLOG tourn list shot saved")
+				get_tree().quit()
+			elif bracket and String(tourn_detail.get("state", "")) in ["checkin", "running"] \
+					and cs != null and cs.has_method("open_tournament_shot"):
+				_auto_shot_done = true
+				cs.open_tournament_shot("detail")
+				await get_tree().create_timer(1.4).timeout
+				_save_shot(String(auto["mp-shot-tourn-bracket"]))
+				print("MPLOG tourn bracket shot saved")
+				get_tree().quit()
+
+
 var _skill_cap_stage := 0
 
-## 15c capture: hold Chiêu 2's button with an injected press,
+## 15c capture (16b: the ONE skill button): hold the button
+## with an injected press,
 ## shoot the info card, release (card must close, no cast, no
 ## targeting), then force a local cooldown and hold again —
 ## the card must open even while the button is disabled.
@@ -1869,7 +2226,7 @@ func _skill_hold_capture(cs) -> void:
 	cs.cam.focus_on(lh.global_position)
 	await get_tree().create_timer(0.6).timeout
 	var hud = cs.hud
-	var btn = hud._skill_btns[1]
+	var btn = hud._skill_btns[0]
 	var centre: Vector2 = (btn as Control).get_global_rect().get_center()
 	var wpos := _win_pos(centre)
 	_inject_mb(wpos, true)
@@ -1880,10 +2237,10 @@ func _skill_hold_capture(cs) -> void:
 	_inject_mb(wpos, false)
 	await get_tree().create_timer(0.3).timeout
 	print("MPLOG skill hold after release: card=", hud._skill_info_card.visible,
-			" targeting=", cs.skill_targeting, " cd2=", lh.skill2_cd_t)
-	lh.skill2_cd_t = 25.0
+			" targeting=", cs.skill_targeting, " cd=", lh.skill_cd_t)
+	lh.skill_cd_t = 25.0
 	await get_tree().create_timer(0.3).timeout
-	print("MPLOG skill btn2 disabled=", (btn as Button).disabled)
+	print("MPLOG skill btn disabled=", (btn as Button).disabled)
 	_inject_mb(wpos, true)
 	await get_tree().create_timer(0.8).timeout
 	print("MPLOG skill hold on cooldown card visible=",
@@ -1915,8 +2272,6 @@ func _inject_mb(pos: Vector2, down: bool) -> void:
 
 var _auto_hero_ordered := false
 var _auto_hero_cast := false
-var _auto_hero_cast2 := false
-var _auto_hero_cast3 := false
 
 var _dip_base_logged := false
 var _dip_stage := 0 # slot 0's scripted steps (one-shot stages)
@@ -2215,7 +2570,7 @@ func _auto_hero_actions(game) -> void:
 				" tick=", current_tick)
 	if not _auto_hero_cast and current_tick >= 55:
 		_auto_hero_cast = true
-		# 14c: targeted Chiêu 1 (the new heroes) goes through the
+		# 16b: the ONE skill — targeted skills go through the
 		# targeted command form, aimed at the foe hero.
 		# cast_local_skill_at returns void — it sends the command
 		# outright, so "sent" is true once it has been called.
@@ -2226,18 +2581,6 @@ func _auto_hero_actions(game) -> void:
 		else:
 			ok = game.cast_local_skill()
 		print("MPLOG hero cast slot=", my_slot, " sent=", ok, " tick=", current_tick)
-	# 13v: Chiêu 2 at tick 100, Chiêu cuối at tick 150 — targeted
-	# at the foe hero's position (instant skills ignore the point);
-	# the checksums past tick 160 cover the new sim state (zones,
-	# shots, shields, cooldowns) on both peers.
-	if not _auto_hero_cast2 and current_tick >= 100:
-		_auto_hero_cast2 = true
-		game.cast_local_skill_at(2, foe.global_position)
-		print("MPLOG hero cast2 slot=", my_slot, " sent=true tick=", current_tick)
-	if not _auto_hero_cast3 and current_tick >= 150:
-		_auto_hero_cast3 = true
-		game.cast_local_skill_at(3, foe.global_position)
-		print("MPLOG hero cast3 slot=", my_slot, " sent=true tick=", current_tick)
 
 
 func _auto_issue_move(game) -> void:

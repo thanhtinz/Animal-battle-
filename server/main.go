@@ -100,6 +100,23 @@ type clientMsg struct {
 	// (index = slot; -1 or absent = never eliminated), reported
 	// by the same trusted reporter as the result itself.
 	ElimTicks []int64 `json:"elim_ticks"`
+	// Referee per-slot match scores (15h): index = slot. Only
+	// tournament rooms consume them (round-robin/group
+	// tie-breaks); ranked ignores the field.
+	Scores []int `json:"scores"`
+	// Tournaments (15h): the tournament id + match id ride
+	// these; create carries name/format/bracket/size; team
+	// registration carries the partner's username; dispute
+	// resolution carries uphold; manual walkover carries
+	// side (0 = A, 1 = B).
+	TournID    string `json:"tourn_id"`
+	TournMatch int    `json:"tourn_match"`
+	Format     string `json:"format"`
+	Bracket    string `json:"bracket"`
+	Size       int    `json:"size"`
+	Partner    string `json:"partner"`
+	Uphold     bool   `json:"uphold"`
+	Side       int    `json:"side"`
 }
 
 type session struct {
@@ -141,6 +158,22 @@ func (s *session) sendJSON(v map[string]any) {
 
 func (s *session) sendErr(err error) {
 	s.sendJSON(map[string]any{"t": "error", "msg": err.Error()})
+}
+
+// sendTournDetail pushes one tournament's full detail view
+// (15h) to this session, or the not-found error.
+func (s *session) sendTournDetail(id string) {
+	ts := s.hub.tourns
+	if ts == nil {
+		s.sendErr(ErrTournNotFound)
+		return
+	}
+	t, ok := ts.Get(id)
+	if !ok {
+		s.sendErr(ErrTournNotFound)
+		return
+	}
+	s.sendJSON(map[string]any{"t": "tourn_detail", "tourn": ts.View(t, s.user)})
 }
 
 func (s *session) sendAuthErr(err error) {
@@ -354,7 +387,7 @@ func (s *session) handle(raw []byte) {
 		}
 		s.sendJSON(map[string]any{"t": "auth_out"})
 	case "set_avatar":
-		// Profile avatar pick (13j): one of the four mains'
+		// Profile avatar pick (13j): one of the eight mains'
 		// portraits, persisted on the account; the reply echoes
 		// the stored value. Decoupled from the character draw.
 		if s.user == "" {
@@ -449,6 +482,24 @@ func (s *session) handle(raw []byte) {
 		s.sendJSON(map[string]any{"t": "referee_ok", "code": s.refCode})
 		log.Printf("referee joined room %s", s.refCode)
 	case "match_result":
+		if s.isReferee && s.hub.IsTournamentRoom(s.refCode) {
+			// 15h: a tournament match result — banked through
+			// the referee path like ranked, but routed to the
+			// tournament service: W/L + bracket advancement
+			// only, NEVER MMR/stars/ladder. This branch must
+			// precede the placements branch (the referee sends
+			// placements for every room shape).
+			results, err := s.hub.RecordRefereeResult(s.refCode, m.Team, m.Reason, m.ElimTicks)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.hub.NotifyRoomReplay(s.refCode)
+			if err := s.hub.TournamentMatchResult(s.refCode, results, m.Scores); err != nil {
+				log.Printf("tournament %s: applying result failed: %v", s.refCode, err)
+			}
+			return
+		}
 		if s.isReferee && len(m.Placements) > 0 {
 			// 13z: free-for-all ranked result — the referee reports
 			// the full placement list; the server banks stars/MMR
@@ -610,6 +661,115 @@ func (s *session) handle(raw []byte) {
 					"t": "custom_replay", "replay_id": rid, "room": s.code,
 				})
 			}
+		}
+	case "tourn_list", "tourn_create", "tourn_detail", "tourn_register",
+		"tourn_unregister", "tourn_start", "tourn_cancel", "tourn_checkin",
+		"tourn_play", "tourn_dispute", "tourn_resolve", "tourn_walkover",
+		"tourn_reset":
+		// 15h tournaments: all state lives in the Tournaments
+		// service; these cases are thin protocol adapters. An
+		// account is required for everything (guests neither
+		// create, register, nor spectate brackets here).
+		ts := s.hub.tourns
+		if ts == nil {
+			s.sendErr(ErrTournNotFound)
+			return
+		}
+		if s.user == "" {
+			s.sendErr(ErrTournLogin)
+			return
+		}
+		switch m.T {
+		case "tourn_list":
+			all := ts.List()
+			rows := make([]map[string]any, 0, len(all))
+			for _, t := range all {
+				if t.State == "cancelled" {
+					continue
+				}
+				rows = append(rows, ts.Summary(t, s.user))
+				if len(rows) >= 50 {
+					break
+				}
+			}
+			s.sendJSON(map[string]any{"t": "tourn_list", "rows": rows})
+		case "tourn_create":
+			t, err := ts.Create(s.user, m.Name, m.Format, m.Bracket, m.Size)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendJSON(map[string]any{"t": "tourn_created", "id": t.ID})
+			s.sendTournDetail(t.ID)
+		case "tourn_detail":
+			s.sendTournDetail(m.TournID)
+		case "tourn_register":
+			if err := ts.Register(m.TournID, s.user, m.Partner); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_unregister":
+			if err := ts.Unregister(m.TournID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_start":
+			if err := ts.OpenCheckin(m.TournID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_cancel":
+			if err := ts.Cancel(m.TournID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_checkin":
+			if err := ts.Checkin(m.TournID, m.TournMatch, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_play":
+			if s.in || s.obs != nil {
+				s.sendErr(ErrTournRoomBusy)
+				return
+			}
+			code, slot, err := s.hub.TournamentPlayRoom(s.senderOrConn(), m.TournID, m.TournMatch, s.user)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.code, s.slot, s.in = code, slot, true
+			s.sendJSON(map[string]any{"t": "tourn_match", "code": code,
+				"slot": slot, "tourn_id": m.TournID, "match": m.TournMatch})
+		case "tourn_dispute":
+			if err := ts.Dispute(m.TournID, m.TournMatch, s.user, m.ReplayID); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_resolve":
+			if err := ts.ResolveDispute(m.TournID, m.TournMatch, s.user, m.Uphold); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_walkover":
+			if err := ts.AwardWalkover(m.TournID, m.TournMatch, s.user, m.Side); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
+		case "tourn_reset":
+			if err := ts.ResetLiveMatch(m.TournID, m.TournMatch, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendTournDetail(m.TournID)
 		}
 	case "create":
 		if s.in || s.obs != nil {
@@ -797,6 +957,8 @@ func main() {
 	acc.SeasonDays = *seasonDays
 	hub := NewHub()
 	hub.acc = acc
+	// Tournaments (15h): server-side state over the same store.
+	hub.tourns = NewTournaments(store, acc)
 	// Replay archive (13h): one JSON file beside the account store.
 	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
 		log.Fatalf("replay store: %v", err)
@@ -828,6 +990,7 @@ func main() {
 			hub.TryPairAll()
 			hub.TryPairNormalAll()
 			hub.SendQueueStatus()
+			hub.TournamentSweep()
 		}
 	}()
 	mux := http.NewServeMux()

@@ -51,7 +51,7 @@ type Player struct {
 	Account   bool   // true when this slot is bound to an account
 	// Char is the main character ASSIGNED to this player for the
 	// match (13j): drawn by the server in startMatchLocked from
-	// the four mains and carried in the match_start views so
+	// the eight mains and carried in the match_start views so
 	// every client + the referee field the same heroes. Skin is
 	// the player's active COSMETIC skin ("" = none) — appearance
 	// only; the hero's kit always comes from Char.
@@ -117,8 +117,14 @@ type Room struct {
 	Queued bool
 	// Ranked rooms (P4 stage 3): created by the matchmaker, owned by
 	// a dedicated referee process. Players never report results here.
-	Ranked           bool
-	Referee          *refereeConn
+	Ranked  bool
+	Referee *refereeConn
+	// Tournament rooms (15h): a ranked-referee room dedicated
+	// to one tournament match. Tournament results route to the
+	// tournament service (never the ladder) in main.go.
+	Tournament       bool
+	TournID          string
+	TournMatchID     int
 	RefereeTokenHash [32]byte // sha256 of the one-time referee token
 	ResultReason     string   // "elimination" | "disconnect" (referee-reported)
 	countdown        bool     // ranked start countdown in flight
@@ -171,8 +177,13 @@ type Hub struct {
 	// a FileReplayStore.
 	replays ReplayStore
 	// Ranked matchmaking (set by main; nil-safe in tests).
-	acc          *Accounts
-	Orch         *Orchestrator
+	acc  *Accounts
+	Orch *Orchestrator
+	// Tournaments (15h; set by main; nil-safe in tests).
+	// tournRooms maps "tournID/matchID" -> room code for the
+	// tournament matches whose dedicated room exists.
+	tourns       *Tournaments
+	tournRooms   map[string]string
 	OnRoomClosed func(code string) // e.g. reap the room's referee process
 	queue        []*queueEntry
 	nqueue       []*queueEntry    // normal (unranked) queue, 13t
@@ -193,7 +204,7 @@ func (h *Hub) nextSeqLocked() int64 {
 
 func NewHub() *Hub {
 	return &Hub{rooms: make(map[string]*Room), mmNow: time.Now,
-		online: make(map[string]int)}
+		online: make(map[string]int), tournRooms: make(map[string]string)}
 }
 
 // RoomSlotUsers returns slot -> account username for a room
@@ -1005,7 +1016,7 @@ func (h *Hub) startMatchLocked(r *Room) {
 	r.InMatch = true
 	r.Tick = 0
 	// The character draw (13j): every player is randomly assigned
-	// one of the four mains for this match; their active cosmetic
+	// one of the eight mains for this match; their active cosmetic
 	// skin (launch: nobody owns one) rides along as appearance.
 	for _, p := range r.Players {
 		p.Char = h.drawCharLocked()
@@ -1403,6 +1414,9 @@ func (h *Hub) deleteRoomLocked(r *Room) {
 		}
 	}
 	delete(h.rooms, r.Code)
+	if r.Tournament {
+		delete(h.tournRooms, tournRoomKey(r.TournID, r.TournMatchID))
+	}
 	h.roomClosedLocked(r.Code)
 }
 
@@ -1613,7 +1627,7 @@ func (h *Hub) AttachAccount(code string, slot int, user string) error {
 }
 
 // drawCharLocked picks one main character uniformly at random
-// (the match draw — pool is the four mains for every player;
+// (the match draw — pool is the eight mains for every player;
 // cosmetic skins are never drawn). Crypto randomness: the pick
 // is broadcast in match_start, so all clients agree by payload,
 // not by shared state.

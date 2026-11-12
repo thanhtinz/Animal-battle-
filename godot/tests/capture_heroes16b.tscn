@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_heroes16b"]
+
+[ext_resource type="Script" path="res://tests/capture_heroes16b.gd" id="1"]
+
+[node name="CaptureHeroes16b" type="Node"]
+script = ExtResource("1")

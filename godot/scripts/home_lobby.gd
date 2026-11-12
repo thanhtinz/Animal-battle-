@@ -871,6 +871,19 @@ func _build_rail() -> void:
 		if game != null:
 			game.home_open_leaderboard())
 	chips.add_child(chart_btn["holder"])
+	# 15h: tournament entry — the trophy chip sits on its own
+	# row under the BXH / Bạn bè pair (the pair exactly fills
+	# the 58px rail; the mode panel is full, and the rail is
+	# where the other meta screens live). Guests route to the
+	# account flow like the friends chip does.
+	var trophy_btn := _icon_button("trophy", "Giải đấu", 27.0)
+	trophy_btn["btn"].pressed.connect(func() -> void:
+		if Net.account_name == "":
+			if game != null:
+				game.home_open_account()
+		elif game != null:
+			game.home_open_tournament())
+	rail.add_child(_rail_centered(trophy_btn["holder"]))
 
 	_rail_close_box = VBoxContainer.new()
 	_rail_close_box.add_theme_constant_override("separation", 6)

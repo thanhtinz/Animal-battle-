@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Empire Age hero-skill MP smoke test (13j).
+# Empire Age hero-skill MP smoke test (13j; 16b: ONE skill).
 #
 # Same relay + two-client shape as mp_smoke.sh, but the scripted
 # match is a HERO DUEL: Main's mp_test_hero hook spawns both
@@ -14,8 +14,9 @@
 #     the draw is payload metadata, so the sims must still agree)
 #   - the skill commands apply on BOTH clients
 #   - checksums agree at ticks 60 / 90 / 120 / 150 / 180 / 210 — aura
-#     math, Chiêu 1/2/3 effects, zones, shots, shields and the
-#     per-skill cooldown state are bit-identical sims (13v)
+#     math, the ONE skill's effects (zones, shields, taunts,
+#     flurries) and its 75 s cooldown state are bit-identical
+#     sims on both peers (16b)
 #   - no DESYNC notice anywhere
 set -u
 cd "$(dirname "$0")/.."
@@ -71,10 +72,6 @@ grep -q "MPLOG hero order slot=0" "$WORK/a.log"; chk "slot 0 hero ordered (A log
 grep -q "MPLOG hero order slot=1" "$WORK/b.log"; chk "slot 1 hero ordered (B log)" $?
 grep -q "MPLOG hero cast slot=0 sent=true" "$WORK/a.log"; chk "slot 0 cast sent" $?
 grep -q "MPLOG hero cast slot=1 sent=true" "$WORK/b.log"; chk "slot 1 cast sent" $?
-grep -q "MPLOG hero cast2 slot=0" "$WORK/a.log"; chk "slot 0 cast2 sent (13v)" $?
-grep -q "MPLOG hero cast2 slot=1" "$WORK/b.log"; chk "slot 1 cast2 sent (13v)" $?
-grep -q "MPLOG hero cast3 slot=0" "$WORK/a.log"; chk "slot 0 cast3 sent (13v)" $?
-grep -q "MPLOG hero cast3 slot=1" "$WORK/b.log"; chk "slot 1 cast3 sent (13v)" $?
 grep -q "kind=skill from=0" "$WORK/a.log"; chk "skill cmd from 0 applied on A" $?
 grep -q "kind=skill from=0" "$WORK/b.log"; chk "skill cmd from 0 applied on B" $?
 grep -q "kind=skill from=1" "$WORK/a.log"; chk "skill cmd from 1 applied on A" $?

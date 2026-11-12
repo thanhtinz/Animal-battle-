@@ -410,8 +410,8 @@ func TestFriendsPayloadFields(t *testing.T) {
 	if err := acc.store.PutAccount(b); err != nil {
 		t.Fatal(err)
 	}
-	// A custom avatar pick is carried; the default is ngan_ky.
-	if _, err := acc.SetAvatar("Ban", "kim_hoa"); err != nil {
+	// A custom avatar pick is carried; the default is knight.
+	if _, err := acc.SetAvatar("Ban", "archer"); err != nil {
 		t.Fatal(err)
 	}
 	if err := acc.AddFriend("Chu", "Ban"); err != nil {
@@ -425,19 +425,19 @@ func TestFriendsPayloadFields(t *testing.T) {
 	if r.Level != 3 {
 		t.Fatalf("level = %d, want 3 (450 XP)", r.Level)
 	}
-	if r.AvatarID != "kim_hoa" {
-		t.Fatalf("avatar = %q, want kim_hoa", r.AvatarID)
+	if r.AvatarID != "archer" {
+		t.Fatalf("avatar = %q, want archer", r.AvatarID)
 	}
 	if r.LastOnline != 1_700_000_000 {
 		t.Fatalf("last_online = %d, want 1700000000", r.LastOnline)
 	}
-	// Chu (no matches, default avatar): Lv1, ngan_ky, never stamped.
+	// Chu (no matches, default avatar): Lv1, knight, never stamped.
 	if err := acc.AddFriend("Ban", "Chu"); err != nil {
 		t.Fatal(err)
 	}
 	cr := acc.FriendsOf("Ban")[0]
-	if cr.Level != 1 || cr.AvatarID != "ngan_ky" || cr.LastOnline != 0 {
-		t.Fatalf("default row = %+v, want Lv1/ngan_ky/0", cr)
+	if cr.Level != 1 || cr.AvatarID != "knight" || cr.LastOnline != 0 {
+		t.Fatalf("default row = %+v, want Lv1/knight/0", cr)
 	}
 }
 
@@ -497,7 +497,7 @@ func TestWireFriendClose(t *testing.T) {
 	fr := a.recvUntil(t, "friends")
 	row := fr["rows"].([]any)[0].(map[string]any)
 	// New payload fields ride along from the first list.
-	if row["close"] != false || row["avatar_id"] != "ngan_ky" ||
+	if row["close"] != false || row["avatar_id"] != "knight" ||
 		int(row["level"].(float64)) != 1 || row["last_online"] == nil {
 		t.Fatalf("initial friend row = %v", row)
 	}

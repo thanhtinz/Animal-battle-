@@ -7,19 +7,20 @@ extends RefCounted
 ##   the player's MAIN CHARACTER. Bé's self-drawn Western king
 ##   was removed from the roster entirely (its files stay on disk
 ##   unused); the roster is Tín's supplied cast.
-## * EIGHT CHARACTERS (the original four + the 14c Temple
-##   Masters), each with a framed portrait avatar and a personal
-##   KIT (one aura + three active skills — the numbers live in
-##   Stats.HERO_KITS / HERO_SKILL2 / HERO_SKILL3; names and
+## * EIGHT CHARACTERS (16b: Tín's Western Medieval generals —
+##   NHAN-VAT-TAY-TRUNG-CO.md is the design source of truth),
+##   each with a framed portrait avatar and a personal KIT (one
+##   passive aura + exactly ONE active skill on a unified 75 s
+##   cooldown — the numbers live in Stats.HERO_KITS; names and
 ##   descriptions for UI live here):
-##     ngan_ky  Ngân Kỵ  — frontline knight
-##     kim_hoa  Kim Hoa  — sovereign support
-##     lam_bao  Lam Bào  — ice prince (sheet hair fixed to black)
-##     bach_sa  Bạch Sa  — veil priestess
-##     loi_chan  Lôi Chấn  — lightning twin-blade master
-##     xich_diem Xích Diệm — fire fan master
-##     phong_linh Phong Linh — wind longbow master (ranged hero)
-##     thach_son Thạch Sơn — earth hammer master
+##     knight    Hiệp Sĩ Hoàng Gia — royal knight (tank)
+##     berserker Chiến Binh Cuồng Nộ — berserker (fighter)
+##     archer    Cung Thủ Tinh Anh — elven archer (ranged)
+##     mage      Pháp Sư Cung Đình — court mage (ranged)
+##     paladin   Thánh Kỵ Sĩ — holy paladin (support)
+##     dragoon   Kỵ Sĩ Long — dragon knight (mobility)
+##     assassin  Sát Thủ Bóng Đêm — assassin
+##     ranger    Nhà Thám Hiểm — explorer (skirmisher)
 ## * Characters are NOT chosen. At match start every player is
 ##   randomly ASSIGNED one character from their owned pool (the
 ##   server draws for MP rooms and puts char_id in the match
@@ -41,72 +42,54 @@ extends RefCounted
 ## * The profile AVATAR is decoupled from the draw: a free pick
 ##   among the 8 portraits, stored on the account (avatar_id).
 
-const DEFAULT_CHAR := "ngan_ky"
+const DEFAULT_CHAR := "knight"
 const CFG_PATH := "user://character.cfg"
 const DIRS8: Array[String] = ["s", "se", "e", "ne", "n", "nw", "w", "sw"]
 
 const CHARACTERS := {
-	"ngan_ky": {
-		"name": "Ngân Kỵ",
-		"aura": "Huyết Bào", "aura_desc": "Đồng minh trong 3 ô: +15% tấn công.",
-		"skill": "Xung Phong", "skill_desc": "5 giây: +50% tốc độ chạy, +100% sát thương.",
-		"skill2": "Kiếm Khí Tung Hoành", "skill2_desc": "Sóng kiếm khí theo hướng mặt: 45 sát thương lên mọi kẻ địch trên đường đi.",
-		"skill3": "Vương Kiếm Giáng Thế", "skill3_desc": "Đại kiếm giáng xuống một vùng: 120 sát thương lên quân, 250 lên công trình, choáng 1 giây.",
+	"knight": {
+		"name": "Hiệp Sĩ Hoàng Gia", "role": "Đỡ Đòn",
+		"aura": "Hộ Vệ", "aura_desc": "Đồng minh trong 3 ô: giảm 8% sát thương nhận vào.",
+		"skill": "Khiên Sư Tử", "skill_desc": "Giương khiên sư tử: nhận khiên hấp thụ 250 sát thương trong 6 giây; mọi địch trong 3 ô bị khiêu khích, buộc phải tấn công Hiệp Sĩ trong 4 giây.",
 	},
-	"kim_hoa": {
-		"name": "Kim Hoa",
-		"aura": "Sinh Tồn", "aura_desc": "Đồng minh trong 3 ô: hồi 1 HP mỗi 2 giây.",
-		"skill": "Vương Mệnh Hồi Phục", "skill_desc": "Hồi ngay 80 HP cho mọi đồng minh trong 3 ô.",
-		"skill2": "Hoa Vũ Hồi Sinh", "skill2_desc": "Mưa hoa 6 giây: đồng minh trong vùng hồi máu dần và được giải hiệu ứng chậm/đóng băng.",
-		"skill3": "Vạn Hoa Khai Thiên", "skill3_desc": "Hồi ngay 200 HP cho đồng minh trong 4 ô + miễn nhiễm sát thương 3 giây.",
+	"berserker": {
+		"name": "Chiến Binh Cuồng Nộ", "role": "Đấu Sĩ",
+		"aura": "Cuồng Chiến", "aura_desc": "Đồng minh trong 3 ô: +10% tốc độ đánh.",
+		"skill": "Rìu Xoáy Cuồng Nộ", "skill_desc": "Xoay rìu một vòng lớn: 110 sát thương cho mọi địch trong 2 ô quanh mình.",
 	},
-	"lam_bao": {
-		"name": "Lam Bào",
-		"aura": "Hàn Khí", "aura_desc": "Kẻ địch trong 3 ô: −15% tốc độ chạy.",
-		"skill": "Băng Phong", "skill_desc": "Kẻ địch trong 2.5 ô: −60% tốc chạy, −40% tốc đánh trong 3 giây.",
-		"skill2": "Thương Băng Xuyên Tâm", "skill2_desc": "Thương băng xuyên tuyến: 35 sát thương; kẻ địch đầu tiên trúng bị đóng băng cứng 1.5 giây.",
-		"skill3": "Băng Hà Vĩnh Cửu", "skill3_desc": "Bão băng 8 giây: kẻ địch trong vùng bị chậm nặng + mất máu dần; công trình bên trong đóng băng, ngừng hoạt động.",
+	"archer": {
+		"name": "Cung Thủ Tinh Anh", "role": "Xạ Thủ",
+		"aura": "Ngắm Chuẩn", "aura_desc": "Đồng minh trong 3 ô: +8% sát thương đòn đánh.",
+		"skill": "Mưa Tên", "skill_desc": "Gọi mưa tên xuống một vùng 2,5 ô trong tầm 8 ô: 3 đợt trong 2 giây, mỗi đợt 40 sát thương cho địch trong vùng.",
 	},
-	"bach_sa": {
-		"name": "Bạch Sa",
-		"aura": "Thánh Quang", "aura_desc": "Đồng minh trong 3 ô: nhận ít hơn 10% sát thương.",
-		"skill": "Kết Giới", "skill_desc": "Kết giới 8 giây tại vị trí tung chiêu: đồng minh bên trong nhận ít hơn 30% sát thương.",
-		"skill2": "Thánh Quang Phán Xét", "skill2_desc": "Cột sáng giáng lên nhóm địch: 55 sát thương và giảm 30% công của chúng trong 5 giây.",
-		"skill3": "Thiên Màn Bất Diệt", "skill3_desc": "Màn thánh 8 giây: đồng minh trong vùng được khiên hấp thụ 120; công trình bên trong không nhận sát thương.",
+	"mage": {
+		"name": "Pháp Sư Cung Đình", "role": "Pháp Sư",
+		"aura": "Sinh Lực", "aura_desc": "Đồng minh trong 3 ô: hồi 1,2 HP mỗi giây.",
+		"skill": "Thiên Thạch Ma Thuật", "skill_desc": "Gọi thiên thạch ma thuật giáng xuống điểm chọn: 120 sát thương phép cho địch trong 2,5 ô.",
 	},
-	# 14c — the four Temple Masters (NHAN-VAT-MOI-5-8.md): the
-	# roster grows to eight; same rules (drawn, never recoloured).
-	"loi_chan": {
-		"name": "Lôi Chấn",
-		"aura": "Lôi Vực", "aura_desc": "Đồng minh trong 3 ô: +12% tốc độ đánh.",
-		"skill": "Lôi Độn", "skill_desc": "Lướt tối đa 5 ô như tia chớp: 40 sát thương quanh điểm đáp, +20% tốc chạy trong 4 giây.",
-		"skill2": "Song Lôi Liên Kích", "skill2_desc": "Sét đánh mục tiêu 55 sát thương rồi nảy sang 3 kẻ địch gần nhất, mỗi phát 30.",
-		"skill3": "Thiên Lôi Phạt Trận", "skill3_desc": "Vùng bão sét 6 giây: mỗi giây giáng 45 sát thương, kẻ địch trong vùng chậm 20%.",
+	"paladin": {
+		"name": "Thánh Kỵ Sĩ", "role": "Hỗ Trợ",
+		"aura": "Thánh Giáp", "aura_desc": "Đồng minh trong 3 ô: +3 giáp (mỗi đòn đánh vào giảm 3 sát thương).",
+		"skill": "Thánh Quang Hồi Phục", "skill_desc": "Cầu nguyện thánh quang: hồi 160 HP cho mọi đồng minh trong 3 ô và giải mọi hiệu ứng xấu trên họ.",
 	},
-	"xich_diem": {
-		"name": "Xích Diệm",
-		"aura": "Hỏa Tâm", "aura_desc": "Đòn đánh của đồng minh trong 3 ô thiêu đốt kẻ địch: 3 HP mỗi 0.5 giây trong 2 giây.",
-		"skill": "Hỏa Ấn", "skill_desc": "Gắn ấn lửa lên mục tiêu: sau 2 giây phát nổ 70 sát thương trong 1.5 ô.",
-		"skill2": "Diệm Phiến Toàn", "skill2_desc": "Quạt lửa hình nón trước mặt: 50 sát thương + thiêu đốt 4 HP mỗi 0.5 giây trong 3 giây.",
-		"skill3": "Phượng Hỏa Giáng", "skill3_desc": "Phượng lửa giáng xuống: 130 sát thương (150 lên công trình), mặt đất cháy 5 giây.",
+	"dragoon": {
+		"name": "Kỵ Sĩ Long", "role": "Cơ Động",
+		"aura": "Long Hành", "aura_desc": "Đồng minh trong 3 ô: +10% tốc độ di chuyển.",
+		"skill": "Long Thương Xuyên Tâm", "skill_desc": "Lao thẳng tối đa 5 ô: 120 sát thương cho mọi địch nằm trên đường lao.",
 	},
-	"phong_linh": {
-		"name": "Phong Linh",
-		"aura": "Phong Hành", "aura_desc": "Đồng minh trong 3 ô: +12% tốc độ chạy.",
-		"skill": "Truy Phong Tiễn", "skill_desc": "Phát bắn xuyên tuyến tầm 8 ô: 75 sát thương, bỏ qua mọi đơn vị đứng giữa.",
-		"skill2": "Tiễn Vũ", "skill2_desc": "Mưa tên 3 đợt lên một vùng: mỗi đợt 20 sát thương.",
-		"skill3": "Cuồng Phong Nộ", "skill3_desc": "Lốc xoáy 6 giây: kéo kẻ địch về tâm, 15 sát thương mỗi 0.5 giây, giảm 30% công của chúng.",
+	"assassin": {
+		"name": "Sát Thủ Bóng Đêm", "role": "Sát Thủ",
+		"aura": "Thích Sát", "aura_desc": "Đồng minh trong 3 ô: +10% sát thương khi đánh tướng địch.",
+		"skill": "Ám Sát", "skill_desc": "Biến mất rồi xuất hiện ngay sau lưng một địch trong 6 ô, đâm một đòn chí mạng 160 sát thương.",
 	},
-	"thach_son": {
-		"name": "Thạch Sơn",
-		"aura": "Thổ Giáp", "aura_desc": "Đồng minh trong 3 ô: +3 giáp (mỗi đòn đánh vào giảm 3 sát thương).",
-		"skill": "Sơn Băng Đạp", "skill_desc": "Nhảy tối đa 4 ô rồi dậm đất: 40 sát thương trong 2 ô, hất lùi 1 ô, chậm 30% trong 2 giây.",
-		"skill2": "Nham Tường", "skill2_desc": "Dựng tường đá 3 ô (300 HP mỗi ô) chặn đường trong 12 giây.",
-		"skill3": "Địa Long Lật Đất", "skill3_desc": "Đất lật trong 3.5 ô: 90 sát thương lên quân, 300 lên công trình, chậm 40% trong 3 giây.",
+	"ranger": {
+		"name": "Nhà Thám Hiểm", "role": "Thám Hiểm",
+		"aura": "Viễn Thị", "aura_desc": "Đồng minh trong 3 ô: +1 ô tầm nhìn.",
+		"skill": "Kiếm Vũ Lữ Hành", "skill_desc": "Múa kiếm thần tốc: 5 nhát chém trong 1 giây, mỗi nhát 32 sát thương, chia đều cho các địch trong 2 ô quanh mình.",
 	},
 }
-const CHAR_IDS: Array[String] = ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa",
-		"loi_chan", "xich_diem", "phong_linh", "thach_son"]
+const CHAR_IDS: Array[String] = ["knight", "berserker", "archer", "mage",
+		"paladin", "dragoon", "assassin", "ranger"]
 
 ## Cosmetic appearance skins — NO kits, never in the draw pool.
 const SKINS := {

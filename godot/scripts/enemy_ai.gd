@@ -192,12 +192,15 @@ func _king_production() -> void:
 	castle.start_training("king")
 
 
-## The AI hero's active skill: a simple deterministic trigger on
-## the production cadence — cast when the skill would bite:
-## Ngân Kỵ charges when an enemy is close enough to fight, Kim
-## Hoa heals when a nearby ally (or she) is missing real HP, Lam
-## Bào freezes enemies in Băng Phong range, Bạch Sa raises her
-## barrier when enemies press in. Cooldown gating is the cast's.
+## The AI hero's ONE active skill (16b): a simple deterministic
+## trigger on the production cadence — cast when the skill would
+## bite. Self-centred skills fire on local pressure (the Knight
+## taunts when enemies close in, the Berserker whirls into a
+## crowd, the Paladin heals real wounds, the Ranger flurries a
+## surrounding pair); targeted skills aim at the best enemy point
+## inside their own range (arrow rain / meteor at a cluster, the
+## Dragoon's lance at the nearest foe, Ám Sát at the enemy hero
+## or the toughest unit in reach). Cooldown gating is the cast's.
 func _hero_skill_tick() -> void:
 	var hero: Unit = game.hero_of_team(1)
 	if hero == null or hero.skill_cd_t > 0.0:
@@ -207,52 +210,84 @@ func _hero_skill_tick() -> void:
 	if kit.is_empty():
 		return
 	var r := Stats.AURA_RANGE_TILES * World.TILE
+	var hp := hero.global_position
 	var cast := false
-	# 14c: cast point for the targeted Chiêu 1 (sentinel = none;
-	# the original four ignore it entirely).
-	var target := Vector2(-99999.0, -99999.0)
+	var target := Vector2(-99999.0, -99999.0) # sentinel = untargeted
 	match ch:
-		"ngan_ky":
+		"knight":
 			for u in game.units:
 				if is_instance_valid(u) and u.team == 0 and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= r * 0.7:
+						and u.is_military() \
+						and u.global_position.distance_to(hp) <= r:
 					cast = true
 					break
-		"kim_hoa":
+		"berserker", "ranger":
+			var sr := float(kit["radius_tiles"]) * World.TILE
+			var n := 0
+			for u in game.units:
+				if is_instance_valid(u) and u.team == 0 and not u.is_dead() \
+						and u.global_position.distance_to(hp) <= sr:
+					n += 1
+					if u.unit_type == "king":
+						n += 1 # an enemy hero alone is worth it
+			cast = n >= 2
+		"paladin":
 			for u in game.units:
 				if is_instance_valid(u) and u.team == 1 and not u.is_dead() \
-						and u.hp <= u.max_hp - 40.0 \
-						and u.global_position.distance_to(hero.global_position) <= r:
+						and u.hp <= u.max_hp - 80.0 \
+						and u.global_position.distance_to(hp) <= r:
 					cast = true
 					break
-		"lam_bao":
-			var sr := float(kit["skill_range"]) * World.TILE
+		"archer", "mage":
+			var crange := float(kit.get("cast_tiles",
+					Stats.SKILL_CAST_RANGE_TILES)) * World.TILE
+			var zr := float(kit["radius_tiles"]) * World.TILE
+			var best: Unit = null
+			var best_n := 0
 			for u in game.units:
-				if is_instance_valid(u) and u.team == 0 and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= sr:
-					cast = true
-					break
-		"bach_sa":
-			for u in game.units:
-				if is_instance_valid(u) and u.team == 0 and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= r:
-					cast = true
-					break
-		# 14c: the new heroes' Chiêu 1 are targeted — the AI aims
-		# at the nearest enemy inside the skill's own range.
-		"loi_chan", "xich_diem", "phong_linh", "thach_son":
-			var key: String = {"loi_chan": "dash_tiles", "xich_diem": "mark_range_tiles",
-					"phong_linh": "snipe_range_tiles", "thach_son": "leap_tiles"}[ch]
-			var sr2 := float(kit[key]) * World.TILE
+				if not is_instance_valid(u) or u.team != 0 or u.is_dead() \
+						or u.global_position.distance_to(hp) > crange:
+					continue
+				var n := 0
+				for v in game.units:
+					if is_instance_valid(v) and v.team == 0 \
+							and not v.is_dead() \
+							and v.global_position.distance_to(
+									u.global_position) <= zr:
+						n += 1
+				if n > best_n or (n == best_n and n > 0 and best != null \
+						and u.net_id < best.net_id):
+					best_n = n
+					best = u
+			if best != null and (best_n >= 2 or best.unit_type == "king"):
+				cast = true
+				target = best.global_position
+		"dragoon":
+			var drange := float(kit["dash_tiles"]) * World.TILE
 			var foe: Unit = null
 			for u in game.units:
 				if is_instance_valid(u) and u.team == 0 and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= sr2:
+						and u.global_position.distance_to(hp) <= drange:
 					if foe == null or u.net_id < foe.net_id:
 						foe = u
 			if foe != null:
 				cast = true
 				target = foe.global_position
+		"assassin":
+			var arange := float(kit["range_tiles"]) * World.TILE
+			var victim: Unit = null
+			for u in game.units:
+				if not is_instance_valid(u) or u.team != 0 or u.is_dead() \
+						or u.global_position.distance_to(hp) > arange:
+					continue
+				if u.unit_type == "king":
+					victim = u
+					break
+				if victim == null or u.hp > victim.hp:
+					victim = u
+			if victim != null:
+				cast = true
+				target = victim.global_position
 	if cast:
 		game.cast_hero_skill(hero, target)
 

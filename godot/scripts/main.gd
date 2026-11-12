@@ -20,10 +20,6 @@ const BUILD_DEFS := {
 	"wallstone": {"name": "Tường đá", "size": Vector2i(1, 1), "cost": {"stone": 30}, "build_time": 3.0, "pop": 0},
 	"gatewood": {"name": "Cổng gỗ", "size": Vector2i(1, 1), "cost": {"wood": 50}, "build_time": 3.0, "pop": 0},
 	"gatestone": {"name": "Cổng đá", "size": Vector2i(1, 1), "cost": {"stone": 50}, "build_time": 4.0, "pop": 0},
-	# 14c: Nham Tường — Thạch Sơn's skill wall. Never buildable
-	# from a menu (not in Stats.TECH_BUILDINGS); raised only by
-	# cast_hero_skill2, expires via skill_wall_timers.
-	"skillwall": {"name": "Nham Tường", "size": Vector2i(1, 1), "cost": {}, "build_time": 0.0, "pop": 0},
 }
 ## Market exchange (fixed rates, traded from the Market's info panel):
 ## sell MARKET_TRADE_AMOUNT of food/wood/stone for MARKET_SELL_GOLD gold,
@@ -128,25 +124,12 @@ var mp_techs: Array = [] # slot -> {levels: {tech id -> tier}, active: {building
 var mp_rally: Array = [] # slot -> Vector2 rally point (ZERO = unset)
 var slot_chars: Array = [] # slot -> assigned main-character id (drawn at match start; presentation + kit identity, never in checksums as a value — its EFFECTS are sim)
 var slot_skins: Array = [] # slot -> active cosmetic skin id ("" = none; dormant until the shop exists)
-var hero_zones: Array = [] # Bạch Sa "Kết Giới" zones: {pos, t, owner} — SIM state, ticked in _process
-## 13v: the full skill sim. skill_zones holds the lingering
-## Chiêu 2 / Ulti zones {kind, pos, t, acc, radius, owner} —
-## heal_rain (Kim Hoa 2), blizzard (Lam Bào 3), dome (Bạch Sa 3);
-## skill_shots holds the travelling projectiles {kind, pos, dir,
-## range_left, owner, hit: {net_id: true}, fx: handle} — sword_wave
-## (Ngân Kỵ 2), ice_spear (Lam Bào 2). Both are SIM state: they
-## tick in _process on the same frame semantics as units, their
-## damage flows through takes_damage, and their cooldowns / zone
-## counts feed the MP checksum. (Shot fx handles are presentation
-## only and never read by the sim.)
+## 16b: the (single) lingering skill zone kind — the Archer's
+## Mưa Tên {kind: "arrow_rain", pos, t, acc, radius, owner,
+## dmg, tick_n}. SIM state: ticks in _process on the same frame
+## semantics as units, damage flows through take_damage, and
+## the zone feeds the MP checksum + resync snapshot.
 var skill_zones: Array = []
-var skill_shots: Array = []
-## 14c: Thạch Sơn's Nham Tường lifetimes — net_id -> seconds
-## left. The wall segments themselves are ordinary Buildings
-## (btype "skillwall": solid, attackable, checksum-covered via
-## the building list); only their expiry needs this side table.
-## SIM state: ticked beside the zones, snapshotted, hashed.
-var skill_wall_timers: Dictionary = {}
 # --- 15b diplomacy state (Custom rooms that opted in ONLY) -----------
 ## Pairwise slot stances inside the lockstep sim: every change
 ## arrives as a command (dip_propose / dip_respond / dip_cancel /
@@ -1409,15 +1392,14 @@ func _mp_unit_record(u: Unit) -> Dictionary:
 		"hp": u.hp, "carry_type": u.carry_type, "carry_amt": u.carry_amount,
 		"gather_t": u.gather_timer, "tend_t": u.tend_timer,
 		"atk_cd": u._atk_cd, "no_flee": u.no_flee_timer,
-		# 13v skill state: extra hero cooldowns, shield pool,
-		# hard-control timers.
-		"s2": u.skill2_cd_t, "s3": u.skill3_cd_t, "shield": u.shield_hp,
+		# Skill state: the ONE skill's cooldown, shield pool +
+		# its lifetime, hard-control timers, the Khiên Sư Tử taunt.
+		"scd": u.skill_cd_t,
+		"shield": u.shield_hp, "shield_t": u.shield_t,
 		"stun": u.stun_t, "frozen": u.frozen_t,
-		# 14c skill state: Xích Diệm burn + Hỏa Ấn mark.
-		"burn_t": u.burn_t, "burn_amt": u.burn_amt,
-		"burn_ticks": u.burn_ticks, "mark_t": u.mark_t,
-		"mark_dmg": u.mark_dmg, "mark_r": u.mark_radius,
-		"mark_o": u.mark_owner,
+		"taunt_t": u.taunt_t, "taunt_id": u.taunt_id,
+		"flurry": u.flurry_left, "flurry_t": u.flurry_t,
+		"flurry_c": u.flurry_cursor,
 		"guard": [u.guard_pos.x, u.guard_pos.y], "task": null}
 	# 15g transport state: a cart's route (market net ids, leg,
 	# locked payout) and a wagon's passengers (full unit records,
@@ -1478,6 +1460,7 @@ func _mp_snapshot_skill_zones() -> Array:
 				"y": float((z["pos"] as Vector2).y),
 				"t": float(z["t"]), "acc": float(z["acc"]),
 				"tick_n": int(z.get("tick_n", 0)),
+				"dmg": float(z.get("dmg", 0.0)),
 				"radius": float(z["radius"]), "owner": int(z["owner"])})
 	return out
 
@@ -1511,15 +1494,10 @@ func _mp_snapshot_state() -> Dictionary:
 		if not u.is_dead():
 			units_arr.append(_mp_unit_record(u))
 	st["units"] = units_arr
-	# 13v: lingering skill zones are sim state — a resync rebuilds
-	# blizzards / domes / heal rain exactly (shots stay transient
-	# like arrows; cooldowns ride the unit records above).
+	# 16b: lingering skill zones are sim state — a resync rebuilds
+	# the Archer's arrow rain exactly (hero cooldowns and timed
+	# effects ride the unit records above).
 	st["skill_zones"] = _mp_snapshot_skill_zones()
-	# 14c: Nham Tường lifetimes ride beside their buildings.
-	var walls_arr: Array = []
-	for nid in skill_wall_timers:
-		walls_arr.append([int(nid), float(skill_wall_timers[nid])])
-	st["skill_walls"] = walls_arr
 	# 15b: diplomacy tables (only an armed match carries any).
 	if dip_enabled:
 		st["dip"] = {"stance": dip_stance.duplicate(true),
@@ -1864,23 +1842,19 @@ func _mp_apply_snapshot(snap_tick: int, st: Dictionary) -> void:
 		nu.carry_amount = int(rec["carry_amt"])
 		nu._atk_cd = float(rec["atk_cd"])
 		nu.no_flee_timer = float(rec["no_flee"])
-		if rec.has("s2"): # 13v skill state
-			nu.skill2_cd_t = float(rec["s2"])
-			nu.skill3_cd_t = float(rec["s3"])
+		if rec.has("shield"): # skill state (skill cooldown,
+			# shield pool, control timers, taunt — plain scalars,
+			# exact restore).
+			nu.skill_cd_t = float(rec.get("scd", 0.0))
 			nu.shield_hp = float(rec["shield"])
+			nu.shield_t = float(rec.get("shield_t", 0.0))
 			nu.stun_t = float(rec["stun"])
 			nu.frozen_t = float(rec["frozen"])
-		if rec.has("burn_t"): # 14c skill state (burn source is a
-			# live reference — a resync restarts it unowned, the
-			# remaining ticks still land for the same total).
-			nu.burn_t = float(rec["burn_t"])
-			nu.burn_amt = float(rec["burn_amt"])
-			nu.burn_ticks = int(rec["burn_ticks"])
-			nu.burn_from = null
-			nu.mark_t = float(rec["mark_t"])
-			nu.mark_dmg = float(rec["mark_dmg"])
-			nu.mark_radius = float(rec["mark_r"])
-			nu.mark_owner = int(rec["mark_o"])
+			nu.taunt_t = float(rec.get("taunt_t", 0.0))
+			nu.taunt_id = int(rec.get("taunt_id", -1))
+			nu.flurry_left = int(rec.get("flurry", 0))
+			nu.flurry_t = float(rec.get("flurry_t", 0.0))
+			nu.flurry_cursor = int(rec.get("flurry_c", -1))
 		# 15g transport restore: the cart's route endpoints (the
 		# buildings are already rebuilt above) and the wagon's
 		# passengers (created like ship cargo, then boarded —
@@ -1932,27 +1906,21 @@ func _mp_apply_snapshot(snap_tick: int, st: Dictionary) -> void:
 		ship_recs.append([ns, rec])
 	# 11) Beasts.
 	_mp_reconcile_beasts(st["beasts"])
-	# 11b) 13v skill zones (shots are transient, like arrows).
+	# 11b) 16b skill zones (the arrow rain; hero cooldowns and
+	# timed effects ride the unit records above).
 	skill_zones.clear()
-	skill_shots.clear()
 	if st.has("skill_zones"):
 		for zr in st["skill_zones"]:
 			skill_zones.append({"kind": String(zr["kind"]),
 					"pos": Vector2(float(zr["x"]), float(zr["y"])),
 					"t": float(zr["t"]), "acc": float(zr["acc"]),
 					"tick_n": int(zr.get("tick_n", 0)),
+					"dmg": float(zr.get("dmg", 0.0)),
 					"radius": float(zr["radius"]), "owner": int(zr["owner"])})
 			if skill_fx != null:
 				skill_fx.zone_fx(String(zr["kind"]),
 						Vector2(float(zr["x"]), float(zr["y"])),
 						float(zr["radius"]), float(zr["t"]))
-	# 11c) 14c skill-wall lifetimes (segments already rebuilt
-	# with the buildings above).
-	skill_wall_timers.clear()
-	if st.has("skill_walls"):
-		for wr in st["skill_walls"]:
-			if building_of_net_id(int(wr[0])) != null:
-				skill_wall_timers[int(wr[0])] = float(wr[1])
 	# 11d) 15b diplomacy tables (absent from pre-15b snapshots).
 	_dip_restore(st)
 	# 12) Task passes.
@@ -2487,13 +2455,12 @@ func _mp_state_hash() -> int:
 		h = _hash_mix(h, int(u.hp))
 		# 13v: hero cooldowns, shield pools and hard-control timers
 		# are sim state — quantised into the hash.
-		h = _hash_mix(h, int(u.skill2_cd_t * 10.0))
-		h = _hash_mix(h, int(u.skill3_cd_t * 10.0))
 		h = _hash_mix(h, int(u.shield_hp))
+		h = _hash_mix(h, int(u.shield_t * 10.0))
 		h = _hash_mix(h, int(u.stun_t * 10.0) + int(u.frozen_t * 10.0))
-		# 14c: burn + mark timers are sim state too.
-		h = _hash_mix(h, int(u.burn_t * 10.0) + u.burn_ticks)
-		h = _hash_mix(h, int(u.mark_t * 10.0))
+		# 16b: taunt + Kiếm Vũ flurry state are sim state too.
+		h = _hash_mix(h, int(u.taunt_t * 10.0) + u.taunt_id)
+		h = _hash_mix(h, u.flurry_left * 100 + int(u.flurry_t * 10.0))
 		# 15g: transport state — a cart's route + locked payout,
 		# a wagon's passenger manifest (passengers sit outside
 		# the roster, so only the carrier's record can catch a
@@ -2520,9 +2487,6 @@ func _mp_state_hash() -> int:
 		h = _hash_mix(h, b.net_id)
 		h = _hash_mix(h, int(b.hp))
 		h = _hash_mix(h, 1 if b.complete else 0)
-		# 14c: a skill wall's remaining lifetime is sim state.
-		if b.btype == "skillwall":
-			h = _hash_mix(h, int(float(skill_wall_timers.get(b.net_id, 0.0)) * 10.0))
 	for slot in range(slot_count()):
 		var w: Dictionary = mp_wallets[slot]
 		for r in ["food", "wood", "gold", "stone"]:
@@ -2706,9 +2670,14 @@ func _mp_check_winner() -> void:
 			# 13z: queue matches report the full placement list.
 			if not _referee_reported:
 				_referee_reported = true
+				# 15h: per-slot match scores ride along — only
+				# tournament rooms consume them server-side.
+				var scores: Array = []
+				for s in range(slot_count()):
+					scores.append(match_score_of(s))
 				Net.report_referee_result(winner_team, _referee_win_reason,
 						_mp_current_tick, _mp_placements(),
-						_referee_disconnect_slots, _mp_elim_ticks())
+						_referee_disconnect_slots, _mp_elim_ticks(), scores)
 				print("MPLOG referee result winner_team=", winner_team,
 						" reason=", _referee_win_reason,
 						" placements=", _mp_placements(),
@@ -3127,6 +3096,7 @@ func open_friends_shot(tab: String = "all") -> void:
 
 ## Profile screen (13l): opened by tapping the home avatar.
 var profile_screen = null
+var tournament_screen = null
 
 
 func _ensure_profile() -> void:
@@ -3229,6 +3199,31 @@ func home_open_leaderboard() -> void:
 	_ensure_lobby()
 	hide_home()
 	lobby.open_for_leaderboard()
+
+
+## Tournaments (15h): the home rail's trophy chip opens the
+## tournament screen (its own layer over home, like Profile).
+func _ensure_tournament() -> void:
+	if tournament_screen == null:
+		tournament_screen = TournamentScreen.new()
+		tournament_screen.setup(self)
+		add_child(tournament_screen)
+
+
+func home_open_tournament() -> void:
+	_ensure_tournament()
+	tournament_screen.open()
+
+
+## Capture-harness entry: open the tournament screen on the
+## list view or on the current detail (the driver's).
+func open_tournament_shot(mode: String) -> void:
+	show_home()
+	_ensure_tournament()
+	if mode == "detail":
+		tournament_screen.open_detail(String(Net.tourn_detail.get("id", "")))
+	else:
+		tournament_screen.open()
 
 
 ## Home settings: relay address shared with the lobby.
@@ -4024,38 +4019,23 @@ func hero_aura_covers(u: Unit, char_id: String, include_self := false) -> bool:
 			<= Stats.AURA_RANGE_TILES * World.TILE
 
 
-## Movement-speed factor from auras: Lam Bào's enemy "Hàn Khí"
-## (x0.85 inside his aura) and Phong Linh's allied "Phong Hành"
-## (x1.12 inside hers, herself included — a mobility aura, like
-## the defensive ones she never withholds from herself). The two
-## multiply when both apply.
+## Movement-speed factor from auras: the Dragoon's allied
+## "Long Hành" (x1.10 inside his aura, himself included — a
+## mobility aura, like the defensive ones, is never withheld
+## from the hero).
 func hero_speed_factor(u: Unit) -> float:
 	var f := 1.0
-	for k in units:
-		if is_instance_valid(k) and k.unit_type == "king" and not k.is_dead() \
-				and k.team != u.team and char_for(k.owner_id) == "lam_bao" \
-				and u.global_position.distance_to(k.global_position) \
-					<= Stats.AURA_RANGE_TILES * World.TILE:
-			f *= float(Stats.HERO_KITS["lam_bao"]["aura_slow"])
-			break
-	if hero_aura_covers(u, "phong_linh", true):
-		f *= float(Stats.HERO_KITS["phong_linh"]["aura_spd"])
+	if hero_aura_covers(u, "dragoon", true):
+		f *= float(Stats.HERO_KITS["dragoon"]["aura_spd"])
 	return f
 
 
-## Damage-taken factor (Bạch Sa): x0.90 inside her aura (allies,
-## herself included), x0.70 inside an allied Kết Giới zone —
-## the two multiply.
+## Damage-taken factor (the Knight's "Hộ Vệ"): x0.92 inside his
+## aura (allies, himself included).
 func hero_damage_factor(u: Unit) -> float:
 	var f := 1.0
-	if hero_aura_covers(u, "bach_sa", true):
-		f *= float(Stats.HERO_KITS["bach_sa"]["aura_mitig"])
-	for z in hero_zones:
-		if int(z["owner"]) == u.owner_id \
-				and u.global_position.distance_to(z["pos"]) \
-					<= Stats.AURA_RANGE_TILES * World.TILE:
-			f *= float(Stats.HERO_KITS["bach_sa"]["zone_mitig"])
-			break
+	if hero_aura_covers(u, "knight", true):
+		f *= float(Stats.HERO_KITS["knight"]["aura_mitig"])
 	return f
 
 
@@ -4070,19 +4050,18 @@ func aura_active_for(king: Unit) -> bool:
 		if u.global_position.distance_to(king.global_position) > r:
 			continue
 		match ch:
-			"ngan_ky", "loi_chan", "xich_diem":
+			"berserker", "archer", "assassin":
+				# Offensive auras: an allied military unit in reach.
 				if u.team == king.team and u.is_military():
 					return true
-			"kim_hoa", "bach_sa", "phong_linh", "thach_son":
+			"knight", "mage", "paladin", "dragoon", "ranger":
+				# Support auras: any ally in reach.
 				if u.team == king.team:
-					return true
-			"lam_bao":
-				if u.team != king.team:
 					return true
 	return false
 
 
-## The destination of a dash/leap cast: `target` clamped to
+## The destination of a dash cast: `target` clamped to
 ## `max_tiles` from the hero and snapped to the nearest walkable
 ## cell centre (a dash never lands in water or inside a wall).
 ## A missing target (the NO_TARGET sentinel — AI casts, old-form
@@ -4103,7 +4082,7 @@ func _dash_destination(hero: Unit, target: Vector2, max_tiles: float) -> Vector2
 	return world.cell_center(cell)
 
 
-## Teleport a hero (dash/leap landing): position is sim state;
+## Teleport a hero (dash / blink landing): position is sim state;
 ## the path is dropped so the state machine restarts cleanly
 ## from the landing point.
 func _hero_reposition(hero: Unit, dest: Vector2) -> void:
@@ -4130,40 +4109,15 @@ func _enemy_unit_near(hero: Unit, point: Vector2, slack: float) -> Unit:
 	return best
 
 
-## Detonate a Hỏa Ấn mark on `u` (14c): 70 dmg in 1.5 tiles
-## around the bearer (or the spot where it fell). Called by
-## Unit when the mark timer ends and from Unit.die().
-func explode_hero_mark(u: Unit) -> void:
-	if u.mark_t <= 0.0 and u.mark_dmg <= 0.0:
-		return
-	var dmg := u.mark_dmg
-	var radius := u.mark_radius
-	var oslot := u.mark_owner
-	u.mark_t = 0.0
-	u.mark_dmg = 0.0
-	u.mark_radius = 0.0
-	u.mark_owner = -1
-	if dmg <= 0.0 or oslot < 0:
-		return
-	var c := u.global_position
-	for v in units:
-		if not attack_allowed(oslot, v.owner_id) or not v.is_targetable():
-			continue
-		if v.global_position.distance_to(c) <= radius:
-			v.take_damage(dmg, null)
-	if vfx != null:
-		vfx.burst(c + Vector2(0, -14), [Color(1.0, 0.55, 0.2, 0.95),
-				Color(1.0, 0.8, 0.35, 0.9)], 16, 52.0)
-		vfx.flash(c, Color(1.0, 0.6, 0.25, 0.8), radius, 0.35)
-
-
-## Cast a hero's active skill. Returns false when the hero is
-## dead, missing, or on cooldown — the MP validator and the HUD
-## both gate on this. Effects write ONLY sim state (unit effect
-## fields, HP, hero_zones); the burst/ring VFX is presentation.
-## 14c: four Chiêu 1 are TARGETED (dash / leap / mark / snipe) —
-## `target` carries the chosen point; NO_TARGET means the cast
-## derives its own (AI, old-form MP commands).
+## Cast a hero's ONE active skill (16b — every hero has exactly
+## one, on the unified 75 s cooldown). Returns false when the
+## hero is dead, missing, or on cooldown — the MP validator and
+## the HUD both gate on this. Effects write ONLY sim state (unit
+## effect fields, HP, skill_zones); the burst/ring VFX is
+## presentation. Targeted skills (Mưa Tên / Thiên Thạch / Long
+## Thương / Ám Sát) carry `target`; NO_TARGET means the cast
+## derives its own (AI casts aim explicitly; an untargeted
+## dash/blink resolves from the hero's position and facing).
 func cast_hero_skill(hero: Unit, target: Vector2 = NO_TARGET) -> bool:
 	if hero == null or not is_instance_valid(hero) or hero.is_dead() \
 			or hero.skill_cd_t > 0.0:
@@ -4173,122 +4127,170 @@ func cast_hero_skill(hero: Unit, target: Vector2 = NO_TARGET) -> bool:
 	if kit.is_empty():
 		return false
 	var r := Stats.AURA_RANGE_TILES * World.TILE
+	var pos := hero.global_position
 	match ch:
-		"ngan_ky":
-			hero.eff_spd_mult = float(kit["buff_spd"])
-			hero.eff_spd_t = float(kit["buff_t"])
-			hero.eff_dmg_mult = float(kit["buff_dmg"])
-			hero.eff_dmg_t = float(kit["buff_t"])
-		"kim_hoa":
+		"knight": # Khiên Sư Tử — 250 absorb shield + mass taunt
+			hero.shield_hp = float(kit["shield"])
+			hero.shield_t = float(kit["shield_t"])
 			for u in units:
-				if is_instance_valid(u) and u.team == hero.team and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= r:
-					u.hp = minf(u.max_hp, u.hp + float(kit["heal"]))
-		"lam_bao":
-			var sr := float(kit["skill_range"]) * World.TILE
-			for u in units:
-				if is_instance_valid(u) and attack_allowed(hero.owner_id, u.owner_id) \
-						and not u.is_dead() \
-						and u.global_position.distance_to(hero.global_position) <= sr:
-					u.eff_spd_mult = float(kit["skill_spd"])
-					u.eff_spd_t = float(kit["skill_t"])
-					u.eff_atkspd_f = float(kit["skill_atkspd"])
-					u.eff_atkspd_t = float(kit["skill_t"])
-		"bach_sa":
-			hero_zones.append({"pos": hero.global_position,
-					"t": float(kit["zone_t"]), "owner": hero.owner_id})
-		"loi_chan": # Lôi Độn — lightning dash + landing blast
-			var from := hero.global_position
-			var dest := _dash_destination(hero, target, float(kit["dash_tiles"]))
-			_hero_reposition(hero, dest)
-			var lr := float(kit["land_radius_tiles"]) * World.TILE
+				if not attack_allowed(hero.owner_id, u.owner_id) \
+						or not u.is_targetable() or not u.is_military():
+					continue
+				if u.global_position.distance_to(pos) <= r:
+					u.taunt_t = float(kit["taunt_t"])
+					u.taunt_id = hero.net_id
+			if skill_fx != null:
+				skill_fx.shield_fx(pos + Vector2(0, -20))
+		"berserker": # Rìu Xoáy Cuồng Nộ — whirlwind around himself
+			var sr := float(kit["radius_tiles"]) * World.TILE
 			for u in units:
 				if not attack_allowed(hero.owner_id, u.owner_id) \
 						or not u.is_targetable():
 					continue
-				if u.global_position.distance_to(dest) <= lr:
-					u.take_damage(float(kit["land_dmg"]), hero)
-			hero.eff_spd_mult = float(kit["buff_spd"])
-			hero.eff_spd_t = float(kit["buff_t"])
+				if u.global_position.distance_to(pos) <= sr:
+					u.take_damage(float(kit["dmg"]), hero)
 			if skill_fx != null:
-				skill_fx.arc_fx(from, dest, Color(0.65, 0.75, 1.0))
-		"xich_diem": # Hỏa Ấn — delayed explosive mark on one unit
-			var mrange := float(kit["mark_range_tiles"]) * World.TILE
+				skill_fx.fan_fx(pos, _facing_vec(hero))
+		"archer": # Mưa Tên — arrow rain at a point up to 8 tiles
+			var zp := _skill_clamp_target(hero, target,
+					float(kit["cast_tiles"]))
+			var zr := float(kit["radius_tiles"]) * World.TILE
+			skill_zones.append({"kind": "arrow_rain", "pos": zp,
+					"t": float(kit["rain_t"]), "acc": 0.0, "tick_n": 0,
+					"dmg": float(kit["rain_dmg"]), "radius": zr,
+					"owner": hero.owner_id})
+			if skill_fx != null:
+				skill_fx.zone_fx("arrow_rain", zp, zr,
+						float(kit["rain_t"]))
+		"mage": # Thiên Thạch Ma Thuật — meteor at a point
+			var c := _skill_clamp_target(hero, target)
+			var mr := float(kit["radius_tiles"]) * World.TILE
+			for u in units:
+				if not attack_allowed(hero.owner_id, u.owner_id) \
+						or not u.is_targetable():
+					continue
+				if u.global_position.distance_to(c) <= mr:
+					u.take_damage(float(kit["dmg"]), hero)
+			if skill_fx != null:
+				skill_fx.plunge_fx(c, func() -> void: _shake_t = 0.3)
+		"paladin": # Thánh Quang Hồi Phục — heal + cleanse in aura
+			for u in units:
+				if not is_instance_valid(u) or u.team != hero.team \
+						or u.is_dead():
+					continue
+				if u.global_position.distance_to(pos) <= r:
+					u.hp = minf(u.max_hp, u.hp + float(kit["heal"]))
+					u.cleanse_effects()
+			if skill_fx != null:
+				skill_fx.pillar_fx(pos, r)
+		"dragoon": # Long Thương Xuyên Tâm — line dash, path damage
+			var dest := _dash_destination(hero, target,
+					float(kit["dash_tiles"]))
+			var half := float(kit["path_half_px"]) + 8.0
+			for u in units:
+				if not attack_allowed(hero.owner_id, u.owner_id) \
+						or not u.is_targetable():
+					continue
+				if _seg_dist(u.global_position, pos, dest) <= half:
+					u.take_damage(float(kit["dmg"]), hero)
+			_hero_reposition(hero, dest)
+			if skill_fx != null:
+				skill_fx.arc_fx(pos + Vector2(0, -24),
+						dest + Vector2(0, -24), Color(0.45, 0.65, 1.0))
+		"assassin": # Ám Sát — blink behind an enemy, 160 stab
+			var arange := float(kit["range_tiles"]) * World.TILE
 			var victim: Unit = null
 			if target.x > -90000.0:
 				victim = _enemy_unit_near(hero, target, 1.2 * World.TILE)
 			else:
-				victim = _enemy_unit_near(hero, hero.global_position, mrange)
-			if victim == null or victim.global_position.distance_to(
-					hero.global_position) > mrange + 1.2 * World.TILE:
+				victim = _enemy_unit_near(hero, pos, arange)
+			if victim == null or victim.global_position.distance_to(pos) \
+					> arange + 1.2 * World.TILE:
 				return false
-			victim.mark_dmg = float(kit["mark_dmg"])
-			victim.mark_radius = float(kit["mark_radius_tiles"]) * World.TILE
-			victim.mark_t = float(kit["mark_t"])
-			victim.mark_owner = hero.owner_id
+			var away: Vector2 = victim.global_position - pos
+			if away.length() < 1.0:
+				away = _facing_vec(hero)
+			var behind: Vector2 = victim.global_position \
+					+ away.normalized() * 24.0
+			var bcell := world.nearest_walkable(world.world_to_cell(behind))
+			_hero_reposition(hero, world.cell_center(bcell))
+			victim.take_damage(float(kit["dmg"]), hero)
 			if skill_fx != null:
-				skill_fx.arc_fx(hero.global_position, victim.global_position,
-						Color(1.0, 0.6, 0.25))
-		"phong_linh": # Truy Phong Tiễn — piercing snipe, target only
-			var srange := float(kit["snipe_range_tiles"]) * World.TILE
-			var svictim: Unit = null
-			if target.x > -90000.0:
-				svictim = _enemy_unit_near(hero, target, 1.2 * World.TILE)
-			else:
-				svictim = _enemy_unit_near(hero, hero.global_position, srange)
-			if svictim == null or svictim.global_position.distance_to(
-					hero.global_position) > srange + 1.2 * World.TILE:
-				return false
-			svictim.take_damage(float(kit["snipe_dmg"]), hero)
-			if skill_fx != null:
-				skill_fx.arc_fx(hero.global_position + Vector2(0, -30),
-						svictim.global_position + Vector2(0, -20),
-						Color(0.55, 0.95, 0.85))
-		"thach_son": # Sơn Băng Đạp — leap slam + knockback + slow
-			var lfrom := hero.global_position
-			var ldest := _dash_destination(hero, target, float(kit["leap_tiles"]))
-			_hero_reposition(hero, ldest)
-			var kr := float(kit["land_radius_tiles"]) * World.TILE
-			var knock := float(kit["knock_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(ldest) <= kr:
-					u.take_damage(float(kit["land_dmg"]), hero)
-					if not u.is_dead():
-						var away: Vector2 = u.global_position - ldest
-						if away.length() < 0.5:
-							away = _facing_vec(hero)
-						var np: Vector2 = u.global_position + away.normalized() * knock
-						var ncell := world.nearest_walkable(world.world_to_cell(np))
-						u.global_position = world.cell_center(ncell)
-						u.path.clear()
-						u.path_cells.clear()
-						u.eff_spd_mult = float(kit["slow_mult"])
-						u.eff_spd_t = float(kit["slow_t"])
-			if skill_fx != null:
-				skill_fx.arc_fx(lfrom, ldest, Color(0.85, 0.75, 0.55))
-				skill_fx.plunge_fx(ldest, func() -> void: _shake_t = 0.22)
+				skill_fx.arc_fx(pos + Vector2(0, -24),
+						victim.global_position + Vector2(0, -24),
+						Color(0.8, 0.35, 0.45))
+		"ranger": # Kiếm Vũ Lữ Hành — flurry state (Main ticks it)
+			hero.flurry_left = int(kit["slashes"])
+			hero.flurry_t = 0.0
+			hero.flurry_cursor = -1
+		_:
+			return false
 	hero.skill_cd_t = Stats.hero_cd(ch)
-	if vfx != null:
-		var col := Color(1.0, 0.85, 0.4, 0.9)
-		if ch == "lam_bao":
-			col = Color(0.55, 0.85, 1.0, 0.9)
-		elif ch == "bach_sa":
-			col = Color(1.0, 0.96, 0.82, 0.9)
-		vfx.burst(hero.global_position + Vector2(0, -20), [col], 14, 46.0)
-		vfx.flash(hero.global_position + Vector2(0, -20), col, 52.0, 0.3)
-	# Presentation hook (13n): the hero's rig plays its cast pose
-	# (weapon raised overhead) — a render-side timer like the VFX
-	# above, never sim state.
+	# Presentation hook (13n): the hero plays its cast pose — a
+	# render-side timer like the VFX, never sim state.
 	hero._king_cast_t = Unit.KING_CAST_TIME
+	_skill_cast_fx(hero, 1, ch)
+	if vfx != null:
+		var col := _skill_colour(ch)
+		vfx.burst(pos + Vector2(0, -20), [col], 14, 46.0)
+		vfx.flash(pos + Vector2(0, -20), col, 52.0, 0.3)
 	return true
 
 
-# ============================================================
-# 13v: Chiêu 2 + Chiêu cuối (full kits)
-# ============================================================
+## Per-skill signature colour for the generic cast burst.
+func _skill_colour(ch: String) -> Color:
+	match ch:
+		"knight": return Color(1.0, 0.85, 0.4, 0.9)
+		"berserker": return Color(1.0, 0.5, 0.25, 0.9)
+		"archer": return Color(0.55, 0.95, 0.6, 0.9)
+		"mage": return Color(0.75, 0.55, 1.0, 0.9)
+		"paladin": return Color(1.0, 0.96, 0.82, 0.9)
+		"dragoon": return Color(0.45, 0.65, 1.0, 0.9)
+		"assassin": return Color(0.8, 0.35, 0.45, 0.9)
+		"ranger": return Color(0.6, 0.95, 0.88, 0.9)
+	return Color(1.0, 0.85, 0.4, 0.9)
+
+
+## The Ranger's Kiếm Vũ Lữ Hành: while a hero's flurry lasts,
+## one slash lands every slash_interval seconds on the next
+## enemy (net_id round-robin) inside the flurry radius — the
+## five slashes spread evenly over the enemies in reach, and a
+## lone enemy eats all five. Deterministic: the foe list is
+## re-derived from sim positions in net_id order each slash.
+func _update_hero_flurries(delta: float) -> void:
+	for u in units:
+		if not is_instance_valid(u) or u.unit_type != "king" \
+				or u.is_dead() or u.flurry_left <= 0:
+			continue
+		u.flurry_t -= delta
+		if u.flurry_t > 0.0:
+			continue
+		var kit: Dictionary = Stats.HERO_KITS.get(char_for(u.owner_id), {})
+		var r := float(kit.get("radius_tiles", 2.0)) * World.TILE
+		var foes: Array = []
+		for v in units:
+			if attack_allowed(u.owner_id, v.owner_id) \
+					and v.is_targetable() \
+					and v.global_position.distance_to(u.global_position) <= r:
+				foes.append(v)
+		if foes.is_empty():
+			u.flurry_left = 0
+			continue
+		foes.sort_custom(func(a, b): return a.net_id < b.net_id)
+		var pick: Unit = foes[0]
+		for v in foes:
+			if v.net_id > u.flurry_cursor:
+				pick = v
+				break
+		u.flurry_cursor = pick.net_id
+		pick.take_damage(float(kit.get("slash_dmg", 32.0)), u)
+		u.flurry_left -= 1
+		u.flurry_t = float(kit.get("slash_interval", 0.2))
+		if vfx != null:
+			vfx.flash(pick.global_position + Vector2(0, -18),
+					Color(0.65, 0.95, 0.9, 0.8), 26.0, 0.15)
+
+
 ## The hero's facing line for the line skills: Unit.facing is the
 ## 4-way string the movement code maintains ("right" by default
 ## posture is "down").
@@ -4300,26 +4302,22 @@ func _facing_vec(hero: Unit) -> Vector2:
 	return Vector2.DOWN
 
 ## True for skills cast at a chosen ground point (HUD targeting
-## flow: tap button → tap ground). Instant skills: the original
-## four Chiêu 1, Kiếm Khí (facing line) and Vạn Hoa (centred on
-## the hero). 14c: the new heroes' Chiêu 1 are targeted (dash /
-## leap points, mark / snipe unit picks via the point), their
-## Chiêu 2 too except Diệm Phiến Toàn (a facing cone), and all
-## four Ultis land on a chosen point.
+## flow: tap button → tap ground). 16b: only the ONE skill exists
+## (idx is always 1); Mưa Tên / Thiên Thạch aim at a point, Long
+## Thương dashes toward it, Ám Sát picks the enemy nearest it.
+## The self-centred skills (Khiên Sư Tử / Rìu Xoáy / Thánh Quang
+## / Kiếm Vũ) cast instantly.
 func skill_is_targeted(char_id: String, idx: int) -> bool:
-	if idx == 1:
-		return char_id in ["loi_chan", "xich_diem", "phong_linh", "thach_son"]
-	if idx == 2:
-		return char_id in ["kim_hoa", "bach_sa", "loi_chan",
-				"phong_linh", "thach_son"]
-	if idx == 3:
-		return char_id in ["ngan_ky", "lam_bao", "bach_sa", "loi_chan",
-				"xich_diem", "phong_linh", "thach_son"]
-	return false
+	if idx != 1:
+		return false
+	return char_id in ["archer", "mage", "dragoon", "assassin"]
 
 
-func _skill_clamp_target(hero: Unit, target: Vector2) -> Vector2:
-	var max_d := Stats.SKILL_CAST_RANGE_TILES * World.TILE
+func _skill_clamp_target(hero: Unit, target: Vector2,
+		max_tiles: float = Stats.SKILL_CAST_RANGE_TILES) -> Vector2:
+	if target.x < -90000.0:
+		return hero.global_position
+	var max_d := max_tiles * World.TILE
 	var d := target - hero.global_position
 	if d.length() > max_d:
 		return hero.global_position + d.normalized() * max_d
@@ -4350,250 +4348,7 @@ func _play_skill_sfx(char_id: String, idx: int) -> void:
 	p.play()
 
 
-## Chiêu 2 — applied identically on every peer / in SP. Returns
-## false (no cooldown consumed) when the cast is not legal.
-func cast_hero_skill2(hero: Unit, target: Vector2) -> bool:
-	if hero == null or hero.state == "dead" or hero.skill2_cd_t > 0.0:
-		return false
-	var char_id: String = slot_chars[hero.owner_id]
-	var kit: Dictionary = Stats.HERO_SKILL2.get(char_id, {})
-	if kit.is_empty():
-		return false
-	var pos := hero.global_position
-	match char_id:
-		"ngan_ky": # Kiếm Khí Tung Hoành — facing-line wave shot
-			var dir: Vector2 = _facing_vec(hero)
-			skill_shots.append({"kind": "sword_wave", "pos": pos + dir * 18.0,
-					"dir": dir, "range_left": float(kit["range_tiles"]) * World.TILE,
-					"owner": hero.owner_id, "hit": {}, "fx": -1})
-		"kim_hoa": # Hoa Vũ Hồi Sinh — petal-rain heal zone
-			var zp := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "heal_rain", "pos": zp,
-					"t": float(kit["zone_t"]), "acc": 0.0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("heal_rain", zp,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"lam_bao": # Thương Băng Xuyên Tâm — piercing ice shot
-			var dir2: Vector2 = _facing_vec(hero)
-			skill_shots.append({"kind": "ice_spear", "pos": pos + dir2 * 18.0,
-					"dir": dir2, "range_left": float(kit["range_tiles"]) * World.TILE,
-					"owner": hero.owner_id, "hit": {}, "froze": false, "fx": -1})
-		"bach_sa": # Thánh Quang Phán Xét — light pillar on a group
-			var c := _skill_clamp_target(hero, target)
-			var r := float(kit["radius_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c) <= r:
-					u.atk_down_mult = float(kit["atk_mult"])
-					u.atk_down_t = float(kit["atk_t"])
-					u.take_damage(float(kit["dmg"]), hero)
-			if skill_fx != null:
-				skill_fx.pillar_fx(c, r)
-		"loi_chan": # Song Lôi Liên Kích — chain lightning
-			var crange := float(kit["range_tiles"]) * World.TILE
-			var primary: Unit = null
-			if target.distance_to(pos) > 1.0:
-				primary = _enemy_unit_near(hero, target, 1.2 * World.TILE)
-			if primary == null:
-				primary = _enemy_unit_near(hero, pos, crange)
-			if primary == null or primary.global_position.distance_to(pos) \
-					> crange + 1.2 * World.TILE:
-				return false
-			var hit_set := {primary.net_id: true}
-			var cur: Unit = primary
-			var chain_pts: Array = [pos + Vector2(0, -26)]
-			primary.take_damage(float(kit["dmg"]), hero)
-			chain_pts.append(primary.global_position + Vector2(0, -20))
-			for bnc in range(int(kit["bounces"])):
-				var nxt: Unit = null
-				var nbd := float(kit["bounce_tiles"]) * World.TILE
-				for u in units:
-					if not attack_allowed(hero.owner_id, u.owner_id) \
-							or not u.is_targetable() or hit_set.has(u.net_id):
-						continue
-					var d: float = u.global_position.distance_to(cur.global_position)
-					if d < nbd or (nxt != null and absf(d - nbd) <= 0.001 \
-							and u.net_id < nxt.net_id):
-						nbd = d
-						nxt = u
-				if nxt == null:
-					break
-				hit_set[nxt.net_id] = true
-				nxt.take_damage(float(kit["bounce_dmg"]), hero)
-				chain_pts.append(nxt.global_position + Vector2(0, -20))
-				cur = nxt
-			if skill_fx != null:
-				for pi in range(1, chain_pts.size()):
-					skill_fx.arc_fx(chain_pts[pi - 1], chain_pts[pi],
-							Color(0.65, 0.78, 1.0))
-		"xich_diem": # Diệm Phiến Toàn — facing fire cone
-			var fv := _facing_vec(hero)
-			var fr := float(kit["range_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				var dv: Vector2 = u.global_position - pos
-				if dv.length() <= fr + 8.0 and dv.length() > 0.5 \
-						and dv.normalized().dot(fv) >= float(kit["cone_cos"]):
-					u.take_damage(float(kit["dmg"]), hero)
-					if not u.is_dead():
-						u.apply_burn(float(kit["burn_amt"]),
-								float(kit["burn_t"]), hero)
-			if skill_fx != null:
-				skill_fx.fan_fx(pos, fv)
-		"phong_linh": # Tiễn Vũ — arrow-rain zone, 3 waves over 3 s
-			var zp4 := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "arrow_rain", "pos": zp4,
-					"t": float(kit["zone_t"]), "acc": 0.0, "tick_n": 0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("arrow_rain", zp4,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"thach_son": # Nham Tường — a 3-cell stone wall, 12 s
-			if not _raise_skill_wall(hero, target, kit):
-				return false
-		_:
-			return false
-	hero.skill2_cd_t = Stats.hero_cd2(char_id)
-	hero._king_cast_t = Unit.KING_CAST_TIME
-	_skill_cast_fx(hero, 2, char_id)
-	return true
-
-
-## Chiêu cuối (Ulti) — same application contract as Chiêu 2.
-func cast_hero_skill3(hero: Unit, target: Vector2) -> bool:
-	if hero == null or hero.state == "dead" or hero.skill3_cd_t > 0.0:
-		return false
-	var char_id: String = slot_chars[hero.owner_id]
-	var kit: Dictionary = Stats.HERO_SKILL3.get(char_id, {})
-	if kit.is_empty():
-		return false
-	var pos := hero.global_position
-	match char_id:
-		"ngan_ky": # Vương Kiếm Giáng Thế — plunge: units + buildings
-			var c := _skill_clamp_target(hero, target)
-			var r := float(kit["radius_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c) <= r:
-					u.stun_t = maxf(u.stun_t, float(kit["stun_t"]))
-					u.take_damage(float(kit["dmg_unit"]), hero)
-			for b in buildings:
-				if not attack_allowed(hero.owner_id, b.owner_id) or b.destroyed:
-					continue
-				if _building_centre(b).distance_to(c) <= r + 16.0:
-					b.take_damage(float(kit["dmg_bld"]), hero)
-			if skill_fx != null:
-				skill_fx.plunge_fx(c, func() -> void: _shake_t = 0.32)
-		"kim_hoa": # Vạn Hoa Khai Thiên — huge heal + immunity
-			var r2 := float(kit["radius_tiles"]) * World.TILE
-			for u in units:
-				if team_of_slot(u.owner_id) != team_of_slot(hero.owner_id) \
-						or u.state == "dead":
-					continue
-				if u.global_position.distance_to(pos) <= r2:
-					u.hp = minf(u.max_hp, u.hp + float(kit["heal"]))
-					u.immune_t = maxf(u.immune_t, float(kit["immune_t"]))
-			if skill_fx != null:
-				skill_fx.bloom_fx(pos, r2)
-		"lam_bao": # Băng Hà Vĩnh Cửu — lingering blizzard zone
-			var zp2 := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "blizzard", "pos": zp2,
-					"t": float(kit["zone_t"]), "acc": 0.0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("blizzard", zp2,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"bach_sa": # Thiên Màn Bất Diệt — holy dome zone
-			var zp3 := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "dome", "pos": zp3,
-					"t": float(kit["zone_t"]), "acc": 0.0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("dome", zp3,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"loi_chan": # Thiên Lôi Phạt Trận — storm zone, 1 s strikes
-			var zp5 := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "storm", "pos": zp5,
-					"t": float(kit["zone_t"]), "acc": 0.0, "tick_n": 0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("storm", zp5,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"xich_diem": # Phượng Hỏa Giáng — impact + burning ground
-			var c2 := _skill_clamp_target(hero, target)
-			var r3 := float(kit["radius_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c2) <= r3:
-					u.take_damage(float(kit["dmg_unit"]), hero)
-			for b in buildings:
-				if not attack_allowed(hero.owner_id, b.owner_id) or b.destroyed:
-					continue
-				if _building_centre(b).distance_to(c2) <= r3 + 16.0:
-					b.take_damage(float(kit["dmg_bld"]), hero)
-			skill_zones.append({"kind": "fire_ground", "pos": c2,
-					"t": float(kit["zone_t"]), "acc": 0.0, "tick_n": 0,
-					"radius": r3, "owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.phoenix_fx(c2, r3, func() -> void: _shake_t = 0.3)
-				skill_fx.zone_fx("fire_ground", c2, r3, float(kit["zone_t"]))
-		"phong_linh": # Cuồng Phong Nộ — pulling cyclone zone
-			var zp6 := _skill_clamp_target(hero, target)
-			skill_zones.append({"kind": "cyclone", "pos": zp6,
-					"t": float(kit["zone_t"]), "acc": 0.0, "tick_n": 0,
-					"radius": float(kit["radius_tiles"]) * World.TILE,
-					"owner": hero.owner_id})
-			if skill_fx != null:
-				skill_fx.zone_fx("cyclone", zp6,
-						float(kit["radius_tiles"]) * World.TILE,
-						float(kit["zone_t"]))
-		"thach_son": # Địa Long Lật Đất — quake: units + buildings
-			var c3 := _skill_clamp_target(hero, target)
-			var r4 := float(kit["radius_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(hero.owner_id, u.owner_id) \
-						or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c3) <= r4:
-					u.take_damage(float(kit["dmg_unit"]), hero)
-					if not u.is_dead():
-						u.eff_spd_mult = float(kit["slow_mult"])
-						u.eff_spd_t = float(kit["slow_t"])
-			for b in buildings:
-				if not attack_allowed(hero.owner_id, b.owner_id) or b.destroyed:
-					continue
-				if _building_centre(b).distance_to(c3) <= r4 + 16.0:
-					b.take_damage(float(kit["dmg_bld"]), hero)
-			if skill_fx != null:
-				skill_fx.plunge_fx(c3, func() -> void: _shake_t = 0.4)
-		_:
-			return false
-	hero.skill3_cd_t = Stats.hero_cd3(char_id)
-	hero._king_cast_t = Unit.KING_CAST_TIME
-	_skill_cast_fx(hero, 3, char_id)
-	return true
-
-
-## HUD targeting flow: arm a ground-targeted skill; the next
+## HUD targeting flow: arm the ground-targeted skill; the next
 ## world click casts it (Esc / right-click cancels — see
 ## _unhandled_input). Instant skills never arm.
 func begin_skill_targeting(idx: int) -> void:
@@ -4607,144 +4362,26 @@ func begin_skill_targeting(idx: int) -> void:
 
 func _skill_name(hero: Unit, idx: int) -> String:
 	var cd := Characters.kit_of(slot_chars[hero.owner_id])
-	return String(cd.get("skill" if idx == 1 else ("skill2" if idx == 2 else "skill3"), ""))
+	return String(cd.get("skill", ""))
 
 
-## Local cast entry for ALL skills (HUD buttons + smoke drivers):
-## SP applies at once; MP sends the lockstep command.
+## Local cast entry for the ONE skill (HUD button + smoke
+## drivers): SP applies at once; MP sends the lockstep command.
 func cast_local_skill_at(idx: int, target: Vector2) -> void:
 	var hero := local_hero()
-	if hero == null:
+	if hero == null or idx != 1:
 		return
 	if mp_mode:
-		_mp_send_command({"kind": "skill", "u": hero.net_id, "s": idx,
+		_mp_send_command({"kind": "skill", "u": hero.net_id, "s": 1,
 				"x": target.x, "y": target.y})
 	else:
-		var ok := false
-		match idx:
-			1: ok = cast_hero_skill(hero, target)
-			2: ok = cast_hero_skill2(hero, target)
-			3: ok = cast_hero_skill3(hero, target)
-		if ok:
+		if cast_hero_skill(hero, target):
 			_note_action(0) # 13y APM
 
 
-## Zone coverage helpers (13v) — used by Building (frozen pause +
-## dome immunity) and Main's tech/tower ticks.
-func skill_zone_covers(kind: String, pos: Vector2, team: int,
-		want_ally: bool) -> bool:
-	for z in skill_zones:
-		if String(z["kind"]) != kind:
-			continue
-		var same := team_of_slot(int(z["owner"])) == team
-		if same != want_ally:
-			continue
-		if pos.distance_to(z["pos"]) <= float(z["radius"]):
-			return true
-	return false
-
-
-func _building_centre(b: Building) -> Vector2:
-	return b.position + Vector2(b.size) * World.TILE * 0.5
-
-
-## Inside an ENEMY blizzard: the building is frozen solid.
-func building_frozen(b: Building) -> bool:
-	return skill_zone_covers("blizzard", _building_centre(b), b.team, false)
-
-
-## Inside an ALLIED dome: the building takes no damage.
-func building_dome_protected(b: Building) -> bool:
-	return skill_zone_covers("dome", _building_centre(b), b.team, true)
-
-
-## Nham Tường (Thạch Sơn Chiêu 2): raise a 3-cell stone wall on
-## the line PERPENDICULAR to the hero's facing through the
-## targeted cell (a barrier across the direction he faces).
-## Cells that are water, solid, built on or off-map are skipped;
-## the centre cell must be valid or the cast fails (no cooldown).
-## Segments are ordinary Buildings (solid + attackable +
-## pathing-aware through AStar solids) with spec-exact 300 HP;
-## units standing on a raised cell are pushed to the nearest
-## walkable cell. Returns true when the wall went up.
-func _raise_skill_wall(hero: Unit, target: Vector2, kit: Dictionary) -> bool:
-	var max_d := float(kit["range_tiles"]) * World.TILE
-	var c := target
-	var dvec := c - hero.global_position
-	if dvec.length() > max_d:
-		c = hero.global_position + dvec.normalized() * max_d
-	var centre := world.world_to_cell(c)
-	var fv := _facing_vec(hero)
-	# Barrier across the facing: facing ±x -> vertical line.
-	var step := Vector2i(0, 1) if absf(fv.x) >= absf(fv.y) else Vector2i(1, 0)
-	var cells: Array = []
-	for k in range(-1, int(kit["wall_cells"]) - 1):
-		cells.append(centre + step * k)
-	for cell in cells:
-		if cell == centre and not _skill_wall_cell_ok(cell):
-			return false
-	var raised: Array = []
-	for cell in cells:
-		if not _skill_wall_cell_ok(cell):
-			continue
-		var b := _spawn_building("skillwall", hero.team, cell, true,
-				hero.owner_id)
-		b.max_hp = float(kit["wall_hp"])
-		b.hp = b.max_hp
-		skill_wall_timers[b.net_id] = float(kit["wall_t"])
-		raised.append(b)
-	if raised.is_empty():
-		return false
-	# Push anyone standing on the new wall off it.
-	for u in units:
-		if not u.is_targetable():
-			continue
-		var uc := world.world_to_cell(u.global_position)
-		if cells.has(uc):
-			u.global_position = world.cell_center(world.nearest_walkable(uc))
-			u.path.clear()
-			u.path_cells.clear()
-	if skill_fx != null:
-		for b in raised:
-			skill_fx.cast_fx(_building_centre(b), Color(0.8, 0.72, 0.55))
-	return true
-
-
-func _skill_wall_cell_ok(cell: Vector2i) -> bool:
-	if not world.in_bounds(cell):
-		return false
-	if world.water.has(cell) or world.is_solid(cell):
-		return false
-	if building_at(world.cell_center(cell)) != null:
-		return false
-	for n in world.nodes:
-		if n.cell == cell and n.amount > 0:
-			return false
-	return true
-
-
-## Skill-wall expiry: timers tick with the sim; an expired
-## segment crumbles through the normal destruction path (no
-## raze/blost credit — see on_building_destroyed's guard).
-func _update_skill_walls(delta: float) -> void:
-	if skill_wall_timers.is_empty():
-		return
-	var expired: Array = []
-	for nid in skill_wall_timers:
-		skill_wall_timers[nid] = float(skill_wall_timers[nid]) - delta
-		if float(skill_wall_timers[nid]) <= 0.0:
-			expired.append(nid)
-	for nid in expired:
-		skill_wall_timers.erase(nid)
-		for b in buildings:
-			if b.net_id == int(nid) and not b.destroyed:
-				b.take_damage(999999.0, null)
-				break
-
-
-## The lingering-zone sim: 0.5 s sub-ticks apply heal-rain HoT +
-## cleanse, blizzard chill + DoT and dome shield refresh — the
-## same accumulator style as the other timed systems.
+## The lingering-zone sim: 0.5 s sub-ticks. The only zone kind
+## left in 16b is the Archer's arrow rain — three damage waves
+## (sub-ticks 1, 2, 3) of the zone's own dmg over its 2 s life.
 func _update_skill_zones(delta: float) -> void:
 	for zi in range(skill_zones.size() - 1, -1, -1):
 		var z: Dictionary = skill_zones[zi]
@@ -4759,149 +4396,22 @@ func _update_skill_zones(delta: float) -> void:
 
 
 func _skill_zone_subtick(z: Dictionary) -> void:
+	if String(z["kind"]) != "arrow_rain":
+		return
+	z["tick_n"] = int(z.get("tick_n", 0)) + 1
+	if int(z["tick_n"]) > 3:
+		return
 	var c: Vector2 = z["pos"]
 	var r := float(z["radius"])
-	var zteam := team_of_slot(int(z["owner"]))
-	match String(z["kind"]):
-		"heal_rain":
-			var hot := float(Stats.HERO_SKILL2["kim_hoa"]["hot"])
-			for u in units:
-				if team_of_slot(u.owner_id) != zteam or u.state == "dead":
-					continue
-				if u.global_position.distance_to(c) <= r:
-					u.hp = minf(u.max_hp, u.hp + hot)
-					u.cleanse_effects()
-		"blizzard":
-			var dot := float(Stats.HERO_SKILL3["lam_bao"]["dot"])
-			for u in units:
-				if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c) <= r:
-					u.chill_t = 0.6
-					u.take_damage(dot, null)
-		"dome":
-			var cap := float(Stats.HERO_SKILL3["bach_sa"]["shield"])
-			for u in units:
-				if team_of_slot(u.owner_id) != zteam or u.state == "dead":
-					continue
-				if u.global_position.distance_to(c) <= r and u.shield_hp < cap:
-					if u.shield_hp <= 0.0 and skill_fx != null:
-						skill_fx.shield_fx(u.global_position)
-					u.shield_hp = cap
-		"storm":
-			# 14c Thiên Lôi Phạt Trận: the slow refreshes every
-			# sub-tick (never weakening a stronger slow already on
-			# the unit); the lightning strike lands every 1 s
-			# (every second sub-tick), buildings at 50%.
-			var skit: Dictionary = Stats.HERO_SKILL3["loi_chan"]
-			z["tick_n"] = int(z.get("tick_n", 0)) + 1
-			for u in units:
-				if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c) <= r:
-					if u.eff_spd_t <= 0.0:
-						u.eff_spd_mult = float(skit["slow_mult"])
-						u.eff_spd_t = 0.6
-					elif u.eff_spd_mult > float(skit["slow_mult"]):
-						u.eff_spd_mult = float(skit["slow_mult"])
-			if int(z["tick_n"]) % 2 == 0:
-				for u in units:
-					if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-						continue
-					if u.global_position.distance_to(c) <= r:
-						u.take_damage(float(skit["dmg"]), null)
-				for b in buildings:
-					if not attack_allowed(int(z["owner"]), b.owner_id) or b.destroyed:
-						continue
-					if _building_centre(b).distance_to(c) <= r + 16.0:
-						b.take_damage(float(skit["dmg"]) * float(skit["bld_mult"]), null)
-				if skill_fx != null:
-					skill_fx.arc_fx(c + Vector2(0, -70), c, Color(0.65, 0.78, 1.0))
-		"fire_ground":
-			# 14c Phượng Hỏa Giáng's burning ground: 12 per sub-tick.
-			var fdot := float(Stats.HERO_SKILL3["xich_diem"]["zone_dot"])
-			for u in units:
-				if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-					continue
-				if u.global_position.distance_to(c) <= r:
-					u.take_damage(fdot, null)
-		"arrow_rain":
-			# 14c Tiễn Vũ: damage waves on sub-ticks 1, 3, 5 —
-			# three waves of 20 over the zone's 3 s.
-			z["tick_n"] = int(z.get("tick_n", 0)) + 1
-			if int(z["tick_n"]) % 2 == 1:
-				var adot := float(Stats.HERO_SKILL2["phong_linh"]["dmg"])
-				for u in units:
-					if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-						continue
-					if u.global_position.distance_to(c) <= r:
-						u.take_damage(adot, null)
-		"cyclone":
-			# 14c Cuồng Phong Nộ: per sub-tick — 15 dmg, the -30%
-			# attack cut refreshed, and a deterministic pull of
-			# 0.5 tile toward the centre (never into a solid or
-			# water cell; paths simply continue from the new spot).
-			var ckit: Dictionary = Stats.HERO_SKILL3["phong_linh"]
-			var pull := float(ckit["pull_tiles"]) * World.TILE
-			for u in units:
-				if not attack_allowed(int(z["owner"]), u.owner_id) or not u.is_targetable():
-					continue
-				var dv: Vector2 = c - u.global_position
-				if dv.length() <= r:
-					u.take_damage(float(ckit["dot"]), null)
-					if u.is_dead():
-						continue
-					u.atk_down_mult = float(ckit["atk_mult"])
-					u.atk_down_t = 0.6
-					if dv.length() > 4.0:
-						var np: Vector2 = u.global_position \
-								+ dv.normalized() * minf(pull, dv.length())
-						var ncell := world.world_to_cell(np)
-						if world.in_bounds(ncell) and not world.is_solid(ncell) \
-								and not world.water.has(ncell):
-							u.global_position = np
+	for u in units:
+		if not attack_allowed(int(z["owner"]), u.owner_id) \
+				or not u.is_targetable():
+			continue
+		if u.global_position.distance_to(c) <= r:
+			u.take_damage(float(z.get("dmg", 0.0)), null)
 
 
-## The travelling-shot sim: fixed step order, per-shot hit sets so
-## each unit is struck once per shot, damage through take_damage.
-func _update_skill_shots(delta: float) -> void:
-	for si in range(skill_shots.size() - 1, -1, -1):
-		var s: Dictionary = skill_shots[si]
-		var kit: Dictionary = Stats.HERO_SKILL2[
-				"ngan_ky" if String(s["kind"]) == "sword_wave" else "lam_bao"]
-		var step := float(kit["speed"]) * delta
-		var prev: Vector2 = s["pos"]
-		s["pos"] = (s["pos"] as Vector2) + (s["dir"] as Vector2) * step
-		s["range_left"] = float(s["range_left"]) - step
-		if int(s["fx"]) < 0 and skill_fx != null:
-			s["fx"] = skill_fx.spawn_shot(String(s["kind"]), s["pos"], s["dir"])
-		elif int(s["fx"]) >= 0 and skill_fx != null:
-			skill_fx.move_shot(int(s["fx"]), s["pos"])
-		var dead := float(s["range_left"]) <= 0.0
-		for u in units:
-			if not attack_allowed(int(s["owner"]), u.owner_id) or not u.is_targetable():
-				continue
-			if (s["hit"] as Dictionary).has(u.net_id):
-				continue
-			# Segment sweep (prev -> pos): a fast shot must not
-			# tunnel past a unit inside one coarse sim step.
-			if _seg_dist(u.global_position, prev, s["pos"]) <= float(kit["width"]):
-				s["hit"][u.net_id] = true
-				if String(s["kind"]) == "ice_spear" and not bool(s.get("froze", false)):
-					s["froze"] = true
-					u.frozen_t = maxf(u.frozen_t, float(kit["freeze_t"]))
-					if skill_fx != null:
-						skill_fx.freeze_fx(u.global_position)
-				u.take_damage(float(kit["dmg"]), null)
-		if dead:
-			if int(s["fx"]) >= 0 and skill_fx != null:
-				skill_fx.end_shot(int(s["fx"]),
-						Color(0.7, 0.88, 1.0) if String(s["kind"]) == "ice_spear"
-						else Color(1.0, 0.72, 0.35))
-			skill_shots.remove_at(si)
-
-
-## Distance from point p to segment a-b (13v shot sweeps).
+## Distance from point p to segment a-b (dash path sweeps).
 func _seg_dist(p: Vector2, a: Vector2, b: Vector2) -> float:
 	var ab := b - a
 	var t := 0.0
@@ -4927,10 +4437,11 @@ func cast_local_skill() -> bool:
 
 
 ## MP validator for the "skill" command: the unit must be the
-## sender's own living hero; cooldown gating lives in the casts.
-## 13v extends the command with "s" (skill index 1..3) and an
-## optional target point "x"/"y"; a command without "s" is the
-## original Chiêu 1 form (old replays / drivers stay valid).
+## sender's own living hero; cooldown gating lives in the cast.
+## 16b: exactly ONE skill exists — "s" is always 1; an optional
+## target point "x"/"y" rides the command for targeted skills.
+## A command without "x" is the untargeted cast (NO_TARGET
+## derives the destination inside the cast).
 func _mp_apply_skill(from_slot: int, unit_id: int) -> bool:
 	return _mp_apply_skill_cmd(from_slot, {"u": unit_id})
 
@@ -4940,17 +4451,11 @@ func _mp_apply_skill_cmd(from_slot: int, cmd: Dictionary) -> bool:
 	if u == null or u.owner_id != from_slot or u.unit_type != "king" \
 			or u.is_dead():
 		return false
-	var idx := int(cmd.get("s", 1))
+	if int(cmd.get("s", 1)) != 1:
+		return false
 	var tgt := Vector2(float(cmd.get("x", u.global_position.x)),
 			float(cmd.get("y", u.global_position.y)))
-	match idx:
-		# 14c: Chiêu 1 can be targeted — the target rides the
-		# command when present; the old form (no "x") keeps the
-		# untargeted cast (NO_TARGET derives the destination).
-		1: return cast_hero_skill(u, tgt) if cmd.has("x") else cast_hero_skill(u)
-		2: return cast_hero_skill2(u, tgt)
-		3: return cast_hero_skill3(u, tgt)
-	return false
+	return cast_hero_skill(u, tgt) if cmd.has("x") else cast_hero_skill(u)
 
 
 ## The local player's usable Dock (selected one first) — MP paths.
@@ -5278,8 +4783,6 @@ func _update_towers(delta: float) -> void:
 			continue # disconnected player's towers stay silent
 		if (b.btype != "tower" and b.btype != "castle") or not b.complete or b.destroyed:
 			continue
-		if building_frozen(b):
-			continue # 13v: frozen by an enemy Băng Hà blizzard
 		var is_castle: bool = b.btype == "castle"
 		b.fire_cd -= delta
 		if b.fire_cd > 0.0:
@@ -5333,18 +4836,11 @@ func on_unit_dead(u: Unit) -> void:
 func on_building_destroyed(b: Building) -> void:
 	# 13y: the owner loses a building; the last enemy hitter
 	# (Building.last_hit_owner) is credited with the raze.
-	# 14c: skillwall segments are NOT buildings for statistics —
-	# no building lost, no raze credit, whether an enemy broke
-	# them or they simply expired.
-	if b.btype != "skillwall":
-		_bump_stat(b.owner_id, "blost")
-		if b.last_hit_owner >= 0 and b.last_hit_owner != b.owner_id:
-			_bump_stat(b.last_hit_owner, "razed")
-	else:
-		skill_wall_timers.erase(b.net_id)
-	# 15e: the spectator auto-camera counts real destructions
-	# (skillwalls excluded — they are skill props, not buildings).
-	if spectator != null and b.btype != "skillwall":
+	_bump_stat(b.owner_id, "blost")
+	if b.last_hit_owner >= 0 and b.last_hit_owner != b.owner_id:
+		_bump_stat(b.last_hit_owner, "razed")
+	# 15e: the spectator auto-camera counts real destructions.
+	if spectator != null:
 		spectator.note_building_down(
 				b.position + Vector2(b.size) * World.TILE * 0.5,
 				b.btype == "town_center")
@@ -5922,11 +5418,6 @@ func _update_techs(delta: float) -> void:
 		var done: Array = []
 		for btype in act.keys():
 			var rec: Dictionary = act[btype]
-			# 13v: research pauses while its building is frozen
-			# inside an enemy Băng Hà blizzard.
-			var rb := _building_of_type(owner, String(btype))
-			if rb != null and building_frozen(rb):
-				continue
 			rec["timer"] = float(rec.get("timer", 0.0)) - delta
 			if float(rec.timer) <= 0.0:
 				done.append(btype)
@@ -6917,7 +6408,9 @@ func apply_order_for(units_arr: Array, ship: Ship, wpos: Vector2, actor: int) ->
 	# units selected boards the ones in reach (the ship rule);
 	# the rest walk to the wagon. Clicking it with only itself
 	# selected falls through to the plain move handling below.
-	var wg := own_wagon_at(wpos, actor, 38.0)
+	# (Radius covers the hull: the wagon's sprite runs ~111 world
+	# px long since the 2026-11-11 scale pass, ~55 from centre.)
+	var wg := own_wagon_at(wpos, actor, 56.0)
 	if wg != null and not (units_arr.size() == 1 and units_arr[0] == wg):
 		board_wagon_units(units_arr.duplicate(), wg, actor)
 		return
@@ -7387,18 +6880,12 @@ func _process(delta: float) -> void:
 		# 13y: score-over-time sampling for the result chart.
 		if match_time >= _stat_next_sample:
 			_sample_stats()
-		# Kết Giới zones tick with the sim (same frame semantics as
-		# the units' own effect timers).
-		for zi in range(hero_zones.size() - 1, -1, -1):
-			hero_zones[zi]["t"] = float(hero_zones[zi]["t"]) - delta
-			if float(hero_zones[zi]["t"]) <= 0.0:
-				hero_zones.remove_at(zi)
 		_update_projectiles(delta)
-		# 13v skill sim: lingering zones + travelling shots tick
-		# beside the arrow sim (deterministic, checksum-covered).
+		# 16b skill sim: the arrow-rain zone + Kiếm Vũ flurries
+		# tick beside the arrow sim (deterministic, checksum-
+		# covered).
 		_update_skill_zones(delta)
-		_update_skill_shots(delta)
-		_update_skill_walls(delta)
+		_update_hero_flurries(delta)
 		_update_diplomacy(delta) # 15b: declaration windows + tribute cooldowns
 		_update_towers(delta)
 		_update_ship_orders(delta)

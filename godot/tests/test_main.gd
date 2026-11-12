@@ -164,14 +164,16 @@ func w_reset_hero(game, w_hero: Unit, pos: Vector2) -> void:
 	w_hero.global_position = pos
 	w_hero.hp = w_hero.max_hp
 	w_hero.skill_cd_t = 0.0
-	w_hero.skill2_cd_t = 0.0
-	w_hero.skill3_cd_t = 0.0
+	w_hero.shield_hp = 0.0
+	w_hero.shield_t = 0.0
+	w_hero.flurry_left = 0
+	w_hero.flurry_t = 0.0
+	w_hero.flurry_cursor = -1
 	w_hero.eff_spd_mult = 1.0
 	w_hero.eff_spd_t = 0.0
 	w_hero.eff_dmg_mult = 1.0
 	w_hero.eff_dmg_t = 0.0
 	game.skill_zones.clear()
-	game.skill_shots.clear()
 	game.projectiles.clear()
 
 
@@ -204,7 +206,7 @@ func _section_diplomacy15b() -> void:
 	gd.mp_rally = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
 	gd.slot_tc_down = [false, false, false]
 	gd.slot_inert = [false, false, false]
-	gd.slot_chars = ["ngan_ky", "kim_hoa", "lam_bao"]
+	gd.slot_chars = ["knight", "archer", "mage"]
 	gd.slot_skins = ["", "", ""]
 	gd.team_age = {0: 1, 1: 1, 2: 1}
 	# dp0: arming rules — the flag arms diplomacy only in an FFA
@@ -338,10 +340,11 @@ func _section_diplomacy15b() -> void:
 	await get_tree().process_frame
 
 
-## (14c) The four new heroes — twin of tests/test_heroes14c.gd
+## (16b) The medieval roster — twin of tests/test_heroes16b.gd
 ## (kept as its own function so its locals cannot collide with
-## the shared _ready scope).
-func _section_heroes14c() -> void:
+## the shared _ready scope). Every hero: aura measurable in the
+## sim, the ONE skill's effect, and the unified 75 s cooldown.
+func _section_heroes16b() -> void:
 	var gameW = load("res://main.tscn").instantiate()
 	add_child(gameW)
 	await get_tree().process_frame
@@ -352,14 +355,16 @@ func _section_heroes14c() -> void:
 	for s in range(400):
 		rng.seed = s * 7919 + 13
 		seen[gameW.draw_character(rng)] = true
-	check("(14c) pool of 8: every hero reachable by the draw, none outside",
+	check("(16b) pool of 8: every hero reachable by the draw, none outside",
 			seen.size() == 8, "seen=%s" % [seen.keys()])
 	gameW.enemy_ai.waves_enabled = false
+	# Pin slot 1's character: foe kings in the assassin phase
+	# must not bring a mitigation/armour aura of their own.
+	gameW.slot_chars[1] = "mage"
 	# No king exists at SP boot (heroes are Castle-trained), and
 	# the aura helpers read hero_of_team — so retire any stray
-	# king and force-spawn THE test w_hero, like the (ad) section:
-	# he is then the only team-0 king, and team 1 has none (its
-	# aura lookups all come back false).
+	# king and force-spawn THE test hero: he is then the only
+	# team-0 king (team 1 has none until the assassin phase).
 	for u in gameW.units.duplicate():
 		if u.unit_type == "king":
 			gameW.units.erase(u)
@@ -370,320 +375,273 @@ func _section_heroes14c() -> void:
 	var w_hero: Unit = gameW._make_unit(0, base, "king")
 	w_hero.facing = "right"
 
-	# ------------------------------------------------ Lôi Chấn
-	gameW.slot_chars[0] = "loi_chan"
+	# ------------------------------------------------ Knight
+	gameW.slot_chars[0] = "knight"
 	w_reset_hero(gameW, w_hero, base)
-	# Aura: allied military attack speed x1.12; enemies unaffected.
-	var lc_ally := w_ally(gameW, base + Vector2(48, 40))
-	var lc_foe_far := w_foe(gameW, base + Vector2(48, -200))
-	check("(14c) loi aura: ally atk speed x1.12, enemy at range unaffected",
-			absf(lc_ally.eff_atkspd_mult() - 1.12) < 0.01
-			and absf(lc_foe_far.eff_atkspd_mult() - 1.0) < 0.01,
-			"ally=%s foe=%s" % [lc_ally.eff_atkspd_mult(), lc_foe_far.eff_atkspd_mult()])
-	# C1 Lôi Độn: dash 5 tiles, 40 landing dmg, +20% speed 4 s.
-	var lc_land := w_foe(gameW, base + Vector2(160, 0))
-	var dash_ok: bool = gameW.cast_hero_skill(w_hero, base + Vector2(160, 0))
-	check("(14c) loi C1: dash lands on the point, 40 dmg, speed buff, CD 50",
-			dash_ok and w_hero.global_position.distance_to(base + Vector2(160, 0)) < 24.0
-			and absf(lc_land.hp - 960.0) < 0.01
-			and absf(w_hero.eff_spd_mult - 1.2) < 0.01 and w_hero.eff_spd_t > 3.5
-			and absf(w_hero.skill_cd_t - 50.0) < 0.5,
-			"pos=%s foe=%s buff=%s/%s cd=%s" % [w_hero.global_position, lc_land.hp,
-					w_hero.eff_spd_mult, w_hero.eff_spd_t, w_hero.skill_cd_t])
-	# C2 chain lightning: 55 then 3 bounces of 30.
-	w_reset_hero(gameW, w_hero, base)
-	var chain: Array = []
-	for i in range(4):
-		chain.append(w_foe(gameW, base + Vector2(96 + i * 48, 64)))
-	var chain_ok: bool = gameW.cast_hero_skill2(w_hero, chain[0].global_position)
-	check("(14c) loi C2: chain 55 + 3 bounces x30, CD 35",
-			chain_ok and absf(chain[0].hp - 945.0) < 0.01
-			and absf(chain[1].hp - 970.0) < 0.01 and absf(chain[2].hp - 970.0) < 0.01
-			and absf(chain[3].hp - 970.0) < 0.01
-			and absf(w_hero.skill2_cd_t - 35.0) < 0.5,
-			"hps=%s,%s,%s,%s" % [chain[0].hp, chain[1].hp, chain[2].hp, chain[3].hp])
-	# C3 storm zone: slow every sub-tick, 45 dmg + 22.5 building
-	# every 1 s.
-	w_reset_hero(gameW, w_hero, base)
-	var st_foe := w_foe(gameW, base + Vector2(64, -64))
-	var st_bld: Building = gameW._spawn_building("house", 1,
-			gameW.world.world_to_cell(base + Vector2(-64, -64)), true)
-	var st_bhp := st_bld.hp
-	var storm_ok: bool = gameW.cast_hero_skill3(w_hero, base + Vector2(0, -64))
-	gameW._update_skill_zones(0.5)
-	var slow_after_1: float = st_foe.eff_spd_mult
-	gameW._update_skill_zones(0.5)
-	check("(14c) loi C3: storm slows x0.80, strikes 45/s, buildings 50%, CD 130",
-			storm_ok and absf(slow_after_1 - 0.8) < 0.01
-			and absf(st_foe.hp - 955.0) < 0.01
-			and absf(st_bld.hp - (st_bhp - 22.5)) < 0.01
-			and absf(w_hero.skill3_cd_t - 130.0) < 0.5,
-			"slow=%s foe=%s bld=%s/%s" % [slow_after_1, st_foe.hp, st_bld.hp, st_bhp])
-	gameW.skill_zones.clear()
+	# Aura Hộ Vệ: covered allies take x0.92 damage.
+	var kn_ally := w_ally(gameW, base + Vector2(48, 40))
+	kn_ally.take_damage(100.0, null)
+	check("(16b) knight aura: ally takes x0.92 damage inside 3 tiles",
+			absf(kn_ally.hp - 908.0) < 0.01
+			and gameW.hero_aura_covers(kn_ally, "knight", true),
+			"ally=%s" % kn_ally.hp)
+	# Skill Khiên Sư Tử: 250 shield (the x0.92 aura eats into the
+	# absorb), military foes taunted, villagers not, CD 75.
+	var kn_foe := w_foe(gameW, base + Vector2(64, -40))
+	var kn_vil: Unit = gameW._make_unit(1, base + Vector2(30, 70), "villager")
+	var kn_ok: bool = gameW.cast_hero_skill(w_hero)
+	w_hero.take_damage(100.0, null)
+	check("(16b) knight skill: 250 shield absorbs, military taunted, CD 75",
+			kn_ok and absf(w_hero.shield_hp - 158.0) < 0.01
+			and absf(w_hero.hp - w_hero.max_hp) < 0.01
+			and kn_foe.taunt_id == w_hero.net_id and kn_foe.taunt_t > 3.5
+			and kn_foe._taunt_hero() == w_hero
+			and kn_vil.taunt_t <= 0.0
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"shield=%s hp=%s taunt=%s cd=%s" % [w_hero.shield_hp, w_hero.hp,
+					kn_foe.taunt_t, w_hero.skill_cd_t])
 
-	# ------------------------------------------------ Xích Diệm
-	gameW.slot_chars[0] = "xich_diem"
-	w_reset_hero(gameW, w_hero, base)
-	# Aura burn: an ally's hit sets the target burning (3/0.5s x2s).
-	var xd_ally := w_ally(gameW, base + Vector2(40, 30))
-	var xd_foe := w_foe(gameW, base + Vector2(120, 30))
-	xd_ally.attack_target = xd_foe
-	xd_ally.strike()
-	var burn_set: bool = xd_foe.burn_t > 1.9 and xd_foe.burn_ticks == 4
-	var hp_after_hit := xd_foe.hp
-	for i in range(4):
-		xd_foe._tick_effects(0.5)
-	check("(14c) xich aura: ally hit applies burn, 4 ticks x3 = 12 over 2s",
-			burn_set and absf(xd_foe.hp - (hp_after_hit - 12.0)) < 0.01
-			and xd_foe.burn_t <= 0.0,
-			"burn_t set=%s hp %s -> %s" % [burn_set, hp_after_hit, xd_foe.hp])
-	# C1 Hỏa Ấn: explodes after 2 s for 70 in r1.5; refuses out of range.
-	w_reset_hero(gameW, w_hero, base)
-	var mk_foe := w_foe(gameW, base + Vector2(128, 0))
-	var mk_by := w_foe(gameW, base + Vector2(160, 0))
-	var mk_ally := w_ally(gameW, base + Vector2(144, 20))
-	var mark_ok: bool = gameW.cast_hero_skill(w_hero, mk_foe.global_position)
-	mk_foe._tick_effects(1.0)
-	var quiet: bool = absf(mk_foe.hp - 1000.0) < 0.01
-	mk_foe._tick_effects(1.0)
-	check("(14c) xich C1: mark quiet at 1s, explodes 70 r1.5 at 2s, allies safe, CD 60",
-			mark_ok and quiet and absf(mk_foe.hp - 930.0) < 0.01
-			and absf(mk_by.hp - 930.0) < 0.01 and absf(mk_ally.hp - 1000.0) < 0.01
-			and absf(w_hero.skill_cd_t - 60.0) < 0.5,
-			"foe=%s by=%s ally=%s" % [mk_foe.hp, mk_by.hp, mk_ally.hp])
-	w_hero.skill_cd_t = 0.0
-	check("(14c) xich C1: cast beyond 6 tiles refused, no cooldown spent",
-			not gameW.cast_hero_skill(w_hero, base + Vector2(900, 0))
-			and w_hero.skill_cd_t <= 0.0, "cd=%s" % w_hero.skill_cd_t)
-	# Mark detonates on death too.
-	var mk2_foe := w_foe(gameW, base + Vector2(96, 80))
-	var mk2_by := w_foe(gameW, base + Vector2(120, 80))
-	gameW.cast_hero_skill(w_hero, mk2_foe.global_position)
-	mk2_foe.take_damage(99999.0, null)
-	check("(14c) xich C1: mark detonates when the bearer dies",
-			mk2_foe.state == "dead" and absf(mk2_by.hp - 930.0) < 0.01,
-			"by=%s" % mk2_by.hp)
-	# C2 cone: front 120 degrees burns, behind is safe.
-	w_reset_hero(gameW, w_hero, base)
-	w_hero.facing = "right"
-	var cn_front := w_foe(gameW, base + Vector2(64, 0))
-	var cn_diag := w_foe(gameW, base + Vector2(56, 56))
-	var cn_back := w_foe(gameW, base + Vector2(-64, 0))
-	var cone_ok: bool = gameW.cast_hero_skill2(w_hero, w_hero.global_position)
-	check("(14c) xich C2: cone hits front + diagonal (50 + burn), spares the back, CD 35",
-			cone_ok and absf(cn_front.hp - 950.0) < 0.01 and cn_front.burn_ticks == 6
-			and absf(cn_diag.hp - 950.0) < 0.01
-			and absf(cn_back.hp - 1000.0) < 0.01
-			and absf(w_hero.skill2_cd_t - 35.0) < 0.5,
-			"f=%s d=%s b=%s" % [cn_front.hp, cn_diag.hp, cn_back.hp])
-	# C3 phoenix: 130 units / 150 buildings + burning ground.
-	w_reset_hero(gameW, w_hero, base)
-	var ph_foe := w_foe(gameW, base + Vector2(200, -200))
-	var ph_sz: Vector2i = gameW.get_build_def("barracks").size
-	var ph_cell: Vector2i = gameW.world.world_to_cell(ph_foe.global_position) - ph_sz / 2
-	var ph_bld: Building = gameW._spawn_building("barracks", 1, ph_cell, true)
-	var ph_bc: Vector2 = ph_bld.position + Vector2(ph_bld.size) * World.TILE * 0.5
-	ph_foe.global_position = ph_bc + Vector2(58, 0)
-	var ph_bhp := ph_bld.hp
-	w_reset_hero(gameW, w_hero, ph_bc + Vector2(-80, 30))
-	var ph_ok: bool = gameW.cast_hero_skill3(w_hero, ph_bc)
-	gameW._update_skill_zones(0.5)
-	check("(14c) xich C3: 130 on units, 150 on buildings, ground burns 12/0.5s, CD 140",
-			ph_ok and absf(ph_foe.hp - (1000.0 - 130.0 - 12.0)) < 0.01
-			and absf(ph_bld.hp - (ph_bhp - 150.0)) < 0.01
-			and absf(w_hero.skill3_cd_t - 140.0) < 0.5,
-			"foe=%s bld=%s/%s" % [ph_foe.hp, ph_bld.hp, ph_bhp])
-	gameW.skill_zones.clear()
+	# ------------------------------------------------ Berserker
+	var b_base := base + Vector2(0, 260)
+	gameW.slot_chars[0] = "berserker"
+	w_reset_hero(gameW, w_hero, b_base)
+	# Aura Cuồng Chiến: allied military attack speed x1.10.
+	var bk_ally := w_ally(gameW, b_base + Vector2(48, 40))
+	check("(16b) berserker aura: ally attack speed x1.10",
+			absf(bk_ally.eff_atkspd_mult() - 1.10) < 0.01,
+			"ally=%s" % bk_ally.eff_atkspd_mult())
+	# Skill Rìu Xoáy: 110 to every enemy within 2 tiles only.
+	var bk_f1 := w_foe(gameW, b_base + Vector2(50, 0))
+	var bk_f2 := w_foe(gameW, b_base + Vector2(-40, 30))
+	var bk_far := w_foe(gameW, b_base + Vector2(110, 0))
+	var bk_ok: bool = gameW.cast_hero_skill(w_hero)
+	check("(16b) berserker skill: whirlwind 110 in 2 tiles, outside safe, CD 75",
+			bk_ok and absf(bk_f1.hp - 890.0) < 0.01
+			and absf(bk_f2.hp - 890.0) < 0.01
+			and absf(bk_far.hp - 1000.0) < 0.01
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"f1=%s f2=%s far=%s" % [bk_f1.hp, bk_f2.hp, bk_far.hp])
 
-	# ------------------------------------------------ Phong Linh
-	gameW.slot_chars[0] = "phong_linh"
-	w_reset_hero(gameW, w_hero, base)
-	# Ranged basic attack: bow range 160, arrow flies and lands.
-	var rg_foe := w_foe(gameW, base + Vector2(128, 0))
-	var rg_dmg := Stats.damage("king", rg_foe, 1)
-	w_hero.attack_target = rg_foe
-	w_hero.strike()
-	for i in range(8):
-		gameW._update_projectiles(0.1)
-	check("(14c) phong basic: bow range 160 (vs 44 melee), arrow deals full damage at 4 tiles",
-			absf(w_hero.attack_range() - 160.0) < 0.01
-			and absf(rg_foe.hp - (1000.0 - rg_dmg)) < 0.01,
-			"range=%s foe=%s dmg=%s" % [w_hero.attack_range(), rg_foe.hp, rg_dmg])
-	# Aura: +12% move speed for allies AND herself.
-	var pl_ally := w_ally(gameW, base + Vector2(40, 60))
-	check("(14c) phong aura: ally + w_hero move speed x1.12",
-			absf(gameW.hero_speed_factor(pl_ally) - 1.12) < 0.01
-			and absf(gameW.hero_speed_factor(w_hero) - 1.12) < 0.01,
-			"ally=%s w_hero=%s" % [gameW.hero_speed_factor(pl_ally),
-					gameW.hero_speed_factor(w_hero)])
-	# C1 snipe: only the chosen target, a blocker in between is fine.
-	w_reset_hero(gameW, w_hero, base)
-	var sn_block := w_foe(gameW, base + Vector2(64, 120))
-	var sn_tgt := w_foe(gameW, base + Vector2(192, 120))
-	var sn_ok: bool = gameW.cast_hero_skill(w_hero, sn_tgt.global_position)
-	check("(14c) phong C1: snipe hits only the target for 75, blocker untouched, CD 45",
-			sn_ok and absf(sn_tgt.hp - 925.0) < 0.01
-			and absf(sn_block.hp - 1000.0) < 0.01
-			and absf(w_hero.skill_cd_t - 45.0) < 0.5,
-			"tgt=%s blk=%s" % [sn_tgt.hp, sn_block.hp])
-	# C2 arrow rain: 3 waves of 20 over 3 s, then the zone is gone.
-	w_reset_hero(gameW, w_hero, base)
-	var ar_foe := w_foe(gameW, base + Vector2(48, -120))
-	var ar_ok: bool = gameW.cast_hero_skill2(w_hero, ar_foe.global_position)
-	for i in range(6):
+	# ------------------------------------------------ Archer
+	var a_base := base + Vector2(300, 260)
+	gameW.slot_chars[0] = "archer"
+	w_reset_hero(gameW, w_hero, a_base)
+	# Ranged frame: bow range 160, arrows fly.
+	check("(16b) archer frame: attack range 160 (ranged kit)",
+			absf(w_hero.attack_range() - 160.0) < 0.01,
+			"range=%s" % w_hero.attack_range())
+	# Aura Tiễn Thủ: allied military damage x1.08 (strike ratio).
+	var ar_a1 := w_ally(gameW, a_base + Vector2(40, 30))
+	var ar_a2 := w_ally(gameW, a_base + Vector2(400, 30))
+	var ar_t1 := w_foe(gameW, a_base + Vector2(70, 30))
+	var ar_t2 := w_foe(gameW, a_base + Vector2(430, 30))
+	ar_a1.attack_target = ar_t1
+	ar_a2.attack_target = ar_t2
+	ar_a1.strike()
+	ar_a2.strike()
+	var ar_d1 := 1000.0 - ar_t1.hp
+	var ar_d2 := 1000.0 - ar_t2.hp
+	check("(16b) archer aura: covered ally strikes x1.08, far ally x1.0",
+			ar_d2 > 0.0 and absf(ar_d1 - ar_d2 * 1.08) < 0.01,
+			"near=%s far=%s" % [ar_d1, ar_d2])
+	# Skill Mưa Tên: zone at the point, 3 waves x40, then gone.
+	w_reset_hero(gameW, w_hero, a_base)
+	var ar_foe := w_foe(gameW, a_base + Vector2(120, -60))
+	var ar_ok: bool = gameW.cast_hero_skill(w_hero, ar_foe.global_position)
+	for i in range(4):
 		gameW._update_skill_zones(0.5)
-	check("(14c) phong C2: arrow rain 3 waves x20 = 60, zone expires, CD 30",
-			ar_ok and absf(ar_foe.hp - 940.0) < 0.01 and gameW.skill_zones.is_empty()
-			and absf(w_hero.skill2_cd_t - 30.0) < 0.5,
+	check("(16b) archer skill: arrow rain 3 waves x40 = 120, zone expires, CD 75",
+			ar_ok and absf(ar_foe.hp - 880.0) < 0.01
+			and gameW.skill_zones.is_empty()
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
 			"foe=%s zones=%d" % [ar_foe.hp, gameW.skill_zones.size()])
-	# C3 cyclone: pull is a fixed 16 px per sub-tick — run the
-	# same setup twice and demand identical displacement.
-	w_reset_hero(gameW, w_hero, base)
-	var cy_centre := base + Vector2(0, 140)
-	var cy_foe := w_foe(gameW, cy_centre + Vector2(96, 0))
-	var cy_ok: bool = gameW.cast_hero_skill3(w_hero, cy_centre)
-	var dists_a: Array = []
-	for i in range(4):
-		gameW._update_skill_zones(0.5)
-		dists_a.append(cy_foe.global_position.distance_to(cy_centre))
-	var cy_hp_a := cy_foe.hp
-	var cy_atk: float = cy_foe.atk_down_mult
-	gameW.skill_zones.clear()
-	cy_foe.global_position = cy_centre + Vector2(96, 0)
-	cy_foe.hp = 1000.0
-	w_hero.skill3_cd_t = 0.0
-	gameW.cast_hero_skill3(w_hero, cy_centre)
-	var dists_b: Array = []
-	for i in range(4):
-		gameW._update_skill_zones(0.5)
-		dists_b.append(cy_foe.global_position.distance_to(cy_centre))
-	check("(14c) phong C3: cyclone pulls 16px/sub-tick deterministically, 15 dmg + atk x0.70",
-			cy_ok and dists_a == dists_b
-			and absf(dists_a[0] - 80.0) < 0.01 and absf(dists_a[3] - 32.0) < 0.01
-			and absf(cy_hp_a - (1000.0 - 60.0)) < 0.01 and absf(cy_atk - 0.7) < 0.01
-			and absf(w_hero.skill3_cd_t - 120.0) < 0.5,
-			"a=%s b=%s hp=%s" % [dists_a, dists_b, cy_hp_a])
+	# Cast range clamps at 8 tiles.
+	w_hero.skill_cd_t = 0.0
+	gameW.cast_hero_skill(w_hero, a_base + Vector2(400, 0))
+	check("(16b) archer skill: cast point clamps to 8 tiles",
+			gameW.skill_zones.size() == 1
+			and (gameW.skill_zones[0]["pos"] as Vector2).distance_to(a_base) <= 8.0 * World.TILE + 1.0,
+			"zones=%d" % gameW.skill_zones.size())
 	gameW.skill_zones.clear()
 
-	# ------------------------------------------------ Thạch Sơn
-	gameW.slot_chars[0] = "thach_son"
-	w_reset_hero(gameW, w_hero, base)
-	# Aura armour: flat -3 per hit, minimum 1 through.
-	var ts_ally := w_ally(gameW, base + Vector2(40, -40))
-	var ts_src := w_foe(gameW, base + Vector2(300, -40))
-	ts_ally.take_damage(10.0, ts_src)
-	var after_10 := ts_ally.hp
-	ts_ally.take_damage(2.0, ts_src)
-	check("(14c) thach aura: hits reduced by flat 3, minimum 1 gets through",
-			absf(after_10 - 993.0) < 0.01 and absf(ts_ally.hp - 992.0) < 0.01,
-			"hp=%s" % ts_ally.hp)
-	# C1 leap slam: lands on the point, 40 dmg r2, knockback + slow.
-	# The foe stands on a scanned-clear cell with a clear cell to
-	# its east, so the 1-tile knockback lane is open on any layout.
-	var lp_cell := Vector2i(-1, -1)
-	var lp_bc: Vector2i = gameW.world.world_to_cell(base)
-	for dx in range(-4, 7):
-		for dy in range(-4, 5):
-			var cand := lp_bc + Vector2i(dx, dy)
-			if gameW._skill_wall_cell_ok(cand) and gameW._skill_wall_cell_ok(cand + Vector2i(1, 0)) \
-					and gameW._skill_wall_cell_ok(cand + Vector2i(-3, 0)):
-				lp_cell = cand
-				break
-		if lp_cell.x >= 0:
-			break
-	w_reset_hero(gameW, w_hero, gameW.world.cell_center(lp_cell + Vector2i(-3, 0)))
+	# ------------------------------------------------ Mage
+	var m_base := base + Vector2(-300, 260)
+	gameW.slot_chars[0] = "mage"
+	w_reset_hero(gameW, w_hero, m_base)
+	# Aura Ma Lực Hồi Lưu: +1.2 HP/s regen for covered allies.
+	var mg_ally := w_ally(gameW, m_base + Vector2(40, 30))
+	mg_ally.hp = 500.0
+	mg_ally._tick_effects(1.05)
+	check("(16b) mage aura: covered ally regenerates +1.2 HP per second",
+			absf(mg_ally.hp - 501.2) < 0.01, "hp=%s" % mg_ally.hp)
+	# Skill Thiên Thạch: 120 in 2.5 tiles at the point.
+	w_reset_hero(gameW, w_hero, m_base)
+	var mg_f1 := w_foe(gameW, m_base + Vector2(150, 0))
+	var mg_f2 := w_foe(gameW, m_base + Vector2(190, 20))
+	var mg_far := w_foe(gameW, m_base + Vector2(150, 120))
+	var mg_ok: bool = gameW.cast_hero_skill(w_hero, m_base + Vector2(160, 0))
+	check("(16b) mage skill: meteor 120 in 2.5 tiles, outside safe, CD 75",
+			mg_ok and absf(mg_f1.hp - 880.0) < 0.01
+			and absf(mg_f2.hp - 880.0) < 0.01
+			and absf(mg_far.hp - 1000.0) < 0.01
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"f1=%s f2=%s far=%s" % [mg_f1.hp, mg_f2.hp, mg_far.hp])
+
+	# ------------------------------------------------ Paladin
+	var p_base := base + Vector2(300, -260)
+	gameW.slot_chars[0] = "paladin"
+	w_reset_hero(gameW, w_hero, p_base)
+	# Aura Thánh Giáp: flat -3 per hit, at least 1 through.
+	var pa_ally := w_ally(gameW, p_base + Vector2(40, -40))
+	pa_ally.take_damage(10.0, null)
+	var pa_after10 := pa_ally.hp
+	pa_ally.take_damage(2.0, null)
+	check("(16b) paladin aura: hits reduced by flat 3, minimum 1 gets through",
+			absf(pa_after10 - 993.0) < 0.01 and absf(pa_ally.hp - 992.0) < 0.01,
+			"hp=%s" % pa_ally.hp)
+	# Skill Thánh Quang: +160 heal in 3 tiles + cleanse.
+	w_reset_hero(gameW, w_hero, p_base)
+	var pa_wound := w_ally(gameW, p_base + Vector2(50, 20))
+	pa_wound.hp = 30.0
+	pa_wound.stun_t = 3.0
+	w_hero.hp = 400.0
+	var pa_foe := w_foe(gameW, p_base + Vector2(60, -20))
+	pa_foe.hp = 30.0
+	var pa_ok: bool = gameW.cast_hero_skill(w_hero)
+	check("(16b) paladin skill: heal 160 + cleanse allies, enemies unhealed, CD 75",
+			pa_ok and absf(pa_wound.hp - 190.0) < 0.01
+			and pa_wound.stun_t <= 0.0
+			and absf(w_hero.hp - 560.0) < 0.01
+			and absf(pa_foe.hp - 30.0) < 0.01
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"ally=%s hero=%s foe=%s" % [pa_wound.hp, w_hero.hp, pa_foe.hp])
+
+	# ------------------------------------------------ Dragoon
+	var d_base := base + Vector2(-300, -260)
+	gameW.slot_chars[0] = "dragoon"
+	w_reset_hero(gameW, w_hero, d_base)
 	w_hero.facing = "right"
-	var lp_tgt: Vector2 = gameW.world.cell_center(lp_cell)
-	var lp_foe := w_foe(gameW, lp_tgt)
-	var lp_ok: bool = gameW.cast_hero_skill(w_hero, lp_tgt)
-	check("(14c) thach C1: leap lands, 40 dmg, knockback 1 tile + 30% slow 2s, CD 55",
-			lp_cell.x >= 0 and lp_ok
-			and w_hero.global_position.distance_to(lp_tgt) < 24.0
-			and absf(lp_foe.hp - 960.0) < 0.01
-			and absf(lp_foe.global_position.x - (lp_tgt.x + World.TILE)) < 1.0
-			and absf(lp_foe.eff_spd_mult - 0.7) < 0.01 and lp_foe.eff_spd_t > 1.5
-			and absf(w_hero.skill_cd_t - 55.0) < 0.5,
-			"foe=%s foepos=%s slow=%s" % [lp_foe.hp, lp_foe.global_position,
-					lp_foe.eff_spd_mult])
-	# C2 stone wall: find a clear 3-cell vertical run near base.
-	w_reset_hero(gameW, w_hero, base)
-	w_hero.facing = "right"
-	var wall_centre := Vector2i(-1, -1)
-	var bc: Vector2i = gameW.world.world_to_cell(base)
-	for dx in range(-4, 7):
-		for dy in range(-4, 5):
-			var cand := bc + Vector2i(dx, dy)
-			if gameW._skill_wall_cell_ok(cand) and gameW._skill_wall_cell_ok(cand + Vector2i(0, -1)) \
-					and gameW._skill_wall_cell_ok(cand + Vector2i(0, 1)):
-				wall_centre = cand
-				break
-		if wall_centre.x >= 0:
-			break
-	var stand_foe := w_foe(gameW, gameW.world.cell_center(wall_centre))
-	var razed0: int = int(gameW._stat_rec(0).get("razed", 0))
-	var blost1: int = int(gameW._stat_rec(1).get("blost", 0))
-	w_reset_hero(gameW, w_hero, gameW.world.cell_center(wall_centre + Vector2i(-2, 0)))
-	w_hero.facing = "right"
-	var wall_ok: bool = gameW.cast_hero_skill2(w_hero, gameW.world.cell_center(wall_centre))
-	var walls: Array = gameW.buildings.filter(func(b): return b.btype == "skillwall")
-	var wpath: Array = gameW.world.get_path_cells(wall_centre + Vector2i(-2, 0),
-			wall_centre + Vector2i(2, 0), 0)
-	var through: bool = wpath.has(wall_centre) or wpath.has(wall_centre + Vector2i(0, -1)) \
-			or wpath.has(wall_centre + Vector2i(0, 1))
-	check("(14c) thach C2: 3 wall cells raised solid, unit pushed off, path detours, CD 40",
-			wall_centre.x >= 0 and wall_ok and walls.size() == 3
-			and gameW.world.is_solid(wall_centre)
-			and gameW.world.world_to_cell(stand_foe.global_position) != wall_centre
-			and not wpath.is_empty() and not through
-			and absf(w_hero.skill2_cd_t - 40.0) < 0.5,
-			"cells=%d path=%d through=%s" % [walls.size(), wpath.size(), through])
-	gameW._update_skill_walls(12.5)
-	check("(14c) thach C2: wall expires after 12s — cells freed, no raze/loss credit",
-			gameW.buildings.filter(func(b): return b.btype == "skillwall").is_empty()
-			and not gameW.world.is_solid(wall_centre) and gameW.skill_wall_timers.is_empty()
-			and int(gameW._stat_rec(0).get("razed", 0)) == razed0
-			and int(gameW._stat_rec(1).get("blost", 0)) == blost1,
-			"timers=%s" % [gameW.skill_wall_timers])
-	# C3 quake: 90 units / 300 buildings + 40% slow 3 s.
-	w_reset_hero(gameW, w_hero, base)
-	var qk_foe := w_foe(gameW, base + Vector2(220, 160))
-	var qk_sz: Vector2i = gameW.get_build_def("barracks").size
-	var qk_cell: Vector2i = gameW.world.world_to_cell(qk_foe.global_position) - qk_sz / 2
-	var qk_bld: Building = gameW._spawn_building("barracks", 1, qk_cell, true)
-	var qk_bc: Vector2 = qk_bld.position + Vector2(qk_bld.size) * World.TILE * 0.5
-	qk_foe.global_position = qk_bc + Vector2(58, 0)
-	var qk_bhp := qk_bld.hp
-	w_reset_hero(gameW, w_hero, qk_bc + Vector2(-80, 30))
-	var qk_ok: bool = gameW.cast_hero_skill3(w_hero, qk_bc)
-	check("(14c) thach C3: quake 90 on units, 300 on buildings, slow x0.60 3s, CD 150",
-			qk_ok and absf(qk_foe.hp - 910.0) < 0.01
-			and absf(qk_bld.hp - (qk_bhp - 300.0)) < 0.01
-			and absf(qk_foe.eff_spd_mult - 0.6) < 0.01 and qk_foe.eff_spd_t > 2.5
-			and absf(w_hero.skill3_cd_t - 150.0) < 0.5,
-			"foe=%s bld=%s/%s" % [qk_foe.hp, qk_bld.hp, qk_bhp])
+	# Aura Long Hành: +10% move speed, allies and himself.
+	var dr_ally := w_ally(gameW, d_base + Vector2(40, 40))
+	check("(16b) dragoon aura: ally + hero move speed x1.10",
+			absf(gameW.hero_speed_factor(dr_ally) - 1.10) < 0.01
+			and absf(gameW.hero_speed_factor(w_hero) - 1.10) < 0.01,
+			"ally=%s hero=%s" % [gameW.hero_speed_factor(dr_ally),
+					gameW.hero_speed_factor(w_hero)])
+	# Skill Long Thương: dash to the point, 120 along the path.
+	var dr_on := w_foe(gameW, d_base + Vector2(80, 0))
+	var dr_off := w_foe(gameW, d_base + Vector2(80, 70))
+	var dr_ok: bool = gameW.cast_hero_skill(w_hero, d_base + Vector2(160, 0))
+	check("(16b) dragoon skill: dash lands, 120 on the path, off-path safe, CD 75",
+			dr_ok and w_hero.global_position.distance_to(d_base + Vector2(160, 0)) < 24.0
+			and absf(dr_on.hp - 880.0) < 0.01
+			and absf(dr_off.hp - 1000.0) < 0.01
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"pos=%s on=%s off=%s" % [w_hero.global_position, dr_on.hp, dr_off.hp])
+	# The dash clamps at 5 tiles.
+	w_reset_hero(gameW, w_hero, d_base)
+	gameW.cast_hero_skill(w_hero, d_base + Vector2(300, 0))
+	check("(16b) dragoon skill: dash clamps to 5 tiles",
+			w_hero.global_position.distance_to(d_base) <= 5.0 * World.TILE + 24.0,
+			"dist=%s" % w_hero.global_position.distance_to(d_base))
+
+	# ------------------------------------------------ Assassin
+	var s_base := base + Vector2(0, -420)
+	gameW.slot_chars[0] = "assassin"
+	w_reset_hero(gameW, w_hero, s_base)
+	# Aura Truy Sát: allied military deal x1.10 to enemy heroes.
+	var as_a1 := w_ally(gameW, s_base + Vector2(40, 30))
+	var as_a2 := w_ally(gameW, s_base + Vector2(400, 30))
+	var as_k1: Unit = gameW._make_unit(1, s_base + Vector2(70, 30), "king")
+	var as_k2: Unit = gameW._make_unit(1, s_base + Vector2(430, 30), "king")
+	as_k1.hp = 10000.0
+	as_k1.max_hp = 10000.0
+	as_k2.hp = 10000.0
+	as_k2.max_hp = 10000.0
+	as_a1.attack_target = as_k1
+	as_a2.attack_target = as_k2
+	as_a1.strike()
+	as_a2.strike()
+	var as_d1 := 10000.0 - as_k1.hp
+	var as_d2 := 10000.0 - as_k2.hp
+	check("(16b) assassin aura: covered ally strikes x1.10 vs enemy heroes",
+			as_d2 > 0.0 and absf(as_d1 - as_d2 * 1.10) < 0.01,
+			"near=%s far=%s" % [as_d1, as_d2])
+	# Skill Ám Sát: refuses beyond 6 tiles; blinks behind + 160.
+	w_reset_hero(gameW, w_hero, s_base)
+	check("(16b) assassin skill: target beyond 6 tiles refused, no cooldown spent",
+			not gameW.cast_hero_skill(w_hero, s_base + Vector2(224, 0))
+			and w_hero.skill_cd_t <= 0.0, "cd=%s" % w_hero.skill_cd_t)
+	var as_victim: Unit = gameW._make_unit(1, s_base + Vector2(150, 0), "king")
+	var as_ok: bool = gameW.cast_hero_skill(w_hero, as_victim.global_position)
+	check("(16b) assassin skill: blink behind the victim, 160 burst, CD 75",
+			as_ok and absf(as_victim.hp - 490.0) < 0.01
+			and w_hero.global_position.distance_to(as_victim.global_position) < 40.0
+			and w_hero.global_position.x > as_victim.global_position.x
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"victim=%s herox=%s vx=%s" % [as_victim.hp,
+					w_hero.global_position.x, as_victim.global_position.x])
+
+	# ------------------------------------------------ Ranger
+	var r_base := base + Vector2(420, 0)
+	gameW.slot_chars[0] = "ranger"
+	w_reset_hero(gameW, w_hero, r_base)
+	# Aura Viễn Thị: +1 sight for covered allies (fog reads it).
+	var rg_ally := w_ally(gameW, r_base + Vector2(40, 30))
+	check("(16b) ranger aura: covers allies, kit grants +1 sight",
+			gameW.hero_aura_covers(rg_ally, "ranger", true)
+			and int(Stats.HERO_KITS["ranger"]["aura_sight"]) == 1,
+			"covers=%s" % gameW.hero_aura_covers(rg_ally, "ranger", true))
+	# Skill Kiếm Vũ: 5 slashes x32 round-robin over 3 foes.
+	var rg_f1 := w_foe(gameW, r_base + Vector2(40, 0))
+	var rg_f2 := w_foe(gameW, r_base + Vector2(-30, 40))
+	var rg_f3 := w_foe(gameW, r_base + Vector2(0, -50))
+	var rg_ok: bool = gameW.cast_hero_skill(w_hero)
+	for i in range(5):
+		gameW._update_hero_flurries(0.21)
+	check("(16b) ranger skill: 5 slashes x32 spread round-robin, CD 75",
+			rg_ok and absf(rg_f1.hp - 936.0) < 0.01
+			and absf(rg_f2.hp - 936.0) < 0.01
+			and absf(rg_f3.hp - 968.0) < 0.01
+			and w_hero.flurry_left == 0
+			and absf(w_hero.skill_cd_t - 75.0) < 0.5
+			and not gameW.cast_hero_skill(w_hero),
+			"f=%s,%s,%s left=%s" % [rg_f1.hp, rg_f2.hp, rg_f3.hp, w_hero.flurry_left])
 
 	# ------------------------------------------------ plumbing
-	gameW.slot_chars[0] = "loi_chan"
+	check("(16b) targeting matrix: rain/meteor/dash/blink targeted, the rest instant",
+			gameW.skill_is_targeted("archer", 1) and gameW.skill_is_targeted("mage", 1)
+			and gameW.skill_is_targeted("dragoon", 1) and gameW.skill_is_targeted("assassin", 1)
+			and not gameW.skill_is_targeted("knight", 1)
+			and not gameW.skill_is_targeted("berserker", 1)
+			and not gameW.skill_is_targeted("paladin", 1)
+			and not gameW.skill_is_targeted("ranger", 1)
+			and not gameW.skill_is_targeted("archer", 2)
+			and not gameW.skill_is_targeted("mage", 3), "")
+	gameW.slot_chars[0] = "dragoon"
 	w_reset_hero(gameW, w_hero, base)
+	w_hero.facing = "right"
 	var mp_foe := w_foe(gameW, base + Vector2(160, -120))
 	var mp_t: bool = gameW._mp_apply_skill_cmd(0, {"u": w_hero.net_id, "s": 1,
 			"x": mp_foe.global_position.x, "y": mp_foe.global_position.y})
 	w_hero.skill_cd_t = 0.0
 	var mp_u: bool = gameW._mp_apply_skill_cmd(0, {"u": w_hero.net_id, "s": 1})
-	check("(14c) MP skill cmd s=1: with a target it dashes there, without one it still casts",
-			mp_t and mp_u and w_hero.skill_cd_t > 49.0, "cd=%s" % w_hero.skill_cd_t)
-	check("(14c) targeting matrix: new Chiêu 1 all targeted, xich cone instant, all Ultis targeted",
-			gameW.skill_is_targeted("loi_chan", 1) and gameW.skill_is_targeted("loi_chan", 2)
-			and gameW.skill_is_targeted("loi_chan", 3) and gameW.skill_is_targeted("xich_diem", 1)
-			and not gameW.skill_is_targeted("xich_diem", 2)
-			and gameW.skill_is_targeted("xich_diem", 3)
-			and gameW.skill_is_targeted("phong_linh", 1) and gameW.skill_is_targeted("phong_linh", 2)
-			and gameW.skill_is_targeted("phong_linh", 3)
-			and gameW.skill_is_targeted("thach_son", 1) and gameW.skill_is_targeted("thach_son", 2)
-			and gameW.skill_is_targeted("thach_son", 3), "")
+	var mp_bad: bool = gameW._mp_apply_skill_cmd(0, {"u": w_hero.net_id, "s": 2,
+			"x": mp_foe.global_position.x, "y": mp_foe.global_position.y})
+	check("(16b) MP skill cmd: s=1 targeted + untargeted apply, s=2 rejected (one skill only)",
+			mp_t and mp_u and not mp_bad and w_hero.skill_cd_t > 74.0,
+			"cd=%s" % w_hero.skill_cd_t)
 	remove_child(gameW)
 	gameW.queue_free()
 	await get_tree().process_frame
+
 
 func _ready() -> void:
 	Engine.time_scale = 20.0
@@ -2831,43 +2789,46 @@ func _ready() -> void:
 			"g:%s y:%s" % [String(kv2[1]), String(kv3[1])])
 
 	# ------------------------------------------------ (ac) characters: roster, draw, hero
-	# Registry (final model): 8 main characters with kits (14c
-	# added the four Temple Masters) + 3 cosmetic-only premium
-	# skins. No "goc", no selectable king.
-	check("ac1 registry: 8 mains with names, 3 cosmetic skins, no kits on skins",
-			Characters.CHAR_IDS == ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa",
-					"loi_chan", "xich_diem", "phong_linh", "thach_son"]
-			and Characters.char_name("ngan_ky") == "Ngân Kỵ"
-			and Characters.char_name("kim_hoa") == "Kim Hoa"
-			and Characters.char_name("lam_bao") == "Lam Bào"
-			and Characters.char_name("bach_sa") == "Bạch Sa"
-			and Characters.char_name("loi_chan") == "Lôi Chấn"
-			and Characters.char_name("xich_diem") == "Xích Diệm"
-			and Characters.char_name("phong_linh") == "Phong Linh"
-			and Characters.char_name("thach_son") == "Thạch Sơn"
+	# Registry (16b model): the 8 medieval mains with kits + 3
+	# cosmetic-only premium skins (dormant, unbound from the
+	# roster). Old-roster ids normalise to the default. No "goc",
+	# no selectable king.
+	check("ac1 registry: 8 medieval mains with names, 3 dormant skins, no kits on skins",
+			Characters.CHAR_IDS == ["knight", "berserker", "archer", "mage",
+					"paladin", "dragoon", "assassin", "ranger"]
+			and Characters.char_name("knight") == "Hiệp Sĩ Hoàng Gia"
+			and Characters.char_name("berserker") == "Chiến Binh Cuồng Nộ"
+			and Characters.char_name("archer") == "Cung Thủ Tinh Anh"
+			and Characters.char_name("mage") == "Pháp Sư Cung Đình"
+			and Characters.char_name("paladin") == "Thánh Kỵ Sĩ"
+			and Characters.char_name("dragoon") == "Kỵ Sĩ Long"
+			and Characters.char_name("assassin") == "Sát Thủ Bóng Đêm"
+			and Characters.char_name("ranger") == "Nhà Thám Hiểm"
 			and Characters.SKIN_IDS == ["vo_hiep", "bach_y", "tu_y"]
 			and Characters.skin_name("vo_hiep") == "Võ Hiệp"
-			and Characters.DEFAULT_CHAR == "ngan_ky"
-			and Characters.normalize_char("goc") == "ngan_ky"
-			and Characters.normalize_char("vo_hiep") == "ngan_ky"
-			and Characters.normalize_char("skin_la") == "ngan_ky"
+			and Characters.DEFAULT_CHAR == "knight"
+			and Characters.normalize_char("goc") == "knight"
+			and Characters.normalize_char("vo_hiep") == "knight"
+			and Characters.normalize_char("ngan_ky") == "knight"
+			and Characters.normalize_char("skin_la") == "knight"
 			and Characters.normalize_skin("tu_y") == "tu_y"
-			and Characters.normalize_skin("ngan_ky") == ""
-			and String(Characters.kit_of("ngan_ky").get("aura", "")) == "Huyết Bào"
-			and String(Characters.kit_of("kim_hoa").get("skill", "")) == "Vương Mệnh Hồi Phục"
-			and String(Characters.kit_of("lam_bao").get("skill", "")) == "Băng Phong"
-			and String(Characters.kit_of("bach_sa").get("skill", "")) == "Kết Giới"
-			and String(Characters.kit_of("loi_chan").get("aura", "")) == "Lôi Vực"
-			and String(Characters.kit_of("loi_chan").get("skill", "")) == "Lôi Độn"
-			and String(Characters.kit_of("xich_diem").get("skill", "")) == "Hỏa Ấn"
-			and String(Characters.kit_of("phong_linh").get("skill", "")) == "Truy Phong Tiễn"
-			and String(Characters.kit_of("thach_son").get("skill", "")) == "Sơn Băng Đạp")
+			and Characters.normalize_skin("knight") == ""
+			and String(Characters.kit_of("knight").get("aura", "")) == "Hộ Vệ"
+			and String(Characters.kit_of("knight").get("skill", "")) == "Khiên Sư Tử"
+			and String(Characters.kit_of("berserker").get("skill", "")) == "Rìu Xoáy Cuồng Nộ"
+			and String(Characters.kit_of("archer").get("skill", "")) == "Mưa Tên"
+			and String(Characters.kit_of("mage").get("skill", "")) == "Thiên Thạch Ma Thuật"
+			and String(Characters.kit_of("paladin").get("skill", "")) == "Thánh Quang Hồi Phục"
+			and String(Characters.kit_of("dragoon").get("aura", "")) == "Long Hành"
+			and String(Characters.kit_of("dragoon").get("skill", "")) == "Long Thương Xuyên Tâm"
+			and String(Characters.kit_of("assassin").get("skill", "")) == "Ám Sát"
+			and String(Characters.kit_of("ranger").get("skill", "")) == "Kiếm Vũ Lữ Hành")
 	# Assets: ONE canonical colour set per appearance — 8
 	# directions for all 11 ids, framed portraits for the mains,
 	# and NO team-variant files for characters at all.
 	var ac_assets := true
-	for app_id in ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa", "loi_chan",
-			"xich_diem", "phong_linh", "thach_son", "vo_hiep", "bach_y", "tu_y"]:
+	for app_id in ["knight", "berserker", "archer", "mage", "paladin",
+			"dragoon", "assassin", "ranger", "vo_hiep", "bach_y", "tu_y"]:
 		for d in Characters.DIRS8:
 			if not ResourceLoader.exists("res://assets/king_" + app_id + "_" + d + ".png"):
 				ac_assets = false
@@ -2880,30 +2841,29 @@ func _ready() -> void:
 		if Characters.avatar_for(cid) == null:
 			ac_assets = false
 	check("ac2 all 11 appearances load 8 canonical directions; portraits exist; no team variants", ac_assets)
-	# Lam Bào's hair: darkened to near-black at pipeline start
-	# (Tín's fix) — mean value of the sprite's head rows is low.
-	var lb_img := Image.load_from_file("res://assets/king_lam_bao_s.png")
-	var lb_mean := 1.0
-	if lb_img != null and not lb_img.is_empty():
-		lb_img.convert(Image.FORMAT_RGBA8)
-		var vsum := 0.0
-		var vcnt := 0
-		for yy in range(int(lb_img.get_height() * 0.30)):
-			for xx in range(lb_img.get_width()):
-				var px := lb_img.get_pixel(xx, yy)
-				if px.a > 0.9:
-					vsum += px.v
-					vcnt += 1
-		if vcnt > 0:
-			lb_mean = vsum / vcnt
-	check("ac3 lam_bao head rows are dark (black-hair fix), mean V < 0.62",
-			lb_mean < 0.62, "meanV=%.3f" % lb_mean)
+	# Pack-sprite format (16b): every hero's south pose is the
+	# standard hero height with binary alpha (the builder's
+	# crisp standard; back-view weapon removal is audited by
+	# tools/build_owner_pack_sprites.py + its grass strip).
+	var ac_fmt := true
+	for cid in Characters.CHAR_IDS:
+		var pimg := Image.load_from_file("res://assets/king_%s_s.png" % cid)
+		if pimg == null or pimg.is_empty() or pimg.get_height() != 92:
+			ac_fmt = false
+			continue
+		pimg.convert(Image.FORMAT_RGBA8)
+		for yy in range(pimg.get_height()):
+			for xx in range(pimg.get_width()):
+				var pa := pimg.get_pixel(xx, yy).a
+				if pa > 0.01 and pa < 0.99:
+					ac_fmt = false
+	check("ac3 pack sprites: height 92 + binary alpha for all 8 heroes", ac_fmt)
 	# Avatar pick persists locally, free among the mains only.
-	Characters.set_local_avatar("kim_hoa")
-	var ac_persist := Characters.local_avatar() == "kim_hoa"
+	Characters.set_local_avatar("archer")
+	var ac_persist := Characters.local_avatar() == "archer"
 	Characters.set_local_avatar("vo_hiep")
-	ac_persist = ac_persist and Characters.local_avatar() == "ngan_ky"
-	Characters.set_local_avatar("ngan_ky")
+	ac_persist = ac_persist and Characters.local_avatar() == "knight"
+	Characters.set_local_avatar("knight")
 	check("ac4 avatar pick persists; skins/unknown fall back to the default portrait", ac_persist)
 	# Cosmetic skins are dormant: nobody owns any, activation is
 	# refused, and the active slot stays empty.
@@ -2954,7 +2914,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	gameK.enemy_ai.waves_enabled = false
-	gameK.slot_chars[0] = "ngan_ky"
+	gameK.slot_chars[0] = "knight"
 	gameK.age = 4
 	gameK.resources["food"] = 2000
 	gameK.resources["gold"] = 1000
@@ -2984,22 +2944,25 @@ func _ready() -> void:
 	for u in gameK.units:
 		if u.unit_type == "king" and u.owner_id == 0:
 			the_king = u
-	check("ac18 hero wears the DRAWN character (ngan_ky), full hero stats",
+	check("ac18 hero wears the DRAWN character (knight), full hero stats",
 			the_king != null and the_king.hp == 650.0 and the_king.spr != null
-			and String(the_king.spr.texture.resource_path).contains("king_ngan_ky_"),
+			and String(the_king.spr.texture.resource_path).contains("king_knight_"),
 			"tex=%s" % (String(the_king.spr.texture.resource_path) if the_king != null and the_king.spr != null else "none"))
 	if the_king != null:
 		the_king._king_apply_dir("e")
 		var tex_e := String(the_king.spr.texture.resource_path)
 		the_king._king_apply_dir("n")
 		check("ac19 8-dir facing swaps the hero sprite",
-				tex_e.contains("king_ngan_ky_e") and String(the_king.spr.texture.resource_path).contains("king_ngan_ky_n"),
+				tex_e.contains("king_knight_e") and String(the_king.spr.texture.resource_path).contains("king_knight_n"),
 				"e=%s n=%s" % [tex_e, String(the_king.spr.texture.resource_path)])
 		the_king._king_apply_dir("s")
 	check("ac20 resync serialises the hero as a normal unit record",
 			the_king != null and String(gameK._mp_unit_record(the_king).get("type", "")) == "king"
 			and int(gameK._mp_unit_record(the_king).get("owner", -1)) == 0)
-	# Ngân Kỵ's aura (Huyết Bào): measured through real strikes.
+	# The Archer's aura (Tiễn Thủ): measured through real
+	# strikes — the drawn character is read live from the slot,
+	# so the standing hero fights as the Archer for this check.
+	gameK.slot_chars[0] = "archer"
 	if the_king != null:
 		var base_cell: Vector2i = gameK.world.world_to_cell(the_king.global_position)
 		var m_near: Unit = gameK._make_unit(0, gameK.world.cell_center(
@@ -3016,16 +2979,17 @@ func _ready() -> void:
 		m_far.strike()
 		var d_near := 10000.0 - foe1.hp
 		var d_far := 10000.0 - foe2.hp
-		check("ac21 Huyết Bào aura: +15% damage inside 3 tiles, none outside",
-				d_far > 0.0 and absf(d_near - d_far * Stats.KING_AURA_MULT) < 0.01
-				and gameK.hero_aura_covers(m_near, "ngan_ky") and not gameK.hero_aura_covers(m_far, "ngan_ky")
+		check("ac21 Tiễn Thủ aura: +8% damage inside 3 tiles, none outside",
+				d_far > 0.0 and absf(d_near - d_far * 1.08) < 0.01
+				and gameK.hero_aura_covers(m_near, "archer") and not gameK.hero_aura_covers(m_far, "archer")
 				and gameK.aura_active_for(the_king),
 				"near=%s far=%s" % [d_near, d_far])
+		gameK.slot_chars[0] = "knight" # melee frame for the strike check
 		var foe3: Unit = gameK._make_unit(1, the_king.global_position + Vector2(30, 0), "militia")
 		foe3.hp = 10000.0
 		the_king.attack_target = foe3
 		the_king.strike()
-		check("ac22 the hero does not buff his own strikes",
+		check("ac22 the hero does not buff his own strikes (shared frame atk, no kit rescale for the Knight)",
 				absf((10000.0 - foe3.hp) - Stats.damage("king", foe3, 4)) < 0.01,
 				"dmg=%s base=%s" % [10000.0 - foe3.hp, Stats.damage("king", foe3, 4)])
 	# Death frees the muster: a new hero may be trained.
@@ -3037,19 +3001,19 @@ func _ready() -> void:
 	check("ac23 after the hero falls, a successor may be mustered",
 			not gameK.king_alive(0) and gameK.can_train_unit("king") and gameK.train_king())
 	# A SKINNED hero keeps the DRAWN character's kit: force the
-	# dormant slot (as a future owner would have it) — Lam Bào
-	# drawn, Võ Hiệp worn: sprite is the skin, aura is Băng/Hàn.
-	gameK.slot_chars[0] = "lam_bao"
+	# dormant slot (as a future owner would have it) — the Mage
+	# drawn, Võ Hiệp worn: sprite is the skin, aura is the Mage's.
+	gameK.slot_chars[0] = "mage"
 	gameK.slot_skins[0] = "vo_hiep"
 	var skinned: Unit = gameK._make_unit(0, gameK.world.cell_center(
 			gameK.world.nearest_walkable(gameK.player_tc.origin_cell + Vector2i(3, 3))), "king")
 	var sk_tex := String(skinned.spr.texture.resource_path) if skinned.spr != null else ""
-	var sk_foe: Unit = gameK._make_unit(1, skinned.global_position + Vector2(40, 0), "militia")
-	check("ac24 skin changes appearance only: vo_hiep sprite, lam_bao Hàn Khí aura",
+	var sk_ally: Unit = gameK._make_unit(0, skinned.global_position + Vector2(40, 0), "militia")
+	check("ac24 skin changes appearance only: vo_hiep sprite, mage regen aura",
 			sk_tex.contains("king_vo_hiep_") and gameK.appearance_for(0) == "vo_hiep"
-			and gameK.char_for(0) == "lam_bao"
-			and absf(gameK.hero_speed_factor(sk_foe) - 0.85) < 0.001,
-			"tex=%s factor=%s" % [sk_tex, gameK.hero_speed_factor(sk_foe)])
+			and gameK.char_for(0) == "mage"
+			and gameK.hero_aura_covers(sk_ally, "mage", true),
+			"tex=%s" % sk_tex)
 	gameK.slot_skins[0] = ""
 	remove_child(gameK)
 	gameK.queue_free()
@@ -3064,71 +3028,88 @@ func _ready() -> void:
 	gameS.enemy_ai.waves_enabled = false
 	var s_anchor: Vector2i = gameS.world.nearest_walkable(gameS.player_tc.origin_cell + Vector2i(6, 6))
 	var s_pos: Vector2 = gameS.world.cell_center(s_anchor)
-	# --- Ngân Kỵ: Xung Phong self-buff + cooldown gating.
-	gameS.slot_chars[0] = "ngan_ky"
-	var h_ngan: Unit = gameS._make_unit(0, s_pos, "king")
-	check("ad1 Xung Phong: +100% dmg / +50% speed for 5s, CD 45s, recast refused",
-			gameS.cast_hero_skill(h_ngan) and absf(h_ngan.eff_dmg_mult - 2.0) < 0.001
-			and absf(h_ngan.eff_speed_mult() - 1.5) < 0.001
-			and h_ngan.eff_dmg_t > 4.5 and absf(h_ngan.skill_cd_t - 45.0) < 0.5
-			and not gameS.cast_hero_skill(h_ngan),
-			"dmg=%s spd=%s cd=%s" % [h_ngan.eff_dmg_mult, h_ngan.eff_speed_mult(), h_ngan.skill_cd_t])
+	# --- Knight: Khiên Sư Tử shield + cooldown gating.
+	gameS.slot_chars[0] = "knight"
+	var h_knight: Unit = gameS._make_unit(0, s_pos, "king")
+	check("ad1 Khiên Sư Tử: 250 shield for 6s, CD 75s, recast refused",
+			gameS.cast_hero_skill(h_knight) and absf(h_knight.shield_hp - 250.0) < 0.01
+			and h_knight.shield_t > 5.5 and absf(h_knight.skill_cd_t - 75.0) < 0.5
+			and not gameS.cast_hero_skill(h_knight),
+			"shield=%s t=%s cd=%s" % [h_knight.shield_hp, h_knight.shield_t, h_knight.skill_cd_t])
 	# hero_of_team resolves ONE hero per team (the first living) —
 	# retire each phase's hero so the next phase's aura is his.
-	gameS.units.erase(h_ngan)
-	h_ngan.queue_free()
-	# --- Kim Hoa: aura regen + Vương Mệnh heal.
-	gameS.slot_chars[0] = "kim_hoa"
-	var h_kim: Unit = gameS._make_unit(0, s_pos + Vector2(260, 0), "king")
-	var ally_kim: Unit = gameS._make_unit(0, h_kim.global_position + Vector2(40, 0), "militia")
-	ally_kim.max_hp = 1000.0 # test-only bulk: heal amounts must not clamp
-	ally_kim.hp = 30.0
-	h_kim.hp = 400.0
-	ally_kim._tick_effects(2.05)
-	check("ad2 Kim Hoa aura Sinh Tồn: +1 HP per 2s to covered allies",
-			absf(ally_kim.hp - 31.0) < 0.01, "hp=%s" % ally_kim.hp)
-	check("ad3 Vương Mệnh Hồi Phục: instant +80 HP in radius (hero incl.), CD 60s",
-			gameS.cast_hero_skill(h_kim) and absf(ally_kim.hp - 111.0) < 0.01
-			and absf(h_kim.hp - 480.0) < 0.01 and absf(h_kim.skill_cd_t - 60.0) < 0.5,
-			"ally=%s hero=%s" % [ally_kim.hp, h_kim.hp])
-	gameS.units.erase(h_kim)
-	h_kim.queue_free()
-	# --- Lam Bào: Băng Phong active slow (aura covered in ac24).
-	gameS.slot_chars[0] = "lam_bao"
-	var h_lam: Unit = gameS._make_unit(0, s_pos + Vector2(520, 0), "king")
-	var foe_lam: Unit = gameS._make_unit(1, h_lam.global_position + Vector2(50, 0), "militia")
-	var foe_lam_far: Unit = gameS._make_unit(1, h_lam.global_position + Vector2(200, 0), "militia")
-	check("ad4 Băng Phong: enemies in 2.5 tiles slowed -60% move / -40% atk speed for 3s",
-			gameS.cast_hero_skill(h_lam)
-			and absf(foe_lam.eff_speed_mult() - 0.4 * 0.85) < 0.01
-			and absf(foe_lam.eff_atkspd_mult() - 0.6) < 0.01 and foe_lam.eff_spd_t > 2.5
-			and absf(foe_lam_far.eff_speed_mult() - 1.0) < 0.01,
-			"near_spd=%s atkspd=%s far=%s" % [foe_lam.eff_speed_mult(), foe_lam.eff_atkspd_mult(), foe_lam_far.eff_speed_mult()])
-	gameS.units.erase(h_lam)
-	h_lam.queue_free()
-	# --- Bạch Sa: Thánh Quang aura + Kết Giới zone.
-	gameS.slot_chars[0] = "bach_sa"
-	var h_bach: Unit = gameS._make_unit(0, s_pos + Vector2(780, 0), "king")
-	var ally_bach: Unit = gameS._make_unit(0, h_bach.global_position + Vector2(40, 0), "militia")
-	ally_bach.max_hp = 1000.0 # must survive the measured hits
-	ally_bach.hp = 1000.0
-	var hp_b0 := ally_bach.hp
-	ally_bach.take_damage(100.0)
-	check("ad5 Thánh Quang aura: covered allies take -10% damage",
-			absf((hp_b0 - ally_bach.hp) - 90.0) < 0.01, "lost=%s" % (hp_b0 - ally_bach.hp))
-	check("ad6 Kết Giới cast leaves a sim zone, CD 70s",
-			gameS.cast_hero_skill(h_bach) and gameS.hero_zones.size() == 1
-			and absf(h_bach.skill_cd_t - 70.0) < 0.5,
-			"zones=%d cd=%s" % [gameS.hero_zones.size(), h_bach.skill_cd_t])
-	# Move the hero far away: the zone stays at the cast position
-	# and still shields the ally left inside (x0.70, no aura now).
-	h_bach.global_position = h_bach.global_position + Vector2(900, 0)
-	var hp_b1 := ally_bach.hp
-	ally_bach.take_damage(100.0)
-	check("ad7 zone is fixed at cast position: ally inside takes -30% without the hero near",
-			absf((hp_b1 - ally_bach.hp) - 70.0) < 0.01, "lost=%s" % (hp_b1 - ally_bach.hp))
+	gameS.units.erase(h_knight)
+	h_knight.queue_free()
+	# --- Paladin: Thánh Giáp aura + Thánh Quang heal/cleanse.
+	gameS.slot_chars[0] = "paladin"
+	var h_pal: Unit = gameS._make_unit(0, s_pos + Vector2(260, 0), "king")
+	var ally_pal: Unit = gameS._make_unit(0, h_pal.global_position + Vector2(40, 0), "militia")
+	ally_pal.max_hp = 1000.0 # test-only bulk: heal amounts must not clamp
+	ally_pal.hp = 1000.0
+	ally_pal.take_damage(100.0)
+	var ad2_lost := 1000.0 - ally_pal.hp
+	ally_pal.hp = 30.0
+	ally_pal.stun_t = 3.0
+	h_pal.hp = 400.0
+	check("ad2 Thánh Giáp aura: a covered ally's hit is reduced by flat 3",
+			absf(ad2_lost - 97.0) < 0.01, "lost=%s" % ad2_lost)
+	check("ad3 Thánh Quang Hồi Phục: +160 HP in radius + cleanse (hero incl.), CD 75s",
+			gameS.cast_hero_skill(h_pal) and absf(ally_pal.hp - 190.0) < 0.01
+			and ally_pal.stun_t <= 0.0
+			and absf(h_pal.hp - 560.0) < 0.01 and absf(h_pal.skill_cd_t - 75.0) < 0.5,
+			"ally=%s hero=%s" % [ally_pal.hp, h_pal.hp])
+	gameS.units.erase(h_pal)
+	h_pal.queue_free()
+	# --- Mage: Ma Lực Hồi Lưu regen aura + Thiên Thạch.
+	gameS.slot_chars[0] = "mage"
+	var h_mage: Unit = gameS._make_unit(0, s_pos + Vector2(520, 0), "king")
+	var ally_mage: Unit = gameS._make_unit(0, h_mage.global_position + Vector2(40, 0), "militia")
+	ally_mage.max_hp = 1000.0
+	ally_mage.hp = 30.0
+	ally_mage._tick_effects(1.05)
+	check("ad4 mage aura Ma Lực Hồi Lưu: +1.2 HP/s to covered allies",
+			absf(ally_mage.hp - 31.2) < 0.01, "hp=%s" % ally_mage.hp)
+	var foe_mage: Unit = gameS._make_unit(1, h_mage.global_position + Vector2(120, 0), "militia")
+	foe_mage.max_hp = 1000.0
+	foe_mage.hp = 1000.0
+	var foe_mage_far: Unit = gameS._make_unit(1, h_mage.global_position + Vector2(120, 130), "militia")
+	foe_mage_far.max_hp = 1000.0
+	foe_mage_far.hp = 1000.0
+	check("ad5 Thiên Thạch Ma Thuật: 120 dmg in 2.5 tiles at the point, CD 75s",
+			gameS.cast_hero_skill(h_mage, foe_mage.global_position)
+			and absf(foe_mage.hp - 880.0) < 0.01
+			and absf(foe_mage_far.hp - 1000.0) < 0.01
+			and absf(h_mage.skill_cd_t - 75.0) < 0.5,
+			"near=%s far=%s" % [foe_mage.hp, foe_mage_far.hp])
+	gameS.units.erase(h_mage)
+	h_mage.queue_free()
+	# --- Dragoon aura + Assassin skill (single-skill spot checks;
+	# the full per-hero matrix lives in the (16b) section).
+	gameS.slot_chars[0] = "dragoon"
+	var h_drag: Unit = gameS._make_unit(0, s_pos + Vector2(780, 0), "king")
+	var ally_drag: Unit = gameS._make_unit(0, h_drag.global_position + Vector2(40, 0), "militia")
+	check("ad6 Long Hành aura: covered allies move x1.10",
+			absf(gameS.hero_speed_factor(ally_drag) - 1.10) < 0.01,
+			"factor=%s" % gameS.hero_speed_factor(ally_drag))
+	gameS.units.erase(h_drag)
+	h_drag.queue_free()
+	gameS.slot_chars[0] = "assassin"
+	gameS.slot_chars[1] = "mage" # the foe king brings no defensive aura of his own
+	var h_ass: Unit = gameS._make_unit(0, s_pos + Vector2(1040, 0), "king")
+	var foe_king: Unit = gameS._make_unit(1, h_ass.global_position + Vector2(150, 0), "king")
+	check("ad7 Ám Sát: blink behind the enemy hero, 160 burst, CD 75s",
+			gameS.cast_hero_skill(h_ass, foe_king.global_position)
+			and absf(foe_king.hp - 490.0) < 0.01
+			and h_ass.global_position.distance_to(foe_king.global_position) < 40.0
+			and absf(h_ass.skill_cd_t - 75.0) < 0.5,
+			"foe=%s dist=%s" % [foe_king.hp,
+					h_ass.global_position.distance_to(foe_king.global_position)])
+	gameS.units.erase(h_ass)
+	h_ass.queue_free()
+	gameS.units.erase(foe_king)
+	foe_king.queue_free()
 	# --- MP validator: the skill command is gated like a sim rule.
-	gameS.slot_chars[0] = "ngan_ky"
+	gameS.slot_chars[0] = "knight"
 	var h_val: Unit = gameS._make_unit(0, s_pos + Vector2(1300, 0), "king")
 	check("ad8 _mp_apply_skill rejects unknown units and wrong owners",
 			not gameS._mp_apply_skill(0, 999999)
@@ -3140,13 +3121,13 @@ func _ready() -> void:
 	h_val.skill_cd_t = 0.0
 	check("ad10 _mp_apply_skill refuses a dead hero",
 			not gameS._mp_apply_skill(0, h_val.net_id))
-	# --- The AI casts its hero's active when the trigger bites.
-	gameS.slot_chars[1] = "ngan_ky"
+	# --- The AI casts its hero's ONE skill when the trigger bites.
+	gameS.slot_chars[1] = "knight"
 	var h_ai: Unit = gameS._make_unit(1, s_pos + Vector2(1100, 0), "king")
 	var _bait: Unit = gameS._make_unit(0, h_ai.global_position + Vector2(45, 0), "militia")
 	gameS.enemy_ai._hero_skill_tick()
-	check("ad11 AI hero casts Xung Phong with an enemy in reach",
-			h_ai.skill_cd_t > 40.0, "cd=%s" % h_ai.skill_cd_t)
+	check("ad11 AI hero casts Khiên Sư Tử with an enemy in reach",
+			h_ai.skill_cd_t > 70.0, "cd=%s" % h_ai.skill_cd_t)
 	# ------------------------------------------------ (ae) 13o animation coverage
 	# Presentation-only life from the 13o pass — hurt rows, idle
 	# breathing, the Ram's thrust, crop/tree sway, the flag shader,
@@ -3277,10 +3258,12 @@ func _ready() -> void:
 	await get_tree().process_frame
 
 	# ------------------------------------------------ (af) 13n hero rig
-	# The cutout limb rig + weapons for the four main characters
-	# (tools/build_hero_rig.py). Everything asserted is render
-	# state — part nodes, rotations, visibility; the sim never
-	# reads any of it (the checksum sections above are untouched).
+	# ------------------------------------------------ (af) hero presentation: the flat-sprite path
+	# 16b: the medieval roster renders through the 13j procedural
+	# single-sprite path (owner-pack poses) — the cutout limb rig
+	# is DEREGISTERED for every hero (hero_rig.json "chars" is
+	# empty; the old rig data stays on disk, dormant). Everything
+	# asserted is render state; the sim never reads any of it.
 	var gameR = load("res://main.tscn").instantiate()
 	add_child(gameR)
 	await get_tree().process_frame
@@ -3288,187 +3271,100 @@ func _ready() -> void:
 	gameR.enemy_ai.waves_enabled = false
 	var r_anchor: Vector2i = gameR.world.nearest_walkable(gameR.player_tc.origin_cell + Vector2i(6, 6))
 	var r_pos: Vector2 = gameR.world.cell_center(r_anchor)
-	# af1: rig data exists for the 4 mains, never for skins.
+	# af1: no rig for any of the new heroes (nor for the skins).
 	var af_rig_ok := true
-	for cid in ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa"]:
-		af_rig_ok = af_rig_ok and HeroRig.has_rig(cid)
-	check("af1 rig data covers the 4 main characters, skins excluded",
+	for cid in Characters.CHAR_IDS:
+		af_rig_ok = af_rig_ok and not HeroRig.has_rig(cid)
+	check("af1 rig deregistered: all 8 medieval heroes use the flat path",
 			af_rig_ok and not HeroRig.has_rig("vo_hiep")
 			and not HeroRig.has_rig("bach_y") and not HeroRig.has_rig("tu_y"))
-	# af2: every direction of every character is complete: torso +
-	# at least one leg + a weapon entry, and every part texture
-	# loads. (Pixel-exact reassembly is verified by the builder.)
-	var af_complete := true
+	# af2: every direction of every hero loads from the owner
+	# packs at the standard format (height 92, binary alpha —
+	# the weapon-free back views are audited by the pack builder
+	# and its grass strip, see tools/build_owner_pack_sprites.py).
+	var af_fmt := true
 	var af_detail := ""
-	for cid in ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa"]:
-		for d8 in ["s", "se", "e", "ne", "n", "nw", "w", "sw"]:
-			var dd := HeroRig.dir_data(cid, d8)
-			var pp: Dictionary = dd.get("parts", {})
-			if not pp.has("torso") or not (pp.has("leg_l") or pp.has("leg_r")) \
-					or (dd.get("weapon", {}) as Dictionary).is_empty():
-				af_complete = false
-				af_detail = "%s/%s parts" % [cid, d8]
-			for key in pp:
-				if HeroRig.tex(String(pp[key].get("tex", ""))) == null:
-					af_complete = false
-					af_detail = "%s/%s %s tex" % [cid, d8, key]
-		if HeroRig.tex(String(HeroRig.char_data(cid).get("weapon", {}).get("tex", ""))) == null:
-			af_complete = false
-			af_detail = "%s weapon tex" % cid
-	check("af2 all 32 direction rigs complete, textures load", af_complete, af_detail)
-	# af3-af6: one hero per character, posed synchronously.
-	var af_chars := ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa"]
+	for cid in Characters.CHAR_IDS:
+		for d8 in Characters.DIRS8:
+			var img := Image.load_from_file("res://assets/king_%s_%s.png" % [cid, d8])
+			if img == null or img.is_empty() or img.get_height() != 92:
+				af_fmt = false
+				af_detail = "%s/%s missing or wrong height" % [cid, d8]
+				continue
+			img.convert(Image.FORMAT_RGBA8)
+			for yy in range(img.get_height()):
+				for xx in range(img.get_width()):
+					var a := img.get_pixel(xx, yy).a
+					if a > 0.01 and a < 0.99:
+						af_fmt = false
+						af_detail = "%s/%s semi-transparent pixel" % [cid, d8]
+	check("af2 all 64 pack sprites load: height 92, binary alpha", af_fmt, af_detail)
+	# af3: heroes build the flat path (no rig, sprite visible,
+	# texture from their own pack).
 	var af_heroes: Array = []
-	for i in range(af_chars.size()):
-		gameR.slot_chars[0] = af_chars[i]
+	for i in range(Characters.CHAR_IDS.size()):
+		gameR.slot_chars[0] = Characters.CHAR_IDS[i]
 		var h: Unit = gameR._make_unit(0, r_pos + Vector2(70 * i, 0), "king")
 		af_heroes.append(h)
 	var af_built := true
-	for h in af_heroes:
-		af_built = af_built and h._rig_active and h._hero_root != null \
-				and h._hero_root.get_child_count() >= 6 \
-				and h.spr != null and not h.spr.visible \
-				and h._rig_weapon_spr != null
-	check("af3 heroes build the rig (parts + weapon), sprite carrier hidden", af_built)
-	# af4: walk pose — legs counter-rotated at a stride extreme.
+	for i in range(af_heroes.size()):
+		var h: Unit = af_heroes[i]
+		af_built = af_built and not h._rig_active and h.spr != null and h.spr.visible \
+				and String(h.spr.texture.resource_path).contains(
+						"king_%s_" % Characters.CHAR_IDS[i])
+	check("af3 heroes render flat: own pack sprite, no rig", af_built)
+	# af4: walk motion — the procedural bob lifts the sprite and
+	# the body leans into the travel direction.
 	var hw: Unit = af_heroes[0]
 	hw.state = "move"
 	hw.path = [hw.global_position + Vector2(96, 0)]
 	hw._king_phase = PI * 0.5
 	hw._king_tick(0.016)
-	var af_l := 0.0
-	var af_r := 0.0
-	if hw._rig_parts.has("leg_l") and hw._rig_parts.has("leg_r"):
-		af_l = hw._rig_parts["leg_l"].rotation
-		af_r = hw._rig_parts["leg_r"].rotation
-	check("af4 walk stride: legs swing in opposite phases",
-			af_l * af_r < 0.0 and absf(af_l) > 0.35 and absf(af_r) > 0.35,
-			"l=%s r=%s" % [af_l, af_r])
-	# af5: attack pose — the weapon arm is mid-swing near the
-	# strike keyframe and the weapon is out.
-	hw.path = []
-	hw.state = "attack"
-	hw._atk_phase = 0.43
-	hw._king_tick(0.016)
-	var af_arm := 0.0
-	if hw._rig_parts.has("arm_r"):
-		af_arm = hw._rig_parts["arm_r"].rotation
-	check("af5 attack swing poses the weapon arm",
-			absf(af_arm) > 0.15, "arm=%s" % af_arm)
-	# af6: cast pose — Ngân Kỵ's weapon arm raises overhead.
+	var af_bob: float = hw.spr.position.y - hw._king_base_pos.y
+	var af_lean: float = hw.spr.rotation
+	check("af4 walk bob + lean on the flat path",
+			af_bob < -1.0 and absf(af_lean) > 0.02,
+			"bob=%s lean=%s" % [af_bob, af_lean])
+	# af5: idle breathing — the sprite rises and falls and the
+	# squash breathes with it.
 	hw.state = "idle"
-	hw._king_cast_t = Unit.KING_CAST_TIME * 0.55 # mid-cast: apex of the raise curve
+	hw.path = []
+	hw._king_t = 0.0
 	hw._king_tick(0.016)
-	var af_cast := 0.0
-	if hw._rig_parts.has("arm_r"):
-		af_cast = hw._rig_parts["arm_r"].rotation
-	check("af6 cast pose raises the weapon arm overhead",
-			af_cast < -1.0, "arm=%s" % af_cast)
-	# af7: a SKINNED hero keeps the 13j single-sprite path.
-	gameR.slot_chars[0] = "lam_bao"
+	var af_y0: float = hw.spr.position.y
+	var af_sq0: float = hw.spr.scale.y
+	hw._king_t = PI / 2.2 * 0.5
+	hw._king_tick(0.016)
+	check("af5 idle breathing moves the sprite",
+			absf(hw.spr.position.y - af_y0) > 0.3 or absf(hw.spr.scale.y - af_sq0) > 0.001,
+			"y %s -> %s" % [af_y0, hw.spr.position.y])
+	# af6: hurt flash brightens the sprite.
+	hw.take_damage(5.0, null)
+	hw._king_tick(0.016)
+	check("af6 hurt flash fires on the hero sprite",
+			hw.spr.modulate.r > 1.05, "mod=%s" % hw.spr.modulate)
+	# af7: a SKINNED hero keeps the same flat path (dormant skin).
+	gameR.slot_chars[0] = "mage"
 	gameR.slot_skins[0] = "vo_hiep"
 	var hskin: Unit = gameR._make_unit(0, r_pos + Vector2(0, 90), "king")
-	check("af7 skinned hero: no rig, single sprite visible (13j path)",
+	check("af7 skinned hero: no rig, single sprite visible (flat path)",
 			hskin != null and not hskin._rig_active and hskin.spr != null
 			and hskin.spr.visible,
 			"rig=%s" % (hskin._rig_active if hskin != null else "null"))
 	gameR.slot_skins[0] = ""
-	# af8: back views whose weapon arm is not a separable part
-	# (kim_hoa / bach_sa ne/n/nw — the veil covers the arms in
-	# the source art) must still HOLD the weapon at the static
-	# hand anchor — never leave it at the unposed origin.
-	var hb: Unit = af_heroes[1] # kim_hoa
-	hb.state = "idle"
-	hb.path = []
-	hb._king_apply_dir("ne")
-	hb._king_tick(0.016)
-	var af8_hand: Array = HeroRig.dir_data("kim_hoa", "ne").get("weapon", {}).get("hand", [0, 0])
-	var af8_expect: Vector2 = hb._king_base_pos + Vector2(
-			float(af8_hand[0]), float(af8_hand[1])) * hb.disp_scale
-	check("af8 armless back view still holds the weapon at its hand anchor",
-			hb._rig_weapon_spr != null
-			and hb._rig_weapon_spr.position.distance_to(af8_expect) < 1.5,
-			"wpos=%s expect=%s" % [
-					hb._rig_weapon_spr.position if hb._rig_weapon_spr != null else Vector2.ZERO,
-					af8_expect])
-	# af9 (13n follow-up): the stride must READ — shins exist on
-	# the knights' visible-leg directions, the knee folds hard
-	# mid swing-through, and the front view lifts the stepping
-	# foot clear of the planted one.
-	var af9_ok := true
-	var af9_detail := ""
-	for d8 in ["s", "se", "e", "sw", "w"]:
-		var pp9: Dictionary = HeroRig.dir_data("ngan_ky", d8).get("parts", {})
-		if not pp9.has("shin_l") or not pp9.has("shin_r") \
-				or not (pp9["leg_l"] as Dictionary).has("knee"):
-			af9_ok = false
-			af9_detail = "ngan_ky/%s shin/knee" % d8
-	var hk: Unit = af_heroes[0] # ngan_ky, facing e since af4
-	hk.state = "move"
-	hk.path = []
-	hk._king_cast_t = 0.0
-	hk._king_hurt_t = 0.0
-	hk._king_phase = 0.0 # leg_r (phase 0 in e) is mid swing-through
-	hk._rig_pose(0.016, true)
-	var af9_thigh := 0.0
-	var af9_fold := 0.0
-	if hk._rig_parts.has("shin_r") and hk._rig_parts.has("leg_r"):
-		af9_thigh = hk._rig_parts["leg_r"].rotation
-		af9_fold = hk._rig_parts["shin_r"].rotation - af9_thigh
-	if not (af9_fold > 0.45 and absf(af9_thigh) < 0.2):
-		af9_ok = false
-		af9_detail = "fold=%s thigh=%s" % [af9_fold, af9_thigh]
-	hk._king_apply_dir("s")
-	hk.king_dir8 = "s" # _rig_pose reads side/swing from the facing
-	hk._king_phase = 0.0 # leg_l (phase 0 in s) is the swinging leg
-	hk._rig_pose(0.016, true)
-	if hk._rig_parts.has("shin_l") and hk._rig_parts.has("shin_r"):
-		var af9_lift: float = hk._rig_parts["shin_r"].position.y \
-				- hk._rig_parts["shin_l"].position.y
-		if af9_lift < 1.2:
-			af9_ok = false
-			af9_detail = "front lift=%s" % af9_lift
-	else:
-		af9_ok = false
-		af9_detail = "front shins missing"
-	check("af9 two-segment stride: knee fold + front foot lift",
-			af9_ok, af9_detail)
-	# af10 (13n follow-up): gown shoe tips actually travel —
-	# opposite slides at a stride extreme, and the stepping
-	# shoe lifts off the hem line.
-	var hg: Unit = af_heroes[1] # kim_hoa
-	hg.state = "move"
-	hg.path = []
-	hg._king_cast_t = 0.0
-	hg._king_apply_dir("s")
-	hg.king_dir8 = "s"
-	var pp10: Dictionary = HeroRig.dir_data("kim_hoa", "s").get("parts", {})
-	var af10_ok: bool = hg._rig_parts.has("shoe_l") and hg._rig_parts.has("shoe_r") \
-			and pp10.has("shoe_l") and pp10.has("shoe_r")
-	var af10_detail := ""
-	if af10_ok:
-		var piv_l: Array = pp10["shoe_l"].get("pivot", [0, 0])
-		var piv_r: Array = pp10["shoe_r"].get("pivot", [0, 0])
-		var rest_l := hg._king_base_pos + Vector2(float(piv_l[0]),
-				float(piv_l[1])) * hg.disp_scale
-		var rest_r := hg._king_base_pos + Vector2(float(piv_r[0]),
-				float(piv_r[1])) * hg.disp_scale
-		hg._king_phase = PI * 0.5
-		hg._rig_pose(0.016, true)
-		var slide_l: float = hg._rig_parts["shoe_l"].position.x - rest_l.x
-		var slide_r: float = hg._rig_parts["shoe_r"].position.x - rest_r.x
-		hg._king_phase = 0.0
-		hg._rig_pose(0.016, true)
-		var shoe_lift: float = rest_l.y - hg._rig_parts["shoe_l"].position.y
-		af10_ok = slide_l * slide_r < 0.0 and absf(slide_l) > 0.5 \
-				and absf(slide_r) > 0.5 and shoe_lift > 1.0
-		af10_detail = "slides %s/%s lift %s" % [slide_l, slide_r, shoe_lift]
-	check("af10 gown shoes slide opposite + lift at the step",
-			af10_ok, af10_detail)
+	# af8: 8-dir facing swaps the flat texture (back views come
+	# from the pack's weapon-free back rotations).
+	var hb: Unit = af_heroes[1]
+	hb._king_apply_dir("s")
+	var af8_s := String(hb.spr.texture.resource_path)
+	hb._king_apply_dir("n")
+	check("af8 facing swaps textures: s -> n (back rotation)",
+			af8_s.ends_with("_s.png")
+			and String(hb.spr.texture.resource_path).ends_with("_n.png"),
+			"s=%s n=%s" % [af8_s, String(hb.spr.texture.resource_path)])
 	remove_child(gameR)
 	gameR.queue_free()
 	await get_tree().process_frame
-
 	# ------------------------------------------------ (13s) action panels + GDD technologies + queue cancel + scout/surrender
 	var gameT = load("res://main.tscn").instantiate()
 	add_child(gameT)
@@ -3729,185 +3625,107 @@ func _ready() -> void:
 	gameU.queue_free()
 	await get_tree().process_frame
 
-	# ------------------------------------------------ (13v) full skill kits: Chiêu 2 + Ulti
-	# Isolated instance; heroes force-spawned per character, the
-	# zone/shot sim stepped directly (same pattern as (ad)).
+	# ------------------------------------------------ (16b) skill sim plumbing: snapshot + checksum
+	# The new skill state (shield pool + lifetime, taunt, Kiếm Vũ
+	# flurry, the arrow-rain zone) must ride the resync snapshot
+	# and the lockstep checksum exactly like the old kits' state
+	# did. Isolated instance with the MP scaffolding the snapshot
+	# path reads (the tr13 pattern).
 	var gameV = load("res://main.tscn").instantiate()
 	add_child(gameV)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	gameV.enemy_ai.waves_enabled = false
+	gameV.mp_mode = true
+	gameV.slot_teams = [0, 1]
+	gameV.slot_names = ["A", "B"]
+	gameV.slot_eliminated = [false, false]
+	gameV.mp_wallets = [
+		{"food": 500, "wood": 500, "gold": 300, "stone": 0, "iron": 0},
+		{"food": 500, "wood": 500, "gold": 300, "stone": 0, "iron": 0}]
+	gameV.mp_ages = [
+		{"age": 4, "researching": false, "timer": 0.0, "target": 1, "duration": 0.0},
+		{"age": 4, "researching": false, "timer": 0.0, "target": 1, "duration": 0.0}]
+	gameV.mp_techs = [{"levels": {}, "active": {}}, {"levels": {}, "active": {}}]
+	gameV.mp_rally = [Vector2.ZERO, Vector2.ZERO]
+	gameV.slot_tc_down = [false, false]
+	gameV.slot_inert = [false, false]
+	gameV.slot_chars = ["knight", "mage"]
+	gameV.slot_skins = ["", ""]
+	gameV.team_age = {0: 4, 1: 4}
+	gameV.paused = true
 	var v_anchor: Vector2i = gameV.world.nearest_walkable(gameV.player_tc.origin_cell + Vector2i(6, 6))
 	var v_pos: Vector2 = gameV.world.cell_center(v_anchor)
-	# --- Ngân Kỵ 2: Kiếm Khí wave travels the facing line.
-	gameV.slot_chars[0] = "ngan_ky"
+	# --- v1: shield + taunt survive a snapshot round-trip.
 	var hv1: Unit = gameV._make_unit(0, v_pos, "king")
-	hv1.facing = "right"
-	var w_in: Unit = gameV._make_unit(1, v_pos + Vector2(100, 0), "militia")
-	w_in.max_hp = 1000.0
-	w_in.hp = 1000.0
-	var w_out: Unit = gameV._make_unit(1, v_pos + Vector2(100, 90), "militia")
-	w_out.max_hp = 1000.0
-	w_out.hp = 1000.0
-	var wok: bool = gameV.cast_hero_skill2(hv1, hv1.global_position)
-	for i in range(6):
-		gameV._update_skill_shots(0.1)
-	check("v1 Kiếm Khí: wave hits enemies on the facing line only, CD 30s, recast refused",
-			wok and absf(w_in.hp - 955.0) < 0.01 and absf(w_out.hp - 1000.0) < 0.01
-			and absf(hv1.skill2_cd_t - 30.0) < 0.5
-			and not gameV.cast_hero_skill2(hv1, hv1.global_position),
-			"in=%s out=%s cd=%s" % [w_in.hp, w_out.hp, hv1.skill2_cd_t])
-	# --- Ngân Kỵ 3: Vương Kiếm plunge — units + buildings + stun.
-	# The building is anchored so its CENTRE is the cast point;
-	# the foe stands just off the footprint, inside the radius.
-	var vk_p: Vector2 = v_pos + Vector2(150, 10)
-	var vk_sz: Vector2i = gameV.get_build_def("barracks").size
-	var vk_cell: Vector2i = gameV.world.world_to_cell(vk_p) - vk_sz / 2
-	var vk_bld: Building = gameV._spawn_building("barracks", 1, vk_cell, true)
-	var vk_bhp := vk_bld.hp
-	var vk_tgt: Vector2 = vk_bld.position + Vector2(vk_bld.size) * World.TILE * 0.5
-	var vk_foe: Unit = gameV._make_unit(1, vk_tgt + Vector2(58, 0), "militia")
-	vk_foe.max_hp = 1000.0
-	vk_foe.hp = 1000.0
-	check("v2 Vương Kiếm: 120 dmg + 1s stun on units, 250 on buildings, CD 120s",
-			gameV.cast_hero_skill3(hv1, vk_tgt)
-			and absf(vk_foe.hp - 880.0) < 0.01 and vk_foe.stun_t > 0.9
-			and vk_foe.control_locked()
-			and absf(vk_bld.hp - (vk_bhp - 250.0)) < 0.01
-			and absf(hv1.skill3_cd_t - 120.0) < 0.5,
-			"foe=%s stun=%s bld=%s/%s" % [vk_foe.hp, vk_foe.stun_t, vk_bld.hp, vk_bhp])
-	gameV.units.erase(hv1)
-	hv1.queue_free()
-	gameV.skill_shots.clear()
-	# --- Lam Bào 2: Thương Băng freezes the FIRST enemy on the path.
-	gameV.slot_chars[0] = "lam_bao"
-	var hv2: Unit = gameV._make_unit(0, v_pos + Vector2(0, -260), "king")
-	hv2.facing = "right"
-	var sp_a: Unit = gameV._make_unit(1, hv2.global_position + Vector2(70, 0), "militia")
-	sp_a.max_hp = 1000.0
-	sp_a.hp = 1000.0
-	var sp_b: Unit = gameV._make_unit(1, hv2.global_position + Vector2(135, 0), "militia")
-	sp_b.max_hp = 1000.0
-	sp_b.hp = 1000.0
-	var sok: bool = gameV.cast_hero_skill2(hv2, hv2.global_position)
-	for i in range(6):
-		gameV._update_skill_shots(0.1)
-	check("v3 Thương Băng: both pierced take 35, only the first freezes 1.5s, CD 35s",
-			sok and absf(sp_a.hp - 965.0) < 0.01 and absf(sp_b.hp - 965.0) < 0.01
-			and sp_a.frozen_t > 1.0 and sp_b.frozen_t <= 0.0
-			and sp_a.control_locked() and absf(hv2.skill2_cd_t - 35.0) < 0.5,
-			"a=%s frz=%s b=%s frz=%s" % [sp_a.hp, sp_a.frozen_t, sp_b.hp, sp_b.frozen_t])
-	sp_a._tick_effects(1.6)
-	check("v4 freeze expires: control lock releases",
-			sp_a.frozen_t <= 0.0 and not sp_a.control_locked(), "frz=%s" % sp_a.frozen_t)
-	# --- Lam Bào 3: Băng Hà chills + DoTs units, freezes buildings.
-	# Building centre = the cast point; foe just off the footprint.
-	var bh_p: Vector2 = hv2.global_position + Vector2(140, 0)
-	var bh_sz: Vector2i = gameV.get_build_def("barracks").size
-	var bh_cell: Vector2i = gameV.world.world_to_cell(bh_p) - bh_sz / 2
-	var bh_bld: Building = gameV._spawn_building("barracks", 1, bh_cell, true)
-	var bh_tgt: Vector2 = bh_bld.position + Vector2(bh_bld.size) * World.TILE * 0.5
-	var bh_foe: Unit = gameV._make_unit(1, bh_tgt + Vector2(55, 0), "militia")
-	bh_foe.max_hp = 1000.0
-	bh_foe.hp = 1000.0
-	var bhok: bool = gameV.cast_hero_skill3(hv2, bh_tgt)
-	bh_bld.train_types = ["militia"]
-	bh_bld.train_queue = 1
-	bh_bld.train_timer = 5.0
-	gameV._update_skill_zones(0.5)
-	bh_bld._process(1.0)
-	check("v5 Băng Hà: enemy chilled x0.45 + DoT, building training frozen, CD 130s",
-			bhok and bh_foe.chill_t > 0.0 and absf(bh_foe.hp - 995.0) < 0.01
-			and absf(bh_foe.eff_speed_mult() - 0.45) < 0.01
-			and gameV.building_frozen(bh_bld) and absf(bh_bld.train_timer - 5.0) < 0.01
-			and absf(hv2.skill3_cd_t - 130.0) < 0.5,
-			"foe=%s chill=%s spd=%s timer=%s" % [bh_foe.hp, bh_foe.chill_t,
-					bh_foe.eff_speed_mult(), bh_bld.train_timer])
-	gameV.units.erase(hv2)
-	hv2.queue_free()
+	var vf1: Unit = gameV._make_unit(1, v_pos + Vector2(60, 0), "militia")
+	gameV.cast_hero_skill(hv1)
+	var v_hash0: int = gameV._mp_state_hash()
+	var snap1: Dictionary = gameV._mp_snapshot_state()
+	hv1.shield_hp = 0.0
+	hv1.shield_t = 0.0
+	hv1.skill_cd_t = 0.0
+	vf1.taunt_t = 0.0
+	vf1.taunt_id = -1
+	gameV._mp_apply_snapshot(0, snap1)
+	Engine.time_scale = 20.0 # the snapshot path parks the clock
+	var rv1: Unit = gameV.unit_of_net_id(hv1.net_id)
+	var rvf1: Unit = gameV.unit_of_net_id(vf1.net_id)
+	check("v1 snapshot restores shield pool, taunt and cooldown; hash identical",
+			rv1 != null and absf(rv1.shield_hp - 250.0) < 0.01
+			and rv1.shield_t > 5.5 and absf(rv1.skill_cd_t - 75.0) < 0.5
+			and rvf1 != null and rvf1.taunt_id == hv1.net_id and rvf1.taunt_t > 3.5
+			and gameV._mp_state_hash() == v_hash0,
+			"shield=%s taunt=%s hash %d vs %d" % [
+					rv1.shield_hp if rv1 != null else -1.0,
+					rvf1.taunt_t if rvf1 != null else -1.0,
+					gameV._mp_state_hash(), v_hash0])
+	# --- v2: the arrow-rain zone round-trips and keeps raining.
+	gameV.slot_chars[0] = "archer"
+	var hv2: Unit = gameV._make_unit(0, v_pos + Vector2(0, 200), "king")
+	var vf2: Unit = gameV._make_unit(1, hv2.global_position + Vector2(100, 0), "militia")
+	vf2.max_hp = 1000.0
+	vf2.hp = 1000.0
+	gameV.cast_hero_skill(hv2, vf2.global_position)
+	var snap2: Dictionary = gameV._mp_snapshot_state()
 	gameV.skill_zones.clear()
-	gameV.skill_shots.clear()
-	# --- Kim Hoa 2: Hoa Vũ heals over time + cleanses slows.
-	gameV.slot_chars[0] = "kim_hoa"
-	var hv3: Unit = gameV._make_unit(0, v_pos + Vector2(0, -520), "king")
-	var hr_ally: Unit = gameV._make_unit(0, hv3.global_position + Vector2(150, 0), "militia")
-	hr_ally.max_hp = 1000.0
-	hr_ally.hp = 500.0
-	hr_ally.eff_spd_mult = 0.4
-	hr_ally.eff_spd_t = 3.0
-	var hrok: bool = gameV.cast_hero_skill2(hv3, hr_ally.global_position)
+	gameV._mp_apply_snapshot(0, snap2)
+	Engine.time_scale = 20.0
+	var rvf2: Unit = gameV.unit_of_net_id(vf2.net_id)
 	gameV._update_skill_zones(0.5)
-	check("v6 Hoa Vũ: sub-tick HoT +6 and slow cleansed, zone lives, CD 40s",
-			hrok and absf(hr_ally.hp - 506.0) < 0.01 and hr_ally.eff_spd_t <= 0.0
-			and gameV.skill_zones.size() == 1 and absf(hv3.skill2_cd_t - 40.0) < 0.5,
-			"hp=%s spd_t=%s zones=%d" % [hr_ally.hp, hr_ally.eff_spd_t, gameV.skill_zones.size()])
-	gameV._update_skill_zones(6.0)
-	check("v7 Hoa Vũ zone expires after its duration",
-			gameV.skill_zones.is_empty(), "zones=%d" % gameV.skill_zones.size())
-	# --- Kim Hoa 3: Vạn Hoa — +200 heal in 4 tiles + 3s immunity.
-	hr_ally.global_position = hv3.global_position + Vector2(100, 0)
-	hr_ally.hp = 300.0
-	hv3.hp = 400.0
-	var vhok: bool = gameV.cast_hero_skill3(hv3, hv3.global_position)
-	hr_ally.take_damage(50.0, null)
-	check("v8 Vạn Hoa: +200 heal, immunity swallows the next hit, CD 150s",
-			vhok and absf(hr_ally.hp - 500.0) < 0.01 and absf(hv3.hp - 600.0) < 0.01
-			and hr_ally.immune_t > 2.5 and absf(hv3.skill3_cd_t - 150.0) < 0.5,
-			"ally=%s hero=%s imm=%s" % [hr_ally.hp, hv3.hp, hr_ally.immune_t])
-	gameV.units.erase(hv3)
-	hv3.queue_free()
-	# --- Bạch Sa 2: Phán Xét damages + cuts attack 30% for 5s.
-	gameV.slot_chars[0] = "bach_sa"
-	var hv4: Unit = gameV._make_unit(0, v_pos + Vector2(0, -780), "king")
-	var pj_foe: Unit = gameV._make_unit(1, hv4.global_position + Vector2(120, 0), "militia")
-	pj_foe.max_hp = 1000.0
-	pj_foe.hp = 1000.0
-	check("v9 Phán Xét: 55 dmg + attack x0.70 for 5s, CD 40s",
-			gameV.cast_hero_skill2(hv4, pj_foe.global_position)
-			and absf(pj_foe.hp - 945.0) < 0.01
-			and absf(pj_foe.atk_down_mult - 0.70) < 0.01 and pj_foe.atk_down_t > 4.5
-			and absf(hv4.skill2_cd_t - 40.0) < 0.5,
-			"foe=%s mult=%s t=%s" % [pj_foe.hp, pj_foe.atk_down_mult, pj_foe.atk_down_t])
-	# --- Bạch Sa 3: Thiên Màn dome shields allies, buildings immune.
-	# Building centre = the cast point; the ally stands inside the
-	# dome but OUTSIDE the hero's aura (so the absorb math is the
-	# shield's alone, not aura-discounted).
-	var dm_p: Vector2 = hv4.global_position + Vector2(110, 0)
-	var dm_sz: Vector2i = gameV.get_build_def("barracks").size
-	var dm_cell: Vector2i = gameV.world.world_to_cell(dm_p) - dm_sz / 2
-	var dm_bld: Building = gameV._spawn_building("barracks", 0, dm_cell, true)
-	var dm_bhp := dm_bld.hp
-	var dm_c: Vector2 = dm_bld.position + Vector2(dm_bld.size) * World.TILE * 0.5
-	var dm_ally: Unit = gameV._make_unit(0, dm_c + Vector2(30, 20), "militia")
-	dm_ally.max_hp = 1000.0
-	dm_ally.hp = 800.0
-	var dmok: bool = gameV.cast_hero_skill3(hv4, dm_c)
-	gameV._update_skill_zones(0.5)
-	dm_ally.take_damage(50.0, null)
-	dm_bld.take_damage(80.0, null)
-	check("v10 Thiên Màn: shield 120 absorbs, building takes 0 damage, CD 150s",
-			dmok and absf(dm_ally.hp - 800.0) < 0.01 and absf(dm_ally.shield_hp - 70.0) < 0.01
-			and absf(dm_bld.hp - dm_bhp) < 0.01 and gameV.building_dome_protected(dm_bld)
-			and absf(hv4.skill3_cd_t - 150.0) < 0.5,
-			"ally=%s sh=%s bld=%s/%s" % [dm_ally.hp, dm_ally.shield_hp, dm_bld.hp, dm_bhp])
-	# --- MP command shape: extended validator routes s=2/3, and
-	# rejects a cast claimed for another slot's hero.
-	hv4.skill2_cd_t = 0.0
-	check("v11 MP skill cmd: s=2 applies for the owner, foreign claim refused",
-			gameV._mp_apply_skill_cmd(0, {"u": hv4.net_id, "s": 2,
-					"x": pj_foe.global_position.x, "y": pj_foe.global_position.y})
-			and hv4.skill2_cd_t > 39.0
-			and not gameV._mp_apply_skill_cmd(1, {"u": hv4.net_id, "s": 2}),
-			"cd2=%s" % hv4.skill2_cd_t)
-	check("v12 targeting matrix: wave + Vạn Hoa instant, the rest ground-targeted",
-			not gameV.skill_is_targeted("ngan_ky", 2) and gameV.skill_is_targeted("ngan_ky", 3)
-			and gameV.skill_is_targeted("kim_hoa", 2) and not gameV.skill_is_targeted("kim_hoa", 3)
-			and gameV.skill_is_targeted("lam_bao", 3) and gameV.skill_is_targeted("bach_sa", 2),
-			"")
+	check("v2 snapshot restores the arrow rain; the first wave lands after resync",
+			gameV.skill_zones.size() == 1 and rvf2 != null
+			and absf(rvf2.hp - 960.0) < 0.01,
+			"zones=%d foe=%s" % [gameV.skill_zones.size(),
+					rvf2.hp if rvf2 != null else -1.0])
+	gameV.skill_zones.clear()
+	# --- v3: the Kiếm Vũ flurry is checksum state.
+	gameV.slot_chars[0] = "ranger"
+	var hv3: Unit = gameV._make_unit(0, v_pos + Vector2(0, 400), "king")
+	var vf3: Unit = gameV._make_unit(1, hv3.global_position + Vector2(40, 0), "militia")
+	vf3.max_hp = 1000.0
+	vf3.hp = 1000.0
+	var v_hash_pre: int = gameV._mp_state_hash()
+	gameV.cast_hero_skill(hv3)
+	var v_hash_cast: int = gameV._mp_state_hash()
+	for i in range(5):
+		gameV._update_hero_flurries(0.21)
+	check("v3 flurry state moves the checksum; 5 slashes land on the lone foe",
+			v_hash_cast != v_hash_pre and absf(vf3.hp - 840.0) < 0.01
+			and hv3.flurry_left == 0,
+			"foe=%s left=%s" % [vf3.hp, hv3.flurry_left])
+	# --- v4: MP command shape — exactly one skill exists now.
+	gameV.slot_chars[0] = "knight"
+	var hv4: Unit = gameV._make_unit(0, v_pos + Vector2(0, 600), "king")
+	check("v4 MP skill cmd: s=2 refused, foreign slot refused, s=1 applies",
+			not gameV._mp_apply_skill_cmd(0, {"u": hv4.net_id, "s": 2})
+			and not gameV._mp_apply_skill_cmd(1, {"u": hv4.net_id, "s": 1})
+			and gameV._mp_apply_skill_cmd(0, {"u": hv4.net_id, "s": 1})
+			and absf(hv4.skill_cd_t - 75.0) < 0.5,
+			"cd=%s" % hv4.skill_cd_t)
 	remove_child(gameV)
 	gameV.queue_free()
 	await get_tree().process_frame
-
 	# ------------------------------------------------ (13y) match counters, APM, sampling, result screen
 	# Isolated SP instance; counters are presentation-layer, so
 	# the checks drive the same hooks real play uses (train
@@ -4088,7 +3906,7 @@ func _ready() -> void:
 		return s
 	gameW.slot_teams = [0, 1]
 	gameW.slot_names = ["An", "Bình"]
-	gameW.slot_chars = ["ngan_ky", "kim_hoa"]
+	gameW.slot_chars = ["knight", "archer"]
 	gameW.slot_eliminated = [false, false]
 	gameW.slot_inert = [false, false]
 	gameW.hud._refresh_players()
@@ -4097,7 +3915,7 @@ func _ready() -> void:
 			vy1.contains("Đấu với nhau") and not vy1.contains("Đội"), vy1)
 	gameW.slot_teams = [0, 0, 1, 1]
 	gameW.slot_names = ["An", "Bình", "Chi", "Dũng"]
-	gameW.slot_chars = ["ngan_ky", "kim_hoa", "lam_bao", "bach_sa"]
+	gameW.slot_chars = ["knight", "archer", "mage", "paladin"]
 	gameW.slot_eliminated = [false, false, false, false]
 	gameW.slot_inert = [false, false, false, false]
 	gameW.hud._refresh_players()
@@ -4106,7 +3924,7 @@ func _ready() -> void:
 			vy2.contains("2 đội") and vy2.contains("Đội 1"), vy2)
 	gameW.slot_teams = [0, 1, 2]
 	gameW.slot_names = ["An", "Bình", "Chi"]
-	gameW.slot_chars = ["ngan_ky", "kim_hoa", "lam_bao"]
+	gameW.slot_chars = ["knight", "archer", "mage"]
 	gameW.slot_eliminated = [false, false, false]
 	gameW.slot_inert = [false, false, false]
 	gameW.hud._refresh_players()
@@ -4324,7 +4142,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 
 	# ------------------------------------------------ (14c) new heroes: kits, wall, cyclone
-	await _section_heroes14c()
+	await _section_heroes16b()
 
 	# ------------------------------------------------ (15b) diplomacy
 	await _section_diplomacy15b()
@@ -4533,7 +4351,7 @@ func _section_spectator15e() -> void:
 			gs.hud._identity_chip.visible and gs.hud._age_badge.visible
 			and gs.hud._age_name_label.visible
 			and gs.hud._pop_chip.visible and gs.hud._timer_box.visible)
-	var res_vis := gs.hud._res_chip_panels.size() == 5
+	var res_vis: bool = gs.hud._res_chip_panels.size() == 5
 	for p in gs.hud._res_chip_panels:
 		if not (p as Control).visible:
 			res_vis = false
@@ -4831,7 +4649,7 @@ func _section_transport15g() -> void:
 	g1.mp_rally = [Vector2.ZERO, Vector2.ZERO]
 	g1.slot_tc_down = [false, false]
 	g1.slot_inert = [false, false]
-	g1.slot_chars = ["ngan_ky", "kim_hoa"]
+	g1.slot_chars = ["knight", "archer"]
 	g1.slot_skins = ["", ""]
 	g1.team_age = {0: 2, 1: 2}
 	g1.mp_config = {"diplomacy": true}
@@ -4896,7 +4714,7 @@ func _section_transport15g() -> void:
 	g2.mp_rally = [Vector2.ZERO, Vector2.ZERO]
 	g2.slot_tc_down = [false, false]
 	g2.slot_inert = [false, false]
-	g2.slot_chars = ["ngan_ky", "kim_hoa"]
+	g2.slot_chars = ["knight", "archer"]
 	g2.slot_skins = ["", ""]
 	g2.team_age = {0: 2, 1: 2}
 	g2.mp_config = {"diplomacy": true}

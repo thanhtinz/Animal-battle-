@@ -113,8 +113,9 @@ type Account struct {
 	// claim (13i); "" = never claimed.
 	DailyBonusDay string `json:"daily_bonus_day,omitempty"`
 	// AvatarID is the account's profile-avatar pick (13j final
-	// model): one of the four main characters' portraits, chosen
-	// freely and DECOUPLED from the per-match character draw.
+	// model): one of the eight main characters' portraits (16b
+	// roster), chosen freely and DECOUPLED from the per-match
+	// character draw.
 	// "" (older accounts) means the default portrait.
 	AvatarID string `json:"avatar_id,omitempty"`
 	// DisplayName is the player's public in-game name (13r),
@@ -136,6 +137,13 @@ type Account struct {
 	// ranked results (stage 13g home lobby "Lịch Sử"), oldest
 	// first, capped at MatchHistoryCap entries.
 	MatchHistory []MatchRecord `json:"match_history,omitempty"`
+	// TournamentHistory is the account's tournament podium
+	// record (15h), oldest first, capped like MatchHistory.
+	// Written exactly once per tournament per account.
+	TournamentHistory []TournFinish `json:"tournament_history,omitempty"`
+	// Titles are earned account titles (15h): a tournament
+	// champion gains TitleChampion. Deduplicated on write.
+	Titles []string `json:"titles,omitempty"`
 	// Friends is the account's friend list (usernames, add order).
 	Friends []string `json:"friends,omitempty"`
 	// CloseFriends is the subset of Friends this account has
@@ -211,6 +219,19 @@ type MatchRecord struct {
 	Placement int `json:"placement,omitempty"`
 }
 
+// TournFinish is one tournament podium finish recorded on an
+// account (15h) — the tournament reward record. Place is
+// "champion" | "runner_up".
+type TournFinish struct {
+	TournamentID string `json:"tournament_id"`
+	Tournament   string `json:"tournament"` // tournament name at finish time
+	Place        string `json:"place"`      // "champion" | "runner_up"
+	At           int64  `json:"at"`
+}
+
+// TitleChampion is the account title a tournament champion earns.
+const TitleChampion = "Vô địch giải đấu"
+
 // MatchHistoryCap is how many ranked results each account keeps.
 const MatchHistoryCap = 20
 
@@ -281,24 +302,34 @@ type Profile struct {
 	// one ("" = none).
 	OwnedSkins []string `json:"owned_skins"`
 	ActiveSkin string   `json:"active_skin"`
+	// Titles are the account's earned titles (15h); the
+	// profile page's "Danh hiệu" row shows the first one.
+	Titles []string `json:"titles,omitempty"`
+	// TournHistory is the account's tournament podium record
+	// (15h), oldest first.
+	TournHistory []TournFinish `json:"tourn_history,omitempty"`
 }
 
 // Character + cosmetic-skin registry ids (mirror of the client's
 // Characters registry). Presentation data only — the sim and the
 // referee never read them; a hero's KIT comes from its drawn
 // character, never from a skin.
-const CharDefault = "ngan_ky"
+//
+// 16b roster: the eight mains are knight, berserker, archer,
+// mage, paladin, dragoon, assassin and ranger (replacing the
+// pre-16b roster); knight is the default.
+const CharDefault = "knight"
 
 var mainCharIDs = map[string]bool{
-	"ngan_ky": true, "kim_hoa": true, "lam_bao": true, "bach_sa": true,
-	// 14c: the four Temple Masters join the roster.
-	"loi_chan": true, "xich_diem": true, "phong_linh": true, "thach_son": true,
+	"knight": true, "berserker": true, "archer": true, "mage": true,
+	"paladin": true, "dragoon": true, "assassin": true, "ranger": true,
 }
 
 // MainChars is the character DRAW POOL: every player owns the
-// eight mains; the draw at match start picks among these only.
-var MainChars = []string{"ngan_ky", "kim_hoa", "lam_bao", "bach_sa",
-	"loi_chan", "xich_diem", "phong_linh", "thach_son"}
+// eight mains (16b roster, in draw-pool order); the draw at
+// match start picks among these only.
+var MainChars = []string{"knight", "berserker", "archer", "mage",
+	"paladin", "dragoon", "assassin", "ranger"}
 
 var premiumSkinIDs = map[string]bool{
 	"vo_hiep": true, "bach_y": true, "tu_y": true,
@@ -425,7 +456,8 @@ func (a *Account) profile() Profile {
 		UnreadMail: unread, AvatarID: EffectiveAvatar(a), DisplayName: a.DisplayName,
 		OwnedSkins: owned, ActiveSkin: EffectiveActiveSkin(a),
 		ID: a.ID, Level: level, XP: xp, XPInto: into, XPForNext: forNext,
-		Credit: EffectiveCredit(a), SeasonStars: a.SeasonStars}
+		Credit: EffectiveCredit(a), SeasonStars: a.SeasonStars,
+		Titles: a.Titles, TournHistory: a.TournamentHistory}
 	if n := len(a.History); n > 0 {
 		last := a.History[n-1]
 		final := RankState{Tier: last.FinalTier, Division: last.FinalDivision,
@@ -484,12 +516,18 @@ type Store interface {
 	// Meta holds small server-level values (the season epoch).
 	GetMeta(key string) (string, bool)
 	PutMeta(key, value string) error
+	// Tournaments are the 15h tournament states, keyed by id.
+	GetTournament(id string) (*Tournament, bool)
+	PutTournament(t *Tournament) error
+	DeleteTournament(id string) error
+	Tournaments() []*Tournament
 }
 
 type storeData struct {
-	Accounts map[string]*Account  `json:"accounts"`
-	Tokens   map[string]*tokenRec `json:"tokens"`
-	Meta     map[string]string    `json:"meta,omitempty"`
+	Accounts    map[string]*Account    `json:"accounts"`
+	Tokens      map[string]*tokenRec   `json:"tokens"`
+	Meta        map[string]string      `json:"meta,omitempty"`
+	Tournaments map[string]*Tournament `json:"tournaments,omitempty"`
 }
 
 type FileStore struct {
@@ -506,6 +544,7 @@ func NewFileStore(path string) (*FileStore, error) {
 	fs.data.Accounts = make(map[string]*Account)
 	fs.data.Tokens = make(map[string]*tokenRec)
 	fs.data.Meta = make(map[string]string)
+	fs.data.Tournaments = make(map[string]*Tournament)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -525,6 +564,9 @@ func NewFileStore(path string) (*FileStore, error) {
 		}
 		if fs.data.Meta == nil {
 			fs.data.Meta = make(map[string]string)
+		}
+		if fs.data.Tournaments == nil {
+			fs.data.Tournaments = make(map[string]*Tournament)
 		}
 	}
 	return fs, nil
@@ -611,6 +653,43 @@ func (fs *FileStore) PutMeta(key, value string) error {
 	defer fs.mu.Unlock()
 	fs.data.Meta[key] = value
 	return fs.flushLocked()
+}
+
+func (fs *FileStore) GetTournament(id string) (*Tournament, bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	t, ok := fs.data.Tournaments[id]
+	if !ok {
+		return nil, false
+	}
+	return copyTournament(t), true
+}
+
+func (fs *FileStore) PutTournament(t *Tournament) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.data.Tournaments == nil {
+		fs.data.Tournaments = make(map[string]*Tournament)
+	}
+	fs.data.Tournaments[t.ID] = copyTournament(t)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) DeleteTournament(id string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	delete(fs.data.Tournaments, id)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) Tournaments() []*Tournament {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	out := make([]*Tournament, 0, len(fs.data.Tournaments))
+	for _, t := range fs.data.Tournaments {
+		out = append(out, copyTournament(t))
+	}
+	return out
 }
 
 // ------------------------------------------------------------- service
@@ -993,8 +1072,8 @@ func (ac *Accounts) MarkOffline(user string) {
 }
 
 // SetAvatar stores the account's profile-avatar pick (13j).
-// Only the four mains have portraits — anything else (including
-// cosmetic-skin ids) is rejected.
+// Only the eight mains (16b roster) have portraits — anything
+// else (including cosmetic-skin ids) is rejected.
 func (ac *Accounts) SetAvatar(user, id string) (Profile, error) {
 	if !mainCharIDs[id] {
 		return Profile{}, ErrBadAvatar
@@ -1208,6 +1287,80 @@ func (ac *Accounts) RecordMatch(user string, won bool) error {
 		a.Losses++
 	}
 	a.LastPlayed = ac.now().Unix()
+	return ac.store.PutAccount(a)
+}
+
+// RecordMatchRevert is the exact inverse of RecordMatch (15h):
+// a tournament match whose result was banked and is later
+// voided by a dispute resolution ("đấu lại") unbanks here, so
+// W/L and the XP derived from them return to pre-match values.
+// Counters never go negative.
+func (ac *Accounts) RecordMatchRevert(user string, won bool) error {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	a, ok := ac.store.GetAccount(user)
+	if !ok {
+		return nil
+	}
+	if a.Matches > 0 {
+		a.Matches--
+	}
+	if won {
+		if a.Wins > 0 {
+			a.Wins--
+		}
+	} else {
+		if a.Losses > 0 {
+			a.Losses--
+		}
+	}
+	return ac.store.PutAccount(a)
+}
+
+// RecordTournamentFinish banks one tournament podium finish
+// (15h rewards): a TournamentHistory entry, the champion
+// title (deduplicated) and a congratulatory letter. It is
+// idempotent per (tournament id, user): a repeat call for the
+// same tournament is a no-op, which is what makes the
+// tournament finish path safe to run behind the tournament's
+// own RewardsDone flag.
+func (ac *Accounts) RecordTournamentFinish(user, tournID, tournName, place string) error {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	a, ok := ac.store.GetAccount(user)
+	if !ok {
+		return nil // account vanished; nothing to bank
+	}
+	for _, f := range a.TournamentHistory {
+		if f.TournamentID == tournID {
+			return nil // already recorded — exactly once
+		}
+	}
+	a.TournamentHistory = append(a.TournamentHistory, TournFinish{
+		TournamentID: tournID, Tournament: tournName, Place: place,
+		At: ac.now().Unix(),
+	})
+	if len(a.TournamentHistory) > MatchHistoryCap {
+		a.TournamentHistory = a.TournamentHistory[len(a.TournamentHistory)-MatchHistoryCap:]
+	}
+	if place == "champion" {
+		has := false
+		for _, t := range a.Titles {
+			if t == TitleChampion {
+				has = true
+			}
+		}
+		if !has {
+			a.Titles = append(a.Titles, TitleChampion)
+		}
+		a.appendLetter("Vô địch giải đấu!",
+			fmt.Sprintf("Chúc mừng! Bạn đã vô địch giải \"%s\" và nhận danh hiệu \"%s\".", tournName, TitleChampion),
+			ac.now().Unix())
+	} else {
+		a.appendLetter("Á quân giải đấu",
+			fmt.Sprintf("Bạn đã giành ngôi á quân tại giải \"%s\". Hẹn gặp lại ở giải sau!", tournName),
+			ac.now().Unix())
+	}
 	return ac.store.PutAccount(a)
 }
 
