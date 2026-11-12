@@ -198,6 +198,27 @@ func _sb(bg: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> StyleB
 	return s
 
 
+## 17c: button stylebox with EXPLICIT content margins. A
+## code-created StyleBoxFlat leaves its content margins unset
+## (-1) and Godot then falls back to the BORDER width as the
+## margin — so the dark buttons (1px border) laid their text
+## out in a box 2px smaller per axis than the gold ones (0px
+## border): the active tab's padding genuinely differed from
+## the inactive tabs' (measured on the 17b captures, probe in
+## tests/probe_tabgeom2.gd). Explicit margins make every state
+## geometrically identical. The vertical pair is 0/2 instead
+## of 1/1 — same total, centre 1px higher: the tab font's line
+## box centres the ink ~1px BELOW the pill centre (measured
+## ink centroid dy +0.7..+1.2px), so the ink now lands centred.
+func _btn_sb(bg: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> StyleBoxFlat:
+	var s := _sb(bg, radius, border, bw)
+	s.content_margin_left = 1
+	s.content_margin_right = 1
+	s.content_margin_top = 0
+	s.content_margin_bottom = 2
+	return s
+
+
 func _card(pad: int = 12, bw: int = 1) -> PanelContainer:
 	var p := PanelContainer.new()
 	var s := _sb(CARD_BG, 12, PANEL_LINE, bw)
@@ -253,24 +274,24 @@ func _button(text: String, primary := false, danger := false, min_w := 0) -> But
 	b.custom_minimum_size = Vector2(min_w, 38)
 	b.add_theme_font_size_override("font_size", 14)
 	if primary:
-		b.add_theme_stylebox_override("normal", _sb(Color(0.98, 0.8, 0.35), 8))
-		b.add_theme_stylebox_override("hover", _sb(Color(1.0, 0.86, 0.45), 8))
-		b.add_theme_stylebox_override("pressed", _sb(Color(0.88, 0.7, 0.28), 8))
+		b.add_theme_stylebox_override("normal", _btn_sb(Color(0.98, 0.8, 0.35), 8))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(1.0, 0.86, 0.45), 8))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.88, 0.7, 0.28), 8))
 		b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
 		b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
 	elif danger:
-		b.add_theme_stylebox_override("normal", _sb(BTN_BG, 8, Color(0.98, 0.5, 0.45, 0.55), 1))
-		b.add_theme_stylebox_override("hover", _sb(Color(0.2, 0.2, 0.3), 8, Color(0.98, 0.5, 0.45, 0.8), 1))
-		b.add_theme_stylebox_override("pressed", _sb(Color(0.1, 0.12, 0.2), 8, Color(0.98, 0.5, 0.45), 1))
+		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(0.98, 0.5, 0.45, 0.55), 1))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.2, 0.2, 0.3), 8, Color(0.98, 0.5, 0.45, 0.8), 1))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.1, 0.12, 0.2), 8, Color(0.98, 0.5, 0.45), 1))
 		b.add_theme_color_override("font_color", RED)
 		b.add_theme_color_override("font_hover_color", RED)
 	else:
-		b.add_theme_stylebox_override("normal", _sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
-		b.add_theme_stylebox_override("hover", _sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
-		b.add_theme_stylebox_override("pressed", _sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
+		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
 		b.add_theme_color_override("font_color", PAPER)
 		b.add_theme_color_override("font_hover_color", PAPER)
-	b.add_theme_stylebox_override("disabled", _sb(Color(1, 1, 1, 0.03), 8, Color(1, 1, 1, 0.10), 1))
+	b.add_theme_stylebox_override("disabled", _btn_sb(Color(1, 1, 1, 0.03), 8, Color(1, 1, 1, 0.10), 1))
 	b.add_theme_color_override("font_disabled_color", DIM)
 	return b
 
@@ -305,8 +326,12 @@ func _pill(text: String, fill: Color, txt_col: Color) -> PanelContainer:
 	var s := _sb(fill, 7)
 	s.content_margin_left = 8
 	s.content_margin_right = 8
-	s.content_margin_top = 2
-	s.content_margin_bottom = 2
+	# 17c: vertical pair 0.5/3.5 instead of 2/2 — same total
+	# height, content centre 1.5px higher: at this font size
+	# the label ink measured ~1.5px low in the pill (17b
+	# captures), it now lands centred.
+	s.content_margin_top = 0.5
+	s.content_margin_bottom = 3.5
 	p.add_theme_stylebox_override("panel", s)
 	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var l := _label(text, 12, txt_col)
@@ -346,9 +371,9 @@ func _option(items: Array, selected: int) -> OptionButton:
 	o.custom_minimum_size = Vector2(0, 38)
 	o.add_theme_font_size_override("font_size", 14)
 	o.add_theme_color_override("font_color", PAPER)
-	o.add_theme_stylebox_override("normal", _sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
-	o.add_theme_stylebox_override("hover", _sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
-	o.add_theme_stylebox_override("pressed", _sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	o.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	o.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
+	o.add_theme_stylebox_override("pressed", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
 	return o
 
 
@@ -597,11 +622,23 @@ func _build_joined() -> void:
 
 func _tab_btn(id: String, text: String) -> Button:
 	var b := _button(text)
+	# 17c: the four tabs share the row evenly — equal widths,
+	# equal 8px gaps, and the row's edges flush with the
+	# content card below (before, the pills huddled at the
+	# left at natural widths over a full-width card).
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	if _tab == id:
-		b.add_theme_stylebox_override("normal", _sb(Color(0.98, 0.8, 0.35), 8))
+		# Same construction as the dark tabs (1px border +
+		# _btn_sb margins) so the active state changes only
+		# colours, never the label's box. The border is a deep
+		# gold edge shade, invisible against the gold fill.
+		var edge := Color(0.72, 0.52, 0.15)
+		b.add_theme_stylebox_override("normal", _btn_sb(Color(0.98, 0.8, 0.35), 8, edge, 1))
 		b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
-		b.add_theme_stylebox_override("hover", _sb(Color(0.98, 0.8, 0.35), 8))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(1.0, 0.86, 0.45), 8, edge, 1))
 		b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.88, 0.7, 0.28), 8, edge, 1))
+		b.add_theme_color_override("font_pressed_color", Color(0.1, 0.08, 0.02))
 	b.pressed.connect(func() -> void:
 		_tab = id
 		_arm = ""
