@@ -170,6 +170,10 @@ func setup(p_game) -> void:
 	visible = false
 	Net.auth_ok.connect(func(_t, _p) -> void: if visible: _refresh())
 	Net.auth_out.connect(func() -> void: if visible: _refresh())
+	# 17d: cosmetics equips / renames land as profile_update.
+	Net.profile_updated.connect(func(_p) -> void: if visible: _refresh())
+	Net.avatar_changed.connect(func(_a) -> void: if visible: _refresh())
+	Net.display_name_changed.connect(func(_n) -> void: if visible: _refresh())
 	# 17a: the Liên minh row renders from the live alliance
 	# payload and re-renders when a fresh one lands.
 	Net.alliance_home_received.connect(func(_m: Dictionary, _i: Array) -> void:
@@ -353,32 +357,23 @@ func _refresh() -> void:
 		c.queue_free()
 	var guest := Net.account_name == ""
 	var p: Dictionary = Net.auth_profile
-	var avatar_id := Characters.normalize_char(
-			String(p.get("avatar_id", Characters.local_avatar())) if not guest
-			else Characters.local_avatar())
-	var portrait := Characters.avatar_for(avatar_id)
+	# 17d: the account avatar comes from the anime catalogue
+	# (Avatars) and wears the equipped frame via the shared
+	# AvatarFrame helper (animated here).
+	var avatar_id := Avatars.normalize_id(
+			String(p.get("avatar_id", Avatars.local_avatar())) if not guest
+			else Avatars.local_avatar())
+	var portrait := Avatars.texture_for(avatar_id)
 
 	# ---- header: portrait + Lv badge | name / ID / XP | gear
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 14)
 	var av_box := Control.new()
 	av_box.custom_minimum_size = Vector2(100, 100)
-	var av_frame := PanelContainer.new()
+	var av_frame := AvatarFrame.new()
 	av_frame.set_anchors_preset(Control.PRESET_FULL_RECT)
-	av_frame.add_theme_stylebox_override("panel",
-			_sb(Color(0.08, 0.09, 0.14), 8, GOLD, 2))
+	av_frame.set_content(portrait, String(p.get("frame_id", "")), true)
 	av_box.add_child(av_frame)
-	var av_img := TextureRect.new()
-	av_img.texture = portrait
-	av_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	av_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	av_img.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	av_img.set_anchors_preset(Control.PRESET_FULL_RECT)
-	av_img.offset_left = 4
-	av_img.offset_top = 4
-	av_img.offset_right = -4
-	av_img.offset_bottom = -4
-	av_box.add_child(av_img)
 	var lv_badge := PanelContainer.new()
 	var lv_sb := _sb(Color(0.55, 0.38, 0.06, 0.98), 6, Color(1, 0.88, 0.5, 0.9), 1)
 	lv_sb.content_margin_left = 8
@@ -442,10 +437,12 @@ func _refresh() -> void:
 		name_col.add_child(xp_row)
 	head.add_child(name_col)
 
+	# 17d: the gear opens the personal-settings hub (Đổi tên /
+	# Avatar / Danh hiệu / Trang trí).
 	var gear := _icon_button("gear", "Cài đặt")
 	gear["btn"].pressed.connect(func() -> void:
-		if game != null and game.has_method("home_open_settings"):
-			game.home_open_settings())
+		if game != null and game.has_method("home_open_settings_panels"):
+			game.home_open_settings_panels("hub"))
 	head.add_child(gear["holder"])
 	_body.add_child(head)
 
@@ -479,7 +476,12 @@ func _refresh() -> void:
 	# shows the first one, else the honest empty state.
 	var titles: Array = p.get("titles", [])
 	var title_text := "Chưa dùng Danh hiệu"
-	if not titles.is_empty():
+	# 17d: the EQUIPPED display title wins; the first earned
+	# title is the fallback label.
+	var equipped_title := String(p.get("display_title", ""))
+	if equipped_title != "":
+		title_text = "Danh hiệu: " + equipped_title
+	elif not titles.is_empty():
 		title_text = "Danh hiệu: " + String(titles[0])
 	var tv := _label(title_text, 16)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -495,7 +497,10 @@ func _refresh() -> void:
 	pen_btn.flat = true
 	pen_btn.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pen_btn.tooltip_text = "Đổi danh hiệu"
-	pen_btn.pressed.connect(func() -> void: _show_toast("Danh hiệu sắp ra mắt"))
+	# 17d: the pen opens the Danh hiệu settings panel.
+	pen_btn.pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_settings_panels"):
+			game.home_open_settings_panels("titles"))
 	pen_holder.add_child(pen_btn)
 	title_row.add_child(pen_holder)
 	_body.add_child(title_row)

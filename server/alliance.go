@@ -760,6 +760,18 @@ func (as *Alliances) OfUser(user string) *Alliance {
 	return as.ofUser(user)
 }
 
+// LevelOf returns the level of the alliance the user belongs
+// to (0 = no alliance). Wired into Accounts.AllyLevelOf (17d)
+// for avatar-frame ownership.
+func (as *Alliances) LevelOf(user string) int {
+	a := as.OfUser(user)
+	if a == nil {
+		return 0
+	}
+	level, _, _ := AllianceLevelForXP(a.XP)
+	return level
+}
+
 // Apply files a join request — or joins immediately when the
 // alliance's mode is "open".
 func (as *Alliances) Apply(id, user, msg string) error {

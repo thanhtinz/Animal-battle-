@@ -28,7 +28,10 @@ package main
 //   {"t":"cmd","cmd":{...}}                        in-match; relayed with exec tick
 //   {"t":"checksum","tick":N,"hash":"..."}
 //   {"t":"leave"}
-//   {"t":"set_avatar","avatar":C}                   account profile-avatar pick (13j)
+//   {"t":"set_avatar","avatar":C}                   account profile-avatar pick (17d catalogue)
+//   {"t":"rename","name":N}                          display-name rename, 30d cooldown (17d)
+//   {"t":"set_frame","frame":F} / {"t":"set_bubble","bubble":B} / {"t":"set_title","title":T}
+//        cosmetics equips (17d) -> {"t":"profile_update","profile":...}
 //   {"t":"set_name","name":N}                       account display-name pick (13r)
 //   {"t":"set_active_skin","skin":S}                activate an OWNED cosmetic skin (13j; dormant — no shop yet)
 //   {"t":"queue_join","mode":"1v1"} / {"t":"queue_leave"}   ranked matchmaking
@@ -40,6 +43,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -73,7 +77,10 @@ type clientMsg struct {
 	Ticks    int             `json:"ticks"`     // referee result: match length in lockstep ticks
 	ReplayID string          `json:"replay_id"` // replay fetch: the recording id
 	Skin     string          `json:"skin"`      // set_active_skin: cosmetic skin id ("" = clear)
-	Avatar   string          `json:"avatar"`    // set_avatar: profile avatar (a main character id)
+	Avatar   string          `json:"avatar"`    // set_avatar: profile avatar (17d: an "art:NN" catalogue id)
+	Frame    string          `json:"frame"`     // set_frame: avatar frame id ("" = none)
+	Bubble   string          `json:"bubble"`    // set_bubble: chat-bubble style id
+	Title    string          `json:"title"`     // set_title: display title name ("" = clear)
 	Close    bool            `json:"close"`     // friend_close: the "bạn thân" flag state
 	// Custom-match expansion (15a): room access + host powers.
 	RoomName string `json:"room_name"` // create/config: browser display name
@@ -253,6 +260,8 @@ func leaderRowMap(r LeaderRow) map[string]any {
 		"rank_tier": r.RankTier, "rank_text": r.RankText,
 		"rank_short": r.RankShort, "rank_stars": r.RankStars,
 		"rank_star_cap": r.StarCap, "emperor": r.Emperor,
+		// 17d: account avatar + effective frame for BXH rows.
+		"avatar_id": r.AvatarID, "frame_id": r.FrameID,
 	}
 }
 
@@ -430,10 +439,75 @@ func (s *session) handle(raw []byte) {
 			s.hub.AttachAccount(s.code, s.slot, "")
 		}
 		s.sendJSON(map[string]any{"t": "auth_out"})
+	case "rename":
+		// Display-name rename (17d): like set_name but enforces
+		// the 30-day cooldown and stamps LastRenameAt. Replies
+		// with a fresh profile (the panel reads the refreshed
+		// rename clock from it) + the display_name echo so the
+		// lobby/profile refresh like a first set.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "name_error", "msg": "Đăng nhập để đổi tên."})
+			return
+		}
+		p, err := s.acc.RenameDisplayName(s.user, m.Name)
+		if err != nil {
+			var cd *RenameCooldownError
+			if errors.As(err, &cd) {
+				s.sendJSON(map[string]any{"t": "name_error", "msg": err.Error(),
+					"rename_next_at": cd.NextAt})
+				return
+			}
+			s.sendJSON(map[string]any{"t": "name_error", "msg": err.Error()})
+			return
+		}
+		log.Printf("rename: %s is now %q", s.user, p.DisplayName)
+		s.sendJSON(map[string]any{"t": "profile_update", "profile": p})
+		s.sendJSON(map[string]any{"t": "display_name", "display_name": p.DisplayName})
+		if s.in {
+			s.hub.AttachAccount(s.code, s.slot, s.user)
+		}
+	case "set_frame":
+		// Avatar frame equip (17d): ownership computed
+		// server-side; the reply is the refreshed profile.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để dùng khung avatar."})
+			return
+		}
+		p, err := s.acc.SetFrame(s.user, m.Frame)
+		if err != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": err.Error()})
+			return
+		}
+		s.sendJSON(map[string]any{"t": "profile_update", "profile": p})
+	case "set_bubble":
+		// Chat-bubble style equip (17d): same pattern.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để dùng bong bóng chat."})
+			return
+		}
+		p, err := s.acc.SetBubbleStyle(s.user, m.Bubble)
+		if err != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": err.Error()})
+			return
+		}
+		s.sendJSON(map[string]any{"t": "profile_update", "profile": p})
+	case "set_title":
+		// Display-title equip (17d): same pattern; "" clears.
+		if s.user == "" {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để dùng danh hiệu."})
+			return
+		}
+		p, err := s.acc.SetDisplayTitle(s.user, m.Title)
+		if err != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": err.Error()})
+			return
+		}
+		s.sendJSON(map[string]any{"t": "profile_update", "profile": p})
 	case "set_avatar":
-		// Profile avatar pick (13j): one of the eight mains'
-		// portraits, persisted on the account; the reply echoes
-		// the stored value. Decoupled from the character draw.
+		// Profile avatar pick (13j; catalogue replaced 17d):
+		// one of the twenty anime avatars, persisted on the
+		// account; the reply echoes the normalised stored
+		// value. Decoupled from the character draw.
 		if s.user == "" {
 			s.sendJSON(map[string]any{"t": "error", "msg": "Đăng nhập để lưu avatar."})
 			return
@@ -442,7 +516,7 @@ func (s *session) handle(raw []byte) {
 			s.sendAuthErr(err)
 			return
 		}
-		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": NormalizeCharID(m.Avatar)})
+		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": NormalizeAvatarID(m.Avatar)})
 	case "set_name":
 		// Display-name pick (13r): the name panel after register /
 		// first login. Validated + uniqueness-checked in accounts;
@@ -1185,6 +1259,12 @@ func main() {
 	// counters; the tag resolver feeds profile payloads.
 	acc.MatchFeed = hub.allis.FeedMatch
 	acc.AllyTagOf = hub.allis.TagOf
+	// 17d: alliance level feeds avatar-frame ownership.
+	// WarChampOf stays nil — the Đại chiến system is not
+	// built, so no one holds the reign (frame_12 / war
+	// title / champion bubble grant nothing) until the war
+	// plugs its resolver in here.
+	acc.AllyLevelOf = hub.allis.LevelOf
 	// Replay archive (13h): one JSON file beside the account store.
 	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
 		log.Fatalf("replay store: %v", err)

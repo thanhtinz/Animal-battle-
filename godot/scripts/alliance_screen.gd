@@ -141,7 +141,7 @@ func _ready() -> void:
 	Net.alliance_list_received.connect(func(_rows: Array) -> void:
 		if visible and Net.alliance_mine.is_empty():
 			_render())
-	Net.chat_received.connect(func(scope: String, _f: int, _n: String, _t: String, _tag: String) -> void:
+	Net.chat_received.connect(func(scope: String, _f: int, _n: String, _t: String, _tag: String, _bub: String) -> void:
 		if visible and _chat_open and scope == "alliance":
 			_render_chat_lines()
 			_scroll_chat_bottom())
@@ -397,7 +397,8 @@ func _badge(badge_id: String, px: int) -> ShieldBadge:
 
 func _avatar(avatar_id: String, px: int) -> TextureRect:
 	var t := TextureRect.new()
-	t.texture = Characters.avatar_for(avatar_id)
+	# 17d: member rows carry ACCOUNT avatar ids (anime set).
+	t.texture = Avatars.texture_for(avatar_id)
 	t.custom_minimum_size = Vector2(px, px)
 	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1353,7 +1354,13 @@ func _render_chat_lines() -> void:
 		# 17b: [TAG] before the sender's name.
 		hb.add_child(_label(Net.ally_disp(nm, String(ln.get("tag", ""))) + ":", 13,
 				Color(0.45, 0.9, 0.6) if nm == my_name else GOLD_TXT, true))
-		hb.add_child(_label_wrap(String(ln.get("text", "")), 13, PAPER))
+		# 17d (§7.2B): the sender's equipped bubble style also
+		# skins their alliance-chat lines (text colour).
+		var tcol := PAPER
+		var bub := String(ln.get("bubble", "mac_dinh"))
+		if bub != "mac_dinh" and ChatBubbles.STYLES.has(bub):
+			tcol = ChatBubbles.STYLES[bub]["text"]
+		hb.add_child(_label_wrap(String(ln.get("text", "")), 13, tcol))
 		lv.add_child(hb)
 
 

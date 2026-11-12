@@ -2,8 +2,9 @@ package main
 
 import "testing"
 
-// Characters (13j final model, 16b roster): the profile avatar
-// is a free pick among the eight mains and persists; cosmetic
+// Characters (13j/16b; avatar catalogue replaced in 17d): the
+// profile avatar is a free pick among the twenty anime avatars
+// and persists; cosmetic
 // skins are OWNED items (none exist yet — activation is rejected
 // for everyone); at match start the server DRAWS a character per
 // player from the eight mains and ships it in the match_start
@@ -18,10 +19,10 @@ func TestAvatarAccountPersistence(t *testing.T) {
 	if !ok {
 		t.Fatal("profile missing")
 	}
-	if prof.AvatarID != CharDefault {
-		t.Fatalf("default avatar = %q, want %q", prof.AvatarID, CharDefault)
+	if prof.AvatarID != AvatarDefaultID {
+		t.Fatalf("default avatar = %q, want %q", prof.AvatarID, AvatarDefaultID)
 	}
-	for _, id := range MainChars {
+	for _, id := range AvatarIDs {
 		p, err := ac.SetAvatar("ava_user", id)
 		if err != nil {
 			t.Fatalf("SetAvatar(%q): %v", id, err)
@@ -30,23 +31,21 @@ func TestAvatarAccountPersistence(t *testing.T) {
 			t.Fatalf("profile avatar after set = %q, want %q", p.AvatarID, id)
 		}
 	}
-	// Cosmetic skins have no portraits; unknown ids rejected too —
-	// including pre-16b roster ids (ngan_ky), which are no longer
-	// valid mains.
-	for _, bad := range []string{"vo_hiep", "bach_y", "tu_y", "goc", "hoang_kim", "ngan_ky"} {
+	// Hero ids are no longer avatars (17d); cosmetic skins have
+	// no portraits; unknown ids are rejected too.
+	for _, bad := range []string{"knight", "archer", "vo_hiep", "fan:mario", "art:99", "art:1"} {
 		if _, err := ac.SetAvatar("ava_user", bad); err != ErrBadAvatar {
 			t.Fatalf("SetAvatar(%q) err = %v, want ErrBadAvatar", bad, err)
 		}
 	}
-	// The loop above ends on the last main char (ranger, last of
-	// the 16b roster of eight) — rejected sets must leave exactly
-	// that avatar in place.
-	lastChar := MainChars[len(MainChars)-1]
+	// The loop above ends on the last catalogue entry (art:20) —
+	// rejected sets must leave exactly that avatar in place.
+	lastChar := AvatarIDs[len(AvatarIDs)-1]
 	if p, _ := ac.Profile("ava_user"); p.AvatarID != lastChar {
 		t.Fatalf("avatar after rejected sets = %q, want %s", p.AvatarID, lastChar)
 	}
 	// Persists across a store reload; login returns it.
-	if _, err := ac.SetAvatar("ava_user", "archer"); err != nil {
+	if _, err := ac.SetAvatar("ava_user", "art:07"); err != nil {
 		t.Fatal(err)
 	}
 	fs2, err := NewFileStore(path)
@@ -54,10 +53,10 @@ func TestAvatarAccountPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	ac2 := NewAccounts(fs2)
-	if p, _ := ac2.Profile("ava_user"); p.AvatarID != "archer" {
-		t.Fatalf("avatar after reload = %q, want archer", p.AvatarID)
+	if p, _ := ac2.Profile("ava_user"); p.AvatarID != "art:07" {
+		t.Fatalf("avatar after reload = %q, want art:07", p.AvatarID)
 	}
-	if _, prof2, err := ac2.Login("ava_user", "secret1"); err != nil || prof2.AvatarID != "archer" {
+	if _, prof2, err := ac2.Login("ava_user", "secret1"); err != nil || prof2.AvatarID != "art:07" {
 		t.Fatalf("login profile avatar = %q err=%v", prof2.AvatarID, err)
 	}
 	// Normalisation: corrupt stored values render as the default.
@@ -66,8 +65,8 @@ func TestAvatarAccountPersistence(t *testing.T) {
 	a, _ := ac2.store.GetAccount("ava_user")
 	a.AvatarID = "ngan_ky"
 	_ = ac2.store.PutAccount(a)
-	if p, _ := ac2.Profile("ava_user"); p.AvatarID != CharDefault {
-		t.Fatalf("normalised avatar = %q, want %q", p.AvatarID, CharDefault)
+	if p, _ := ac2.Profile("ava_user"); p.AvatarID != AvatarDefaultID {
+		t.Fatalf("normalised avatar = %q, want %q", p.AvatarID, AvatarDefaultID)
 	}
 }
 

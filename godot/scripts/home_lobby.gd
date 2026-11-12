@@ -55,7 +55,7 @@ var _banner_clock: float = 0.0
 
 # Match-entry cluster (13i).
 var _cluster_rank: ClusterRank
-var _chip_av: TextureRect # profile chip portrait (13l addendum 3)
+var _chip_av: AvatarFrame # profile chip portrait (13l addendum 3; 17d frame helper)
 var _chip: Control # top-left cluster: avatar + name/Lv lines
 var _chip_name: Label
 var _chip_lv: Label
@@ -368,6 +368,10 @@ func setup(p_game) -> void:
 	_build()
 	visible = false
 	Net.auth_ok.connect(func(_t, _p) -> void: refresh())
+	# 17d: cosmetics equips / renames refresh the chip + rows.
+	Net.profile_updated.connect(func(_p) -> void: refresh())
+	Net.avatar_changed.connect(func(_a) -> void: refresh())
+	Net.display_name_changed.connect(func(_n) -> void: refresh())
 	Net.auth_out.connect(func() -> void: refresh())
 	Net.rank_result_received.connect(func(_info: Dictionary) -> void: refresh())
 	Net.mail_received.connect(func(_rows, unread) -> void:
@@ -489,14 +493,14 @@ func _build_chip() -> void:
 	frame.add_theme_stylebox_override("panel",
 			_sb(Color(0.10, 0.08, 0.05), 4, GOLD, 3))
 	chip.add_child(frame)
-	var av := TextureRect.new()
-	av.texture = Characters.avatar_for(Characters.local_avatar())
-	av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	# 17d: the chip portrait is composed by the shared
+	# AvatarFrame helper (account avatar + equipped frame).
+	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(68, 68)
 	av.size = Vector2(68, 68)
 	av.position = Vector2(4, 4)
-	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.set_content(Avatars.texture_for(Avatars.local_avatar()),
+			String(Net.auth_profile.get("frame_id", "")), true)
 	chip.add_child(av)
 	_chip_av = av
 
@@ -978,14 +982,12 @@ func _rail_portrait(r: Dictionary) -> Control:
 			_sb(Color(0.10, 0.08, 0.05), 4, GOLD, 2))
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(frame)
-	var av := TextureRect.new()
-	av.texture = Characters.avatar_for(String(r.get("avatar_id", "")))
-	av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(50, 50)
 	av.size = Vector2(50, 50)
 	av.position = Vector2(3, 3)
-	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.set_content(Avatars.texture_for(String(r.get("avatar_id", ""))),
+			String(r.get("frame_id", "")), false)
 	holder.add_child(av)
 	if bool(r.get("online", false)):
 		var dot := PanelContainer.new()
@@ -1381,7 +1383,8 @@ func refresh() -> void:
 	# addendum 3; Net syncs the server value into the local
 	# pick on auth, guests keep their local/default pick).
 	if _chip_av != null:
-		_chip_av.texture = Characters.avatar_for(Characters.local_avatar())
+		_chip_av.set_content(Avatars.texture_for(Avatars.local_avatar()),
+				String(Net.auth_profile.get("frame_id", "")), true)
 	# Name + level lines beside the portrait (13l level
 	# from the auth payload; guests read Khách / chưa vào).
 	if _chip_name != null:
@@ -2283,14 +2286,12 @@ func _friend_avatar_block(f: Dictionary) -> Control:
 			_sb(Color(0.10, 0.08, 0.05), 4, GOLD, 2))
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(frame)
-	var av := TextureRect.new()
-	av.texture = Characters.avatar_for(String(f.get("avatar_id", "")))
-	av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(58, 58)
 	av.size = Vector2(58, 58)
 	av.position = Vector2(3, 3)
-	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.set_content(Avatars.texture_for(String(f.get("avatar_id", ""))),
+			String(f.get("frame_id", "")), false)
 	holder.add_child(av)
 	if bool(f.get("online", false)):
 		var dot := PanelContainer.new()

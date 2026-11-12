@@ -392,6 +392,11 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 	if tag != "" {
 		msg["ally_tag"] = tag
 	}
+	// 17d: the sender's bubble style skins their alliance
+	// chat lines too (§7.2B).
+	if h.acc != nil && user != "" {
+		msg["bubble"] = h.acc.EquippedBubbleOf(user)
+	}
 	h.SendToUsers(memberUsers, msg)
 }
 
@@ -1683,6 +1688,12 @@ func (h *Hub) RelayChatEx(code string, slot int, scope, text string, targets []i
 			msg["ally_tag"] = tag
 		}
 	}
+	// 17d: the sender's equipped chat-bubble style (already
+	// resolved to the default when lapsed). Presentation
+	// only — drives the in-match speech bubble + line style.
+	if h.acc != nil && p.User != "" {
+		msg["bubble"] = h.acc.EquippedBubbleOf(p.User)
+	}
 	if scope == "team" {
 		if r.Diplomacy && len(targets) > 0 {
 			// 15b: alliance channel — sender + declared allies.
@@ -1932,6 +1943,12 @@ func (h *Hub) playerViewsLocked(r *Room) []map[string]any {
 			if tag := h.allis.TagOf(p.User); tag != "" {
 				view["ally_tag"] = tag
 			}
+		}
+		// 17d: the slot account's avatar id + effective frame
+		// (players-panel composition). Presentation only.
+		if h.acc != nil && p.User != "" {
+			view["avatar_id"] = h.acc.AvatarOf(p.User)
+			view["frame_id"] = h.acc.EquippedFrameOf(p.User)
 		}
 		out = append(out, view)
 	}

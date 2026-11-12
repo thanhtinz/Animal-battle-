@@ -133,6 +133,20 @@ type Account struct {
 	// active ("" = none). Validated against OwnedSkins wherever
 	// it is read; with an empty OwnedSkins it can never be set.
 	ActiveSkin string `json:"active_skin,omitempty"`
+	// Profile cosmetics (17d; cosmetics.go): the equipped
+	// avatar frame + chat-bubble style + display title. All
+	// three are validated against COMPUTED ownership wherever
+	// they are read — a stored value whose condition has
+	// lapsed simply stops rendering. FrameID "" = no frame;
+	// BubbleStyle "" = the default style; DisplayTitle "" =
+	// no title equipped on the profile.
+	FrameID      string `json:"frame_id,omitempty"`
+	BubbleStyle  string `json:"bubble_style,omitempty"`
+	DisplayTitle string `json:"display_title,omitempty"`
+	// LastRenameAt is the unix time of the account's last
+	// display-name RENAME (17d cooldown). The first name set
+	// never stamps it; 0 = never renamed.
+	LastRenameAt int64 `json:"last_rename_at,omitempty"`
 	// MatchHistory is the rolling record of this account's latest
 	// ranked results (stage 13g home lobby "Lịch Sử"), oldest
 	// first, capped at MatchHistoryCap entries.
@@ -310,6 +324,20 @@ type Profile struct {
 	// Titles are the account's earned titles (15h); the
 	// profile page's "Danh hiệu" row shows the first one.
 	Titles []string `json:"titles,omitempty"`
+	// Cosmetics (17d), resolved by profileOf through
+	// cosmeticsOf: the EFFECTIVE equipped frame/bubble (an
+	// equipped value whose ownership lapsed resolves to the
+	// default), the equipped display title, the owned lists
+	// in catalogue order, the full title catalogue with
+	// owned + thời hạn per row, and when the next rename is
+	// allowed (0 = now).
+	FrameID      string     `json:"frame_id"`
+	BubbleStyle  string     `json:"bubble_style"`
+	DisplayTitle string     `json:"display_title"`
+	OwnedFrames  []string   `json:"owned_frames"`
+	OwnedBubbles []string   `json:"owned_bubbles"`
+	TitleRows    []TitleRow `json:"title_rows"`
+	RenameNextAt int64      `json:"rename_next_at"`
 	// TournHistory is the account's tournament podium record
 	// (15h), oldest first.
 	TournHistory []TournFinish `json:"tourn_history,omitempty"`
@@ -363,9 +391,12 @@ func NormalizeSkinID(id string) string {
 	return ""
 }
 
-// EffectiveAvatar is the account's avatar pick, normalised.
+// EffectiveAvatar is the account's avatar pick, normalised
+// against the 17d anime catalogue (cosmetics.go): any stored
+// value outside it — including every pre-17d hero id — falls
+// back to the default art:01.
 func EffectiveAvatar(a *Account) string {
-	return NormalizeCharID(a.AvatarID)
+	return NormalizeAvatarID(a.AvatarID)
 }
 
 // EffectiveActiveSkin is the account's active cosmetic skin —
@@ -485,6 +516,14 @@ func (ac *Accounts) profileOf(a *Account) Profile {
 	if ac.AllyTagOf != nil {
 		p.AllyTag = ac.AllyTagOf(a.User)
 	}
+	// 17d cosmetics: computed ownership + effective equips.
+	p.OwnedFrames, p.OwnedBubbles, p.FrameID, p.BubbleStyle, p.TitleRows =
+		ac.cosmeticsOf(a)
+	p.DisplayTitle = a.DisplayTitle
+	if !ac.titleOwned(a, p.DisplayTitle) {
+		p.DisplayTitle = ""
+	}
+	p.RenameNextAt = renameNextAt(a)
 	return p
 }
 
@@ -786,6 +825,18 @@ type Accounts struct {
 	// simply carry no tag when unset. Set by main() next to
 	// MatchHook; presentation only, never sim data.
 	AllyTagOf func(user string) string
+	// AllyLevelOf (17d) resolves the level of the alliance
+	// the user currently belongs to (0 = none) for frame
+	// ownership (frames 04/10). Nil-safe; set by main() next
+	// to AllyTagOf.
+	AllyLevelOf func(user string) int
+	// WarChampOf (17d) reports whether the user currently
+	// holds the §7.1 alliance-war reign (snapshot member of
+	// the reigning Đại chiến champion alliance). The war
+	// system does not exist yet, so main() leaves this nil
+	// and nobody owns frame_12 / the war title / the champion
+	// bubble — the seam is where the war plugs in.
+	WarChampOf func(user string) bool
 }
 
 // matchXPDelta is one recorded match's XP value for its
@@ -1074,6 +1125,9 @@ type FriendEntry struct {
 	// session's sendFriends through the hub's alliance
 	// service (FriendsOf itself has no alliance access).
 	AllyTag string `json:"ally_tag,omitempty"`
+	// FrameID (17d): the friend's EFFECTIVE equipped avatar
+	// frame ("" = none), computed by FriendsOf.
+	FrameID string `json:"frame_id,omitempty"`
 }
 
 // AddFriend appends `other` to `me`'s friend list. Both accounts
@@ -1177,11 +1231,13 @@ func (ac *Accounts) MarkOffline(user string) {
 	_ = ac.store.PutAccount(a)
 }
 
-// SetAvatar stores the account's profile-avatar pick (13j).
-// Only the eight mains (16b roster) have portraits — anything
-// else (including cosmetic-skin ids) is rejected.
+// SetAvatar stores the account's profile-avatar pick (13j;
+// catalogue replaced in 17d). Only the twenty anime avatars
+// (cosmetics.go AvatarIDs) are valid picks — hero ids and
+// everything else are rejected. All twenty are free for every
+// account: there is no ownership gate on avatars.
 func (ac *Accounts) SetAvatar(user, id string) (Profile, error) {
-	if !mainCharIDs[id] {
+	if !avatarIDSet[id] {
 		return Profile{}, ErrBadAvatar
 	}
 	a, ok := ac.store.GetAccount(user)
@@ -1331,6 +1387,7 @@ func (ac *Accounts) FriendsOf(me string) []FriendEntry {
 			RankTier: fa.Rank.Tier, Emperor: emp[name],
 			Level: level, AvatarID: EffectiveAvatar(fa),
 			Close: closeSet[name], LastOnline: fa.LastOnline,
+			FrameID: ac.EquippedFrameOf(fa.User),
 		})
 	}
 	return out
@@ -1536,6 +1593,10 @@ type LeaderRow struct {
 	RankStars int    `json:"rank_stars"`
 	StarCap   int    `json:"rank_star_cap"`
 	Emperor   bool   `json:"emperor"`
+	// Account avatar + effective frame (17d), filled by the
+	// row builders (leaderRowOf has no Accounts access).
+	AvatarID string `json:"avatar_id"`
+	FrameID  string `json:"frame_id,omitempty"`
 }
 
 func leaderRowOf(a *Account, emperor bool) LeaderRow {
@@ -1565,7 +1626,10 @@ func (ac *Accounts) wlRows() []LeaderRow {
 	emp := EmperorSet(all)
 	rows := make([]LeaderRow, 0, len(all))
 	for _, a := range all {
-		rows = append(rows, leaderRowOf(a, emp[a.User]))
+		row := leaderRowOf(a, emp[a.User])
+		row.AvatarID = EffectiveAvatar(a)
+		row.FrameID = ac.EquippedFrameOf(a.User)
+		rows = append(rows, row)
 	}
 	winrate := func(r LeaderRow) float64 {
 		if r.Matches == 0 {
@@ -1948,7 +2012,10 @@ func (ac *Accounts) ladderRows() []LeaderRow {
 	rows := make([]LeaderRow, 0, len(all))
 	for _, a := range all {
 		byUser[a.User] = a
-		rows = append(rows, leaderRowOf(a, emp[a.User]))
+		row := leaderRowOf(a, emp[a.User])
+		row.AvatarID = EffectiveAvatar(a)
+		row.FrameID = ac.EquippedFrameOf(a.User)
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if c := compareRank(byUser[rows[i].User].Rank, byUser[rows[j].User].Rank); c != 0 {

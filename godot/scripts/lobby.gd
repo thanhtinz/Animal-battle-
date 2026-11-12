@@ -545,28 +545,36 @@ func _build_account(parent: VBoxContainer) -> void:
 	_build_avatar_row(parent)
 
 
-## Profile avatar row: the avatar is a FREE pick among the four
-## main characters' portraits — decoupled from the match draw
-## (Net.set_avatar persists it on the account; guests keep it
-## locally). The "Nhân vật" button opens the collection screen.
+## Profile avatar row (17d catalogue): the avatar is a FREE
+## pick among the owner's twenty anime avatars — decoupled
+## from the hero draw (Net.set_avatar persists it on the
+## account; guests keep it locally). The full picker with
+## frames lives in the profile's settings panels; this row
+## is the lobby shortcut. The "Nhân vật" button opens the
+## collection screen (heroes — a separate surface).
 func _build_avatar_row(parent: VBoxContainer) -> void:
 	var srow := HBoxContainer.new()
 	srow.add_theme_constant_override("separation", 8)
 	srow.alignment = BoxContainer.ALIGNMENT_CENTER
 	parent.add_child(srow)
 	srow.add_child(_label("Avatar:", 15))
-	for id in Characters.CHAR_IDS:
+	var grid := GridContainer.new()
+	grid.columns = 10
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	srow.add_child(grid)
+	for id in Avatars.IDS:
 		var b := TextureButton.new()
-		b.texture_normal = Characters.avatar_for(id)
-		b.custom_minimum_size = Vector2(46, 46)
+		b.texture_normal = Avatars.texture_for(id)
+		b.custom_minimum_size = Vector2(40, 40)
 		b.ignore_texture_size = true
 		b.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
-		b.tooltip_text = Characters.char_name(id)
+		b.tooltip_text = Avatars.display_name(id)
 		var aid: String = id
 		b.pressed.connect(func() -> void:
 			Net.set_avatar(aid)
 			_refresh_avatar_row())
-		srow.add_child(b)
+		grid.add_child(b)
 		_avatar_btns[id] = b
 	var coll := _button("Nhân vật")
 	coll.custom_minimum_size = Vector2(110, 40)
@@ -576,7 +584,7 @@ func _build_avatar_row(parent: VBoxContainer) -> void:
 
 
 func _refresh_avatar_row() -> void:
-	var cur := Characters.local_avatar()
+	var cur := Avatars.local_avatar()
 	for id in _avatar_btns:
 		var b: TextureButton = _avatar_btns[id]
 		b.modulate = Color(1, 1, 1, 1) if String(id) == cur \
@@ -1322,23 +1330,20 @@ func _lb_card(pos: int, row: Dictionary, footer: bool = false) -> PanelContainer
 		if on_gold:
 			wn.set_on_gold(true)
 		hb.add_child(wn)
-	# Avatar: the King portrait in a gold frame (one neutral
-	# template — per-player avatars do not exist yet).
+	# Avatar (17d): the row account's own avatar + equipped
+	# frame, composed by the shared helper inside the gold
+	# frame (static first frame at this size).
 	var frame := PanelContainer.new()
 	frame.add_theme_stylebox_override("panel",
 			_lb_sb(Color(0, 0, 0, 0.3), 6, Color(1, 0.85, 0.4, 0.85), 2))
 	frame.custom_minimum_size = Vector2(56, 56)
 	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(frame)
-	var av := TextureRect.new()
-	av.texture = load("res://assets/king_avatar.png")
-	av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(52, 52)
-	av.size = Vector2(52, 52)
-	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.set_content(Avatars.texture_for(String(row.get("avatar_id", ""))),
+			String(row.get("frame_id", "")), false)
 	frame.add_child(av)
-	# The frame is a container (centres its child); pin the image.
 	av.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# Name + sub-line (rank text with star progress).
 	var name_box := VBoxContainer.new()
@@ -1710,7 +1715,7 @@ func _bind_signals() -> void:
 			_fill_browser())
 
 
-func _on_chat_received(scope: String, _from: int, sender_name: String, text: String, ally_tag: String = "") -> void:
+func _on_chat_received(scope: String, _from: int, sender_name: String, text: String, ally_tag: String = "", _bubble: String = "mac_dinh") -> void:
 	if scope != "lobby" or _chat_log == null:
 		return
 	# 17b: [TAG] before the sender's name when they have one.

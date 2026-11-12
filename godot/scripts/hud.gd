@@ -610,7 +610,7 @@ func _bb_escape(s: String) -> String:
 ## (TeamColors); team scope gets a dim "(Đội)" tag. Consecutive
 ## lines from the same sender+scope batch into the open block
 ## (no repeated name header); blocks alternate a subtle shading.
-func add_chat_line(sender_name: String, text: String, scope: String, slot: int = -1) -> void:
+func add_chat_line(sender_name: String, text: String, scope: String, slot: int = -1, bubble_style: String = "mac_dinh") -> void:
 	if _chat_log == null:
 		return
 	var col := TeamColors.ui_color(slot) if slot >= 0 else TXT
@@ -620,10 +620,12 @@ func add_chat_line(sender_name: String, text: String, scope: String, slot: int =
 	_chat_log.text += head + ": " + _bb_escape(text) + "\n"
 	if _chat_rows == null:
 		return
-	var key := "%s|%s|%d" % [sender_name, scope, slot]
+	# 17d: lines also wear the sender's equipped bubble style
+	# (§7.2B) — the batching key includes it.
+	var key := "%s|%s|%d|%s" % [sender_name, scope, slot, bubble_style]
 	if key != _chat_last_key or _chat_last_body == null:
 		_chat_last_key = key
-		_chat_last_body = _new_chat_block(sender_name, scope, col)
+		_chat_last_body = _new_chat_block(sender_name, scope, col, bubble_style)
 	var l := _label(text, 14, TXT)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -638,10 +640,19 @@ func add_chat_line(sender_name: String, text: String, scope: String, slot: int =
 
 ## A sender block (13w): shaded row — header (slot-colour dot +
 ## name, "(Đội)" tag for team scope) over a body of message lines.
-func _new_chat_block(sender_name: String, scope: String, col: Color) -> VBoxContainer:
+func _new_chat_block(sender_name: String, scope: String, col: Color, bubble_style: String = "mac_dinh") -> VBoxContainer:
 	_chat_block_seq += 1
 	var bg := Color(1, 1, 1, 0.05) if _chat_block_seq % 2 == 0 else Color(1, 1, 1, 0.0)
-	var block := _panel(8, Color(1, 1, 1, 0), bg, 0)
+	var border := Color(1, 1, 1, 0)
+	var bw := 0
+	# 17d: a non-default equipped style re-skins the block
+	# (bg + border from the shared ChatBubbles style table).
+	if bubble_style != "" and bubble_style != "mac_dinh" and ChatBubbles.STYLES.has(bubble_style):
+		var st: Dictionary = ChatBubbles.STYLES[bubble_style]
+		bg = st["bg"]
+		border = st["border"]
+		bw = int(st.get("border_w", 1))
+	var block := _panel(8, border, bg, bw)
 	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_chat_rows.add_child(block)
 	var bmc := _pad(8, 5, 8, 5)
@@ -2274,17 +2285,17 @@ func _resolve_player_name() -> String:
 
 
 ## Top-left identity sync: avatar follows the account's pick
-## (Characters.local_avatar tracks Net's avatar_id pushes).
+## (17d: the anime catalogue — Avatars tracks Net's pushes).
 func _refresh_player_chip() -> void:
 	if _player_name_label != null:
 		var nm := _resolve_player_name()
 		if _player_name_label.text != nm:
 			_player_name_label.text = nm
 	if _player_avatar != null:
-		var aid := Characters.local_avatar()
+		var aid := Avatars.local_avatar()
 		if aid != _avatar_shown_id:
 			_avatar_shown_id = aid
-			_player_avatar.texture = Characters.avatar_for(aid)
+			_player_avatar.texture = Avatars.texture_for(aid)
 
 
 func _build_message_label() -> void:
@@ -2833,7 +2844,7 @@ func _status_pill(text: String, col: Color) -> PanelContainer:
 ## The local player's card wears the gold frame.
 func _player_card(col: Color, pname: String, sub: String,
 		status: String, status_col: Color, char_id: String,
-		hero_alive: bool, is_local: bool) -> PanelContainer:
+		hero_alive: bool, is_local: bool, frame_id: String = "") -> PanelContainer:
 	var root := _panel(12, GOLD if is_local else BORDER_DIM,
 			Color(0.05, 0.08, 0.15, 0.9), 2 if is_local else 1)
 	var mc := _pad(10, 8, 10, 8)
@@ -2855,12 +2866,10 @@ func _player_card(col: Color, pname: String, sub: String,
 	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var tex := Characters.avatar_for(char_id)
 	if tex != null:
-		var tr := TextureRect.new()
-		tr.texture = tex
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		tr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# 17d: the hero portrait wears the slot account's
+		# equipped frame (shared helper, static at this size).
+		var tr := AvatarFrame.new()
+		tr.set_content(tex, frame_id, false)
 		if not hero_alive:
 			tr.modulate = Color(1, 1, 1, 0.45)
 		frame.add_child(tr)
@@ -2942,7 +2951,8 @@ func _refresh_players() -> void:
 			_players_box.add_child(_player_card(TeamColors.ui_color(slot),
 					pname, card_sub, status, scol,
 					String(game.char_for(slot)), alive,
-					slot == game.local_slot and not game.observer_mode))
+					slot == game.local_slot and not game.observer_mode,
+					String(game.slot_frames[slot]) if slot < game.slot_frames.size() else ""))
 	else:
 		# 15f: the local player is labelled by their resolved
 		# display name (15d's source), never the "Bạn" placeholder.
@@ -2955,7 +2965,8 @@ func _refresh_players() -> void:
 		_players_box.add_child(_player_card(TeamColors.ui_color(0),
 				_resolve_player_name(), psub,
 				pstatus, Color(1.0, 0.55, 0.45) if game.sp_player_eliminated else GREEN,
-				String(game.char_for(0)), palive, true))
+				String(game.char_for(0)), palive, true,
+				String(Net.auth_profile.get("frame_id", ""))))
 		var estatus := "Đã bị loại" if game.sp_enemy_eliminated else "Đang chơi"
 		var ealive: bool = game.king_alive(1)
 		var esub := "Máy · Nhân vật: %s" % str(Characters.kit_of(game.char_for(1)).get("name", ""))

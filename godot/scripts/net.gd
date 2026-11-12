@@ -34,9 +34,15 @@ signal desync_notice(tick: int)
 signal lobby_error(msg: String)
 signal connection_closed
 # P4 stage 2: chat / accounts / resync.
-signal chat_received(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String)
+signal chat_received(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String, bubble_style: String)
 signal auth_ok(token: String, profile: Dictionary)
 signal avatar_changed(avatar_id: String)
+# 17d: a fresh full profile after a cosmetics op (set_frame /
+# set_bubble / set_title / rename); surfaces re-render from it.
+signal profile_updated(profile: Dictionary)
+# 17d: a rename rejected by the 30-day cooldown carries the
+# next allowed date (unix seconds; name_error fires too).
+signal rename_failed(msg: String, next_at: int)
 # 13r: display-name system (the "Đặt Tên Nhân Vật" panel).
 signal display_name_changed(display_name: String)
 signal name_error(msg: String)
@@ -262,6 +268,7 @@ func _ready() -> void:
 			or args.has("mp-shot-tourn-bracket") \
 			or args.has("mp-alliance") or args.has("mp-shot-alliance") \
 			or args.has("mp-alliance2") or args.has("mp-shot-alliance2") \
+			or args.has("mp-settings") or args.has("mp-shot-settings") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -316,7 +323,7 @@ func _ready() -> void:
 					" cmds=", (rp.get("cmds", []) as Array).size())
 			# 14a: seek-at-start for the seek-correctness smoke.
 			begin_replay(rp, int(auto.get("mp-replay-seek", 0))))
-	chat_received.connect(func(_scope: String, from_slot: int, _n: String, _t: String, _tag: String) -> void:
+	chat_received.connect(func(_scope: String, from_slot: int, _n: String, _t: String, _tag: String, _bub: String) -> void:
 		# Chat-shot peer: answer the host's greeting shortly after
 		# it actually arrives (order-safe even on a slow host).
 		if auto.has("mp-chat-peer") and from_slot != my_slot \
@@ -600,16 +607,19 @@ func _handle_message(txt: String) -> void:
 			# 17b: the sender's alliance tag (server-resolved,
 			# presentation only) rides every chat line.
 			var ctag := String(m.get("ally_tag", ""))
+			# 17d: the sender's equipped chat-bubble style
+			# (server-resolved, presentation only).
+			var cbub := String(m.get("bubble", "mac_dinh"))
 			if cscope == "alliance":
 				# 17a: keep a session transcript for the alliance
 				# screen; the line still rides chat_received.
-				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag})
+				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub})
 				if alliance_chat_lines.size() > 100:
 					alliance_chat_lines.pop_front()
 				print("MPLOG alliance chat from=", cname, " text=", ctext)
 			if ctag != "":
 				print("MPLOG chat ally_tag=", ctag, " scope=", cscope)
-			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext, ctag)
+			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext, ctag, cbub)
 		"auth_ok":
 			auth_token = String(m.get("token", ""))
 			auth_profile = m.get("profile", {})
@@ -623,18 +633,29 @@ func _handle_message(txt: String) -> void:
 				_save_session_token(auth_token)
 			else:
 				clear_saved_session()
-			# The account's stored avatar becomes the local pick;
+			# The account's stored avatar becomes the local pick
+			# (17d catalogue — Avatars, not the hero registry);
 			# cosmetic-skin ownership arrives with the profile too.
 			if auth_profile.has("avatar_id"):
-				Characters.set_local_avatar(String(auth_profile.get("avatar_id", "knight")))
+				Avatars.set_local_avatar(String(auth_profile.get("avatar_id", Avatars.DEFAULT_ID)))
 			Characters.set_owned_skins(auth_profile.get("owned_skins", []))
 			auth_ok.emit(auth_token, auth_profile)
 		"avatar":
 			# Server echo of the persisted avatar pick (set_avatar).
-			var avatar_id := Characters.normalize_char(String(m.get("avatar_id", "knight")))
+			var avatar_id := Avatars.normalize_id(String(m.get("avatar_id", Avatars.DEFAULT_ID)))
 			auth_profile["avatar_id"] = avatar_id
-			Characters.set_local_avatar(avatar_id)
+			Avatars.set_local_avatar(avatar_id)
 			avatar_changed.emit(avatar_id)
+		"profile_update":
+			# 17d: refreshed profile after a cosmetics equip or
+			# a rename — surfaces re-render from it.
+			auth_profile = m.get("profile", {})
+			if auth_profile.has("avatar_id"):
+				Avatars.set_local_avatar(String(auth_profile.get("avatar_id", Avatars.DEFAULT_ID)))
+			print("MPLOG profile_update frame=", String(auth_profile.get("frame_id", "")),
+				" bubble=", String(auth_profile.get("bubble_style", "")),
+				" title=", String(auth_profile.get("display_title", "")))
+			profile_updated.emit(auth_profile)
 		"auth_error":
 			auth_error.emit(String(m.get("msg", "Lỗi đăng nhập")))
 		"display_name":
@@ -644,6 +665,9 @@ func _handle_message(txt: String) -> void:
 			display_name_changed.emit(dn)
 		"name_error":
 			name_error.emit(String(m.get("msg", "Tên không hợp lệ")))
+			# 17d: a cooldown rejection carries the next date.
+			if m.has("rename_next_at"):
+				rename_failed.emit(String(m.get("msg", "")), int(m.get("rename_next_at", 0)))
 		"auth_out":
 			auth_token = ""
 			auth_profile = {}
@@ -1083,14 +1107,38 @@ func clear_saved_session() -> void:
 		DirAccess.remove_absolute(SESSION_PATH)
 
 
-## Profile avatar pick (decoupled from the character draw — see
-## Characters): the pick lands locally first (guests keep it in
-## the cfg); logged-in sessions also persist it on the account,
-## and the server echoes the stored value in an "avatar" message.
+## Profile avatar pick (17d catalogue — see Avatars): the pick
+## lands locally first (guests keep it in the cfg); logged-in
+## sessions also persist it on the account, and the server
+## echoes the stored value in an "avatar" message.
 func set_avatar(id: String) -> void:
-	Characters.set_local_avatar(id)
+	Avatars.set_local_avatar(id)
 	if account_name != "":
-		_send({"t": "set_avatar", "avatar": Characters.normalize_char(id)})
+		_send({"t": "set_avatar", "avatar": Avatars.normalize_id(id)})
+
+
+## Display-name rename (17d): set_name's sibling WITH the
+## 30-day cooldown. Success lands as profile_update +
+## display_name; a cooldown rejection lands as name_error +
+## rename_failed (with the next allowed date).
+func rename(name: String) -> void:
+	_send({"t": "rename", "name": name})
+
+
+## Avatar-frame equip (17d): "" = no frame. Ownership is
+## computed server-side; the answer is a profile_update.
+func set_frame(id: String) -> void:
+	_send({"t": "set_frame", "frame": id})
+
+
+## Chat-bubble style equip (17d): same pattern.
+func set_bubble(id: String) -> void:
+	_send({"t": "set_bubble", "bubble": id})
+
+
+## Display-title equip (17d): the title NAME ("" = clear).
+func set_title(title_name: String) -> void:
+	_send({"t": "set_title", "title": title_name})
 
 
 func request_leaderboard(mode: String = "wl") -> void:
@@ -1636,6 +1684,13 @@ func _auto_process() -> void:
 			return
 	if auto.has("mp-shot-alliance2") and _auto_authed and not _auto_shot_done:
 		_auto_alliance2_shot(cs)
+		return
+	# 17d settings smoke driver + captures.
+	if auto.has("mp-settings") and _auto_authed:
+		if _auto_settings_process(cs):
+			return
+	if auto.has("mp-shot-settings") and _auto_authed and not _auto_shot_done:
+		_auto_settings_shot(cs)
 		return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
@@ -3272,3 +3327,142 @@ func _shot_then_quit(path: String, p: float) -> void:
 	_save_shot(path)
 	print("MPLOG loading shot saved progress=", p)
 	get_tree().quit()
+
+
+# ------------------------------------------------ 17d settings drivers
+
+var _set_stage: int = 0
+var _set_next_poll: int = 0
+var _set_authed_at: int = 0
+var _set_hooked: bool = false
+var _set_rename_next: int = 0
+var _set_last_error: String = ""
+var _set_quit_at: int = 0
+var _set_shot_stage: int = 0
+var _set_shot_at: int = 0
+
+
+func _set_hook() -> void:
+	if _set_hooked:
+		return
+	_set_hooked = true
+	rename_failed.connect(func(_msg: String, nxt: int) -> void:
+		_set_rename_next = nxt
+		print("MPLOG settings rename_failed next=", nxt))
+	lobby_error.connect(func(msg: String) -> void:
+		_set_last_error = msg)
+
+
+## mp-settings smoke: rename -> cooldown blocks the second
+## rename; avatar + frame + bubble equips land on the profile.
+## The seeded account must own frame_01 (Lv 5 stats).
+func _auto_settings_process(_cs) -> bool:
+	_set_hook()
+	var now := Time.get_ticks_msec()
+	if _set_authed_at == 0:
+		_set_authed_at = now
+	if _set_quit_at == 0 and now - _set_authed_at > 90000:
+		print("MPLOG settings TIMEOUT stage=", _set_stage)
+		_set_quit_at = now + 400
+	if _set_quit_at > 0:
+		if now >= _set_quit_at:
+			get_tree().quit()
+		return true
+	if now < _set_next_poll:
+		return true
+	_set_next_poll = now + 700
+	var target := String(auto.get("mp-rename-to", "TenMoi17d"))
+	match _set_stage:
+		0:
+			print("MPLOG settings profile name=", String(auth_profile.get("display_name", "")),
+				" avatar=", String(auth_profile.get("avatar_id", "")),
+				" frames_owned=", (auth_profile.get("owned_frames", []) as Array).size(),
+				" rename_next=", int(auth_profile.get("rename_next_at", 0)))
+			rename(target)
+			_set_stage = 1
+		1:
+			if String(auth_profile.get("display_name", "")) == target:
+				print("MPLOG settings rename ok name=", target)
+				rename("TenKhac17d")
+				_set_stage = 2
+		2:
+			if _set_rename_next > 0:
+				var ok := _set_rename_next > int(Time.get_unix_time_from_system())
+				print("MPLOG settings rename blocked next_valid=", ok)
+				set_avatar("art:05")
+				_set_stage = 3
+		3:
+			if String(auth_profile.get("avatar_id", "")) == "art:05":
+				print("MPLOG settings avatar ok id=art:05")
+				set_frame("frame_01")
+				_set_stage = 4
+		4:
+			if String(auth_profile.get("frame_id", "")) == "frame_01":
+				print("MPLOG settings frame ok id=frame_01")
+				set_frame("frame_06")
+				_set_stage = 5
+				_set_last_error = ""
+		5:
+			if _set_last_error != "":
+				print("MPLOG settings unowned frame rejected err=", _set_last_error)
+				set_bubble("mac_dinh")
+				_set_stage = 6
+		6:
+			if String(auth_profile.get("bubble_style", "")) == "mac_dinh":
+				print("MPLOG settings bubble ok id=mac_dinh")
+				print("MPLOG settings done")
+				_set_quit_at = now + 500
+	return true
+
+
+## mp-shot-settings=<panel> + mp-shot-file=<path>: open the
+## panel and shoot. Panel "profileframe" instead equips
+## frame_01 + art:03, opens the PROFILE, and shoots twice
+## (~0.9s apart) so the frame animation is provable.
+func _auto_settings_shot(cs) -> void:
+	_set_hook()
+	var now := Time.get_ticks_msec()
+	if _auto_home_at == 0:
+		_auto_home_at = now
+		return
+	var mode := String(auto.get("mp-shot-settings", "hub"))
+	var path := String(auto.get("mp-shot-file", ""))
+	match _set_shot_stage:
+		0:
+			if now - _auto_home_at > 900:
+				_set_shot_at = now
+				if mode == "profileframe":
+					set_avatar("art:03")
+					set_frame("frame_01")
+					_set_shot_stage = 1
+				else:
+					if cs != null and cs.has_method("open_settings_shot"):
+						cs.open_settings_shot(mode)
+					_set_shot_stage = 3
+		1:
+			if String(auth_profile.get("frame_id", "")) == "frame_01" \
+					or now - _set_shot_at > 5000:
+				if cs != null and cs.has_method("open_profile_shot"):
+					cs.open_profile_shot()
+				_set_shot_at = now
+				_set_shot_stage = 2
+		2:
+			if now - _set_shot_at > 900:
+				# NOT _auto_shot_done yet — stage 5 still needs
+				# the driver alive for the animation-proof shot.
+				_save_shot(path)
+				print("MPLOG settings profileframe shot A saved")
+				_set_shot_at = now
+				_set_shot_stage = 5
+		5:
+			if now - _set_shot_at > 900:
+				var path_b := path.replace(".png", "_b.png")
+				_save_shot(path_b)
+				print("MPLOG settings profileframe shot B saved")
+				get_tree().quit()
+		3:
+			if now - _set_shot_at > 1100:
+				_auto_shot_done = true
+				_save_shot(path)
+				print("MPLOG settings shot saved panel=", mode)
+				get_tree().quit()

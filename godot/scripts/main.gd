@@ -118,6 +118,12 @@ var _replay_bar = null # ReplayBar (CanvasLayer), built in _ready
 var local_slot: int = 0
 var slot_teams: Array = [] # slot -> faction team
 var slot_names: Array = []
+# 17d: per-slot account avatar id + effective frame id
+# (presentation only; mirrors slot_names indexing).
+var slot_avatars: Array = []
+var slot_frames: Array = []
+# 17d: in-match chat speech-bubble layer (ChatBubbles).
+var chat_bubbles: ChatBubbles = null
 var mp_wallets: Array = [] # slot -> resources Dictionary
 var mp_ages: Array = [] # slot -> {age, researching, timer, target, duration}
 var mp_techs: Array = [] # slot -> {levels: {tech id -> tier}, active: {building -> research record}}
@@ -794,6 +800,10 @@ func _mp_setup_slots() -> void:
 		# enters sim state or checksums.
 		slot_names.append(Net.ally_disp(str(p.get("name", "Người chơi")),
 				str(p.get("ally_tag", ""))))
+		# 17d: the slot account's avatar id + effective frame
+		# (players-panel composition; presentation only).
+		slot_avatars.append(str(p.get("avatar_id", "")))
+		slot_frames.append(str(p.get("frame_id", "")))
 		slot_chars.append(Characters.normalize_char(str(p.get("char", ""))))
 		slot_skins.append(Characters.normalize_skin(str(p.get("skin", ""))))
 		print("MPLOG in-match chars slot=", int(p.get("slot", 0)),
@@ -1299,7 +1309,7 @@ func _player_display_name(slot: int) -> String:
 	return "Người chơi %d" % (slot + 1)
 
 
-func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String = "") -> void:
+func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String = "", bubble_style: String = "mac_dinh") -> void:
 	# "alliance" (17a) is the lobby guild channel: the alliance
 	# screen owns it — it never lands in a match's chat or toast.
 	if scope == "lobby" or scope == "alliance" or hud == null:
@@ -1313,7 +1323,12 @@ func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: Strin
 		return
 	# 17b: [TAG] before the sender's name (presentation only).
 	var disp := Net.ally_disp(sender_name, ally_tag)
-	hud.add_chat_line(disp, text, scope, from_slot)
+	hud.add_chat_line(disp, text, scope, from_slot, bubble_style)
+	# 17d: the sender's speech bubble over their hero (or TC),
+	# in their equipped style — presentation only, fog-checked
+	# inside the bubble layer.
+	if chat_bubbles != null and from_slot >= 0:
+		chat_bubbles.show_bubble(from_slot, text, bubble_style)
 	if not hud.is_chat_open() and from_slot != local_slot:
 		hud.show_message("%s: %s" % [disp, text])
 
@@ -3109,6 +3124,7 @@ func open_friends_shot(tab: String = "all") -> void:
 var profile_screen = null
 var tournament_screen = null
 var alliance_screen = null
+var settings_panels = null
 
 
 func _ensure_profile() -> void:
@@ -3123,10 +3139,31 @@ func home_open_profile() -> void:
 	profile_screen.open()
 
 
+## Personal settings (17d): the profile gear's hub — Đổi tên /
+## Avatar / Danh hiệu / Trang trí panels. `which` = "hub" or a
+## panel key ("rename"/"avatar"/"frames"/"titles"/"decor").
+func _ensure_settings() -> void:
+	if settings_panels == null:
+		settings_panels = SettingsPanels.new()
+		settings_panels.setup(self)
+		add_child(settings_panels)
+
+
+func home_open_settings_panels(which: String = "hub") -> void:
+	_ensure_settings()
+	settings_panels.open(which)
+
+
 ## Capture-harness entry: open the profile screen.
 func open_profile_shot() -> void:
 	show_home()
 	home_open_profile()
+
+
+## Capture-harness entry (17d): open a settings panel.
+func open_settings_shot(which: String) -> void:
+	show_home()
+	home_open_settings_panels(which)
 
 
 ## Profile gear -> the home settings/connection popup (the
@@ -3667,6 +3704,12 @@ func _boot_build() -> void:
 	hero_name_layer.mode = "names"
 	hero_name_layer.z_index = 120
 	add_child(hero_name_layer)
+	# 17d: chat speech bubbles over heroes (above names,
+	# below fog — fog gates their drawing anyway).
+	chat_bubbles = ChatBubbles.new()
+	chat_bubbles.game = self
+	chat_bubbles.z_index = 130
+	add_child(chat_bubbles)
 
 	# Fog of War (player perspective) — set up after both bases exist
 	# so the opening reveal covers them correctly. In MP the fog is
