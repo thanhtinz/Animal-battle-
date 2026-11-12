@@ -1637,7 +1637,8 @@ func _fill_friends(body: VBoxContainer) -> void:
 		row.add_child(badge)
 		var mid := VBoxContainer.new()
 		mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mid.add_child(_label(String(f.get("display_name", String(f.get("user", "?")))), 17, Color.WHITE))
+		mid.add_child(_label(Net.ally_disp(String(f.get("display_name", String(f.get("user", "?")))),
+				String(f.get("ally_tag", ""))), 17, Color.WHITE))
 		mid.add_child(_label(String(f.get("rank_text", "")), 13, Color(0.8, 0.83, 0.9)))
 		row.add_child(mid)
 		var online := bool(f.get("online", false))
@@ -2226,7 +2227,8 @@ func _friend_row(f: Dictionary) -> Control:
 	mid.add_theme_constant_override("separation", 2)
 	h.add_child(mid)
 	var uname := String(f.get("user", ""))
-	var name_l := _label(String(f.get("display_name", uname)), 17, PAPER)
+	var name_l := _label(Net.ally_disp(String(f.get("display_name", uname)),
+			String(f.get("ally_tag", ""))), 17, PAPER)
 	mid.add_child(name_l)
 	var status_l: Label
 	if bool(f.get("online", false)):

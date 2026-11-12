@@ -378,10 +378,21 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 	if rs := []rune(text); len(rs) > ChatMaxLen {
 		text = string(rs[:ChatMaxLen])
 	}
-	h.SendToUsers(memberUsers, map[string]any{
+	tag := ""
+	if h.allis != nil {
+		tag = h.allis.TagOf(user)
+		// 17b: persist BEFORE fan-out — the history is
+		// exactly the lines that passed the rate limit.
+		h.allis.AddChatMsg(allyID, user, name, text)
+	}
+	msg := map[string]any{
 		"t": "chat", "scope": "alliance", "from": AllianceChatFrom,
 		"name": name, "text": text, "alliance": allyID,
-	})
+	}
+	if tag != "" {
+		msg["ally_tag"] = tag
+	}
+	h.SendToUsers(memberUsers, msg)
 }
 
 // teamsFor assigns faction teams by join order for a match of n
@@ -948,10 +959,16 @@ func (h *Hub) RelayObserverChat(code string, obs *observerConn, scope, text stri
 	if rs := []rune(text); len(rs) > ChatMaxLen {
 		text = string(rs[:ChatMaxLen])
 	}
-	h.broadcastLocked(r, map[string]any{
+	omsg := map[string]any{
 		"t": "chat", "scope": scope, "from": ObserverSlot,
 		"name": obs.Name, "text": text, "observer": true,
-	})
+	}
+	if h.allis != nil && obs.User != "" {
+		if tag := h.allis.TagOf(obs.User); tag != "" {
+			omsg["ally_tag"] = tag
+		}
+	}
+	h.broadcastLocked(r, omsg)
 	return nil
 }
 
@@ -1659,6 +1676,13 @@ func (h *Hub) RelayChatEx(code string, slot int, scope, text string, targets []i
 	msg := map[string]any{
 		"t": "chat", "scope": scope, "from": slot, "name": p.Name, "text": text,
 	}
+	// 17b: the sender's alliance tag rides chat lines for
+	// [TAG] name rendering (presentation only).
+	if h.allis != nil && p.User != "" {
+		if tag := h.allis.TagOf(p.User); tag != "" {
+			msg["ally_tag"] = tag
+		}
+	}
 	if scope == "team" {
 		if r.Diplomacy && len(targets) > 0 {
 			// 15b: alliance channel — sender + declared allies.
@@ -1896,11 +1920,20 @@ func (h *Hub) playerViewsLocked(r *Room) []map[string]any {
 	out := make([]map[string]any, 0, len(slots))
 	for i, s := range slots {
 		p := r.Players[s]
-		out = append(out, map[string]any{
+		view := map[string]any{
 			"slot": p.Slot, "name": p.Name, "ready": p.Ready,
 			"connected": p.Connected, "team": teams[i], "account": p.Account,
 			"char": NormalizeCharID(p.Char), "skin": NormalizeSkinID(p.Skin),
-		})
+		}
+		// 17b: alliance tag for [TAG] name rendering in the
+		// players panel / overhead names (presentation only —
+		// the client composes it outside the sim state).
+		if h.allis != nil && p.User != "" {
+			if tag := h.allis.TagOf(p.User); tag != "" {
+				view["ally_tag"] = tag
+			}
+		}
+		out = append(out, view)
 	}
 	return out
 }

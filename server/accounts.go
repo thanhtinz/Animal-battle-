@@ -302,6 +302,11 @@ type Profile struct {
 	// one ("" = none).
 	OwnedSkins []string `json:"owned_skins"`
 	ActiveSkin string   `json:"active_skin"`
+	// AllyTag (17b) is the tag of the alliance the account
+	// belongs to, resolved by profileOf through the
+	// Accounts.AllyTagOf seam ("" = no alliance). Presentation
+	// only: the client renders it as [TAG] before the name.
+	AllyTag string `json:"ally_tag,omitempty"`
 	// Titles are the account's earned titles (15h); the
 	// profile page's "Danh hiệu" row shows the first one.
 	Titles []string `json:"titles,omitempty"`
@@ -477,6 +482,9 @@ func (ac *Accounts) profileOf(a *Account) Profile {
 	p.Rank = rankViewOf(a, ac.emperorSet()[a.User])
 	p.DailyBonusClaimed = ac.dailyBonusClaimed(a)
 	p.SeasonEnd = ac.SeasonEndUnix()
+	if ac.AllyTagOf != nil {
+		p.AllyTag = ac.AllyTagOf(a.User)
+	}
 	return p
 }
 
@@ -765,6 +773,19 @@ type Accounts struct {
 	// the accounts lock RELEASED, after the result is durable,
 	// and a hook must never fail the banking path.
 	MatchHook func(user string, xpDelta int)
+	// MatchFeed (17b) is MatchHook's sibling for consumers
+	// that need the match's shape, not its XP: it fires at
+	// EXACTLY the same banking points with (won, ranked,
+	// delta) — delta +1 per banked match, −1 when a revert
+	// unbanks one. 17b wires it to alliance weekly quests +
+	// member match counters. Same contract: lock released,
+	// after durable, never fails banking.
+	MatchFeed func(user string, won bool, ranked bool, delta int)
+	// AllyTagOf (17b) resolves a user's alliance tag for
+	// presentation payloads (profile). Nil-safe: profiles
+	// simply carry no tag when unset. Set by main() next to
+	// MatchHook; presentation only, never sim data.
+	AllyTagOf func(user string) string
 }
 
 // matchXPDelta is one recorded match's XP value for its
@@ -774,6 +795,15 @@ func matchXPDelta(won bool) int {
 		return 30
 	}
 	return 10
+}
+
+// fireMatchFeed delivers one banked (delta +1) or un-banked
+// (delta −1) match to the 17b feed, if any. Callers invoke
+// it AFTER releasing ac.mu, at the same points as the hook.
+func (ac *Accounts) fireMatchFeed(user string, won, ranked bool, delta int) {
+	if ac.MatchFeed != nil {
+		ac.MatchFeed(user, won, ranked, delta)
+	}
 }
 
 // fireMatchHook delivers one banked match's XP delta to the
@@ -1040,6 +1070,10 @@ type FriendEntry struct {
 	AvatarID    string `json:"avatar_id"`
 	Close       bool   `json:"close"`
 	LastOnline  int64  `json:"last_online"`
+	// AllyTag (17b): the friend's alliance tag, filled by the
+	// session's sendFriends through the hub's alliance
+	// service (FriendsOf itself has no alliance access).
+	AllyTag string `json:"ally_tag,omitempty"`
 }
 
 // AddFriend appends `other` to `me`'s friend list. Both accounts
@@ -1316,6 +1350,20 @@ func (ac *Accounts) LettersOf(user string) []Letter {
 	return out
 }
 
+// DeliverLetter files a letter in a user's mailbox (17b —
+// alliance invites ride it). Same storage path as the
+// banking letters (appendLetter + PutAccount); the mail
+// system carries no action payload, so letters stay
+// informational.
+func (ac *Accounts) DeliverLetter(user, title, body string) error {
+	a, ok := ac.store.GetAccount(user)
+	if !ok {
+		return ErrBadCredentials
+	}
+	a.appendLetter(title, body, ac.now().Unix())
+	return ac.store.PutAccount(a)
+}
+
 // MarkMailRead marks one letter (id > 0) or the whole mailbox
 // (id == 0) read, then returns the remaining unread count.
 func (ac *Accounts) MarkMailRead(user string, id int64) (int, error) {
@@ -1352,6 +1400,7 @@ func (ac *Accounts) RecordMatch(user string, won bool) error {
 	}
 	if banked {
 		ac.fireMatchHook(user, won)
+		ac.fireMatchFeed(user, won, false, +1)
 	}
 	return nil
 }
@@ -1391,6 +1440,9 @@ func (ac *Accounts) RecordMatchRevert(user string, won bool) error {
 	}
 	if unbanked && ac.MatchHook != nil {
 		ac.MatchHook(user, -matchXPDelta(won))
+	}
+	if unbanked {
+		ac.fireMatchFeed(user, won, false, -1)
 	}
 	return nil
 }
@@ -1630,6 +1682,8 @@ func (ac *Accounts) RecordRankedResultMeta(winner, loser, biome, layout string, 
 	if err == nil {
 		ac.fireMatchHook(winner, true)
 		ac.fireMatchHook(loser, false)
+		ac.fireMatchFeed(winner, true, true, +1)
+		ac.fireMatchFeed(loser, false, true, +1)
 	}
 	return wo, lo, err
 }
@@ -1644,6 +1698,8 @@ func (ac *Accounts) RecordRankedResultReason(winner, loser, biome, layout string
 	if err == nil {
 		ac.fireMatchHook(winner, true)
 		ac.fireMatchHook(loser, false)
+		ac.fireMatchFeed(winner, true, true, +1)
+		ac.fireMatchFeed(loser, false, true, +1)
 	}
 	return wo, lo, err
 }
@@ -1764,6 +1820,7 @@ func (ac *Accounts) RecordRankedPlacements(users []string, biome, layout string,
 	if err == nil {
 		for _, oc := range outcomes {
 			ac.fireMatchHook(oc.User, oc.Won)
+			ac.fireMatchFeed(oc.User, oc.Won, true, +1)
 		}
 	}
 	return outcomes, err

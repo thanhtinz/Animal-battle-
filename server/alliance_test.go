@@ -19,6 +19,7 @@ type allyEnv struct {
 	acc   *Accounts
 	hub   *Hub
 	clock *time.Time
+	n     int // tag counter for mustCreate (tags must be unique)
 }
 
 func allySetup(t *testing.T) *allyEnv {
@@ -35,6 +36,8 @@ func allySetup(t *testing.T) *allyEnv {
 	clock := &now
 	as.now = func() time.Time { return *clock }
 	acc.MatchHook = as.Accrue // mirrors main()'s wiring
+	acc.MatchFeed = as.FeedMatch
+	acc.AllyTagOf = as.TagOf
 	hub := NewHub()
 	hub.acc = acc
 	hub.allis = as
@@ -61,7 +64,8 @@ func (e *allyEnv) seed(t *testing.T, users ...string) {
 
 func (e *allyEnv) mustCreate(t *testing.T, creator, name, mode string) *Alliance {
 	t.Helper()
-	a, err := e.as.Create(creator, name, "red", mode, "")
+	e.n++
+	a, err := e.as.Create(creator, name, fmt.Sprintf("T%02d", e.n), "red", mode, "")
 	if err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
@@ -72,19 +76,19 @@ func TestAllianceCreateRules(t *testing.T) {
 	e := allySetup(t)
 	e.reg(t, "LeaderA", "LeaderB")
 
-	if _, err := e.as.Create("", "Hội Rồng", "red", AllianceModeRequest, ""); err == nil {
+	if _, err := e.as.Create("", "Hội Rồng", "HR1", "red", AllianceModeRequest, ""); err == nil {
 		t.Fatal("guest create must fail")
 	}
-	if _, err := e.as.Create("LeaderA", "AB", "red", AllianceModeRequest, ""); err != ErrAllyBadName {
+	if _, err := e.as.Create("LeaderA", "AB", "HR1", "red", AllianceModeRequest, ""); err != ErrAllyBadName {
 		t.Fatalf("short name: %v", err)
 	}
-	if _, err := e.as.Create("LeaderA", "Hội Rồng!", "red", AllianceModeRequest, ""); err != ErrAllyBadName {
+	if _, err := e.as.Create("LeaderA", "Hội Rồng!", "HR1", "red", AllianceModeRequest, ""); err != ErrAllyBadName {
 		t.Fatalf("bad char name: %v", err)
 	}
-	if _, err := e.as.Create("LeaderA", "Hội Rồng", "pink", AllianceModeRequest, ""); err != ErrAllyBadBadge {
+	if _, err := e.as.Create("LeaderA", "Hội Rồng", "HR1", "pink", AllianceModeRequest, ""); err != ErrAllyBadBadge {
 		t.Fatalf("bad badge: %v", err)
 	}
-	if _, err := e.as.Create("LeaderA", "Hội Rồng", "red", "closed", ""); err != ErrAllyBadMode {
+	if _, err := e.as.Create("LeaderA", "Hội Rồng", "HR1", "red", "closed", ""); err != ErrAllyBadMode {
 		t.Fatalf("bad mode: %v", err)
 	}
 	a := e.mustCreate(t, "LeaderA", "Hội Rồng", AllianceModeRequest)
@@ -92,11 +96,11 @@ func TestAllianceCreateRules(t *testing.T) {
 		t.Fatalf("fresh alliance wrong: %+v", a)
 	}
 	// Name uniqueness is case-insensitive.
-	if _, err := e.as.Create("LeaderB", "hội rồng", "blue", AllianceModeOpen, ""); err != ErrAllyNameTaken {
+	if _, err := e.as.Create("LeaderB", "hội rồng", "HR2", "blue", AllianceModeOpen, ""); err != ErrAllyNameTaken {
 		t.Fatalf("duplicate name: %v", err)
 	}
 	// The creator cannot found a second one.
-	if _, err := e.as.Create("LeaderA", "Hội Khác", "blue", AllianceModeOpen, ""); err != ErrAllyAlreadyIn {
+	if _, err := e.as.Create("LeaderA", "Hội Khác", "HK1", "blue", AllianceModeOpen, ""); err != ErrAllyAlreadyIn {
 		t.Fatalf("second create: %v", err)
 	}
 }
@@ -211,7 +215,7 @@ func TestAllianceRoleMatrix(t *testing.T) {
 	if err := e.as.SetRole(a.ID, "Dep1", "Mem1", AllianceRoleDeputy); err != ErrAllyNoPerm {
 		t.Fatalf("deputy setrole: %v", err)
 	}
-	if err := e.as.UpdateSettings(a.ID, "Dep1", "blue", AllianceModeOpen, ""); err != ErrAllyNoPerm {
+	if err := e.as.UpdateSettings(a.ID, "Dep1", "", "blue", AllianceModeOpen, ""); err != ErrAllyNoPerm {
 		t.Fatalf("deputy settings: %v", err)
 	}
 	if err := e.as.Transfer(a.ID, "Dep1", "Mem1"); err != ErrAllyNoPerm {
@@ -242,7 +246,7 @@ func TestAllianceRoleMatrix(t *testing.T) {
 		t.Fatalf("promote after demote: %v", err)
 	}
 	// Leader updates settings fine.
-	if err := e.as.UpdateSettings(a.ID, "Boss", "gold", AllianceModeRequest, "Hội mạnh"); err != nil {
+	if err := e.as.UpdateSettings(a.ID, "Boss", "", "gold", AllianceModeRequest, "Hội mạnh"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := e.as.get(a.ID)

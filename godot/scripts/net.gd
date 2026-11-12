@@ -34,7 +34,7 @@ signal desync_notice(tick: int)
 signal lobby_error(msg: String)
 signal connection_closed
 # P4 stage 2: chat / accounts / resync.
-signal chat_received(scope: String, from_slot: int, sender_name: String, text: String)
+signal chat_received(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String)
 signal auth_ok(token: String, profile: Dictionary)
 signal avatar_changed(avatar_id: String)
 # 13r: display-name system (the "Đặt Tên Nhân Vật" panel).
@@ -261,6 +261,7 @@ func _ready() -> void:
 			or args.has("mp-tourn") or args.has("mp-shot-tourn-list") \
 			or args.has("mp-shot-tourn-bracket") \
 			or args.has("mp-alliance") or args.has("mp-shot-alliance") \
+			or args.has("mp-alliance2") or args.has("mp-shot-alliance2") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -315,7 +316,7 @@ func _ready() -> void:
 					" cmds=", (rp.get("cmds", []) as Array).size())
 			# 14a: seek-at-start for the seek-correctness smoke.
 			begin_replay(rp, int(auto.get("mp-replay-seek", 0))))
-	chat_received.connect(func(_scope: String, from_slot: int, _n: String, _t: String) -> void:
+	chat_received.connect(func(_scope: String, from_slot: int, _n: String, _t: String, _tag: String) -> void:
 		# Chat-shot peer: answer the host's greeting shortly after
 		# it actually arrives (order-safe even on a slow host).
 		if auto.has("mp-chat-peer") and from_slot != my_slot \
@@ -596,14 +597,19 @@ func _handle_message(txt: String) -> void:
 			var cscope := String(m.get("scope", "match"))
 			var cname := String(m.get("name", "?"))
 			var ctext := String(m.get("text", ""))
+			# 17b: the sender's alliance tag (server-resolved,
+			# presentation only) rides every chat line.
+			var ctag := String(m.get("ally_tag", ""))
 			if cscope == "alliance":
 				# 17a: keep a session transcript for the alliance
 				# screen; the line still rides chat_received.
-				alliance_chat_lines.append({"name": cname, "text": ctext})
+				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag})
 				if alliance_chat_lines.size() > 100:
 					alliance_chat_lines.pop_front()
 				print("MPLOG alliance chat from=", cname, " text=", ctext)
-			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext)
+			if ctag != "":
+				print("MPLOG chat ally_tag=", ctag, " scope=", cscope)
+			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext, ctag)
 		"auth_ok":
 			auth_token = String(m.get("token", ""))
 			auth_profile = m.get("profile", {})
@@ -682,6 +688,17 @@ func _handle_message(txt: String) -> void:
 			var mine_v = m.get("mine", null)
 			alliance_mine = mine_v if mine_v is Dictionary else {}
 			alliance_invites = m.get("invites", [])
+			# 17b: seed the chat transcript from the server's
+			# persisted history when this session has none yet
+			# (a fresh login sees the last 50 lines; live lines
+			# append after them).
+			if not alliance_mine.is_empty() and alliance_chat_lines.is_empty():
+				var mtag := String(alliance_mine.get("tag", ""))
+				for cm in alliance_mine.get("chat", []):
+					alliance_chat_lines.append({
+						"name": String(cm.get("name", "?")),
+						"text": String(cm.get("text", "")),
+						"tag": mtag, "hist": true})
 			print("MPLOG alliance home mine=", String(alliance_mine.get("name", "")),
 					" role=", String(alliance_mine.get("my_role", "")),
 					" members=", int(alliance_mine.get("members_count", 0)),
@@ -784,8 +801,8 @@ func alliance_request_list(search: String) -> void:
 	_send({"t": "alliance_list", "name": search})
 
 
-func alliance_create(ally_name: String, badge: String, mode: String, desc: String) -> void:
-	_send({"t": "alliance_create", "name": ally_name, "badge": badge,
+func alliance_create(ally_name: String, tag: String, badge: String, mode: String, desc: String) -> void:
+	_send({"t": "alliance_create", "name": ally_name, "tag": tag, "badge": badge,
 			"mode": mode, "desc": desc})
 
 
@@ -833,8 +850,8 @@ func alliance_transfer(id: String, user: String) -> void:
 	_send({"t": "alliance_transfer", "ally_id": id, "user": user})
 
 
-func alliance_settings(id: String, badge: String, mode: String, desc: String) -> void:
-	_send({"t": "alliance_settings", "ally_id": id, "badge": badge,
+func alliance_settings(id: String, tag: String, badge: String, mode: String, desc: String) -> void:
+	_send({"t": "alliance_settings", "ally_id": id, "tag": tag, "badge": badge,
 			"mode": mode, "desc": desc})
 
 
@@ -844,6 +861,19 @@ func alliance_disband(id: String) -> void:
 
 func alliance_chat(text: String) -> void:
 	_send({"t": "alliance_chat", "text": text})
+
+
+## 17b: set the alliance notice board (leader/deputy). The
+## server pushes a fresh alliance_home to every member.
+func alliance_notice(id: String, text: String) -> void:
+	_send({"t": "alliance_notice", "ally_id": id, "text": text})
+
+
+## 17b: "[TAG] Name" composition for chat lines, friend rows
+## and player panels. Presentation only — the bare name (and
+## every sim value) is never touched.
+static func ally_disp(pname: String, tag: String) -> String:
+	return ("[%s] %s" % [tag, pname]) if tag != "" else pname
 
 
 func tourn_register(id: String, partner: String = "") -> void:
@@ -1600,6 +1630,13 @@ func _auto_process() -> void:
 	if auto.has("mp-shot-alliance") and _auto_authed and not _auto_shot_done:
 		_auto_alliance_shot(cs)
 		return
+	# 17b alliance-expansion smoke driver + captures.
+	if auto.has("mp-alliance2") and _auto_authed:
+		if _auto_alliance2_process(cs):
+			return
+	if auto.has("mp-shot-alliance2") and _auto_authed and not _auto_shot_done:
+		_auto_alliance2_shot(cs)
+		return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
 	# shoot and quit.
@@ -2288,7 +2325,8 @@ func _auto_alliance_process(_cs) -> bool:
 			match _ally_stage:
 				0:
 					print("MPLOG alliance create sent name=", aname)
-					alliance_create(aname, "red", "request", "Chung một chiến tuyến")
+					alliance_create(aname, String(auto.get("mp-alliance-tag", "HKL1")),
+							"red", "request", "Chung một chiến tuyến")
 					_ally_stage = 1
 				1:
 					alliance_request_home()
@@ -2418,6 +2456,198 @@ func _auto_alliance_shot(cs) -> void:
 			_auto_shot_done = true
 			_save_shot(String(auto["mp-shot-alliance"]))
 			print("MPLOG alliance shot saved")
+			get_tree().quit()
+
+
+## 17b alliance-expansion smoke driver (--mp-alliance2):
+##   lead   — creates the alliance WITH a tag, sends a chat
+##            line BEFORE the member joins (history seed),
+##            approves the member, promotes them to deputy,
+##            and waits to SEE the notice the deputy sets;
+##   mem    — finds the alliance (row carries the tag), joins,
+##            asserts the pre-join chat line is in the server
+##            history payload, chats back, and once promoted
+##            sets the notice board;
+##   verify — a FRESH process after a real recorded match:
+##            prints the quest progress + member counters +
+##            persisted history + notice for shell asserts
+##            (this is the "history after relog" evidence).
+var _ally2_stage: int = 0
+
+
+func _auto_alliance2_process(_cs) -> bool:
+	var now := Time.get_ticks_msec()
+	if _ally_authed_at == 0:
+		_ally_authed_at = now
+	var role := String(auto.get("mp-alliance2", "mem"))
+	var aname := String(auto.get("mp-alliance-name", "Hội Sông Lam 17b"))
+	var atag := String(auto.get("mp-alliance-tag", "SL17"))
+	var notice_text := "Tối nay 20h tập trung đánh xếp hạng nhé"
+	if _ally_quit_at == 0 and now - _ally_authed_at > 110000:
+		print("MPLOG ally2 TIMEOUT role=", role, " stage=", _ally2_stage)
+		_ally_quit_at = now + 500
+	if _ally_quit_at > 0:
+		if now >= _ally_quit_at:
+			get_tree().quit()
+		return true
+	if now < _ally_next_poll:
+		return true
+	_ally_next_poll = now + 900
+	match role:
+		"lead":
+			match _ally2_stage:
+				0:
+					print("MPLOG ally2 create sent name=", aname, " tag=", atag)
+					alliance_create(aname, atag, "red", "request",
+							"Liên minh kiểm thử 17b")
+					_ally2_stage = 1
+				1:
+					alliance_request_home()
+					if not alliance_mine.is_empty():
+						_ally_id = String(alliance_mine.get("id", ""))
+						print("MPLOG ally2 created id=", _ally_id,
+								" tag=", String(alliance_mine.get("tag", "")))
+						# Sent while the leader is ALONE: the
+						# member must still see it via history.
+						alliance_chat("Chào cả nhà 17b")
+						print("MPLOG ally2 lead chat sent")
+						_ally2_stage = 2
+				2:
+					alliance_request_home()
+					for rq in alliance_mine.get("requests", []):
+						print("MPLOG ally2 approving user=",
+								String(rq.get("user", "")))
+						alliance_approve(_ally_id, String(rq.get("user", "")))
+						_ally2_stage = 3
+				3:
+					alliance_request_home()
+					if int(alliance_mine.get("members_count", 0)) >= 2:
+						for mem in alliance_mine.get("members", []):
+							var mu := String(mem.get("user", ""))
+							if mu != account_name:
+								print("MPLOG ally2 promoting user=", mu)
+								alliance_role(_ally_id, mu, "deputy")
+						_ally2_stage = 4
+				4:
+					alliance_request_home()
+					if String(alliance_mine.get("notice", "")) == notice_text:
+						print("MPLOG ally2 notice seen text=",
+								String(alliance_mine.get("notice", "")))
+						print("MPLOG ally2 lead done")
+						_ally_quit_at = now + 800
+		"mem":
+			match _ally2_stage:
+				0:
+					alliance_request_list(aname)
+					for row in alliance_rows:
+						if String(row.get("name", "")) == aname:
+							_ally_id = String(row.get("id", ""))
+							print("MPLOG ally2 found id=", _ally_id,
+									" tag=", String(row.get("tag", "")))
+							_ally2_stage = 1
+							break
+				1:
+					print("MPLOG ally2 apply sent id=", _ally_id)
+					alliance_apply(_ally_id, "Cho mình vào kiểm thử 17b")
+					_ally2_stage = 2
+				2:
+					alliance_request_home()
+					if not alliance_mine.is_empty():
+						var hist: Array = alliance_mine.get("chat", [])
+						var has_seed := false
+						for cm in hist:
+							if String(cm.get("text", "")) == "Chào cả nhà 17b":
+								has_seed = true
+						print("MPLOG ally2 history ok=", has_seed,
+								" lines=", hist.size())
+						print("MPLOG ally2 joined role=",
+								String(alliance_mine.get("my_role", "")),
+								" tag=", String(alliance_mine.get("tag", "")))
+						alliance_chat("Thành viên chào 17b")
+						print("MPLOG ally2 mem chat sent")
+						_ally2_stage = 3
+				3:
+					alliance_request_home()
+					if String(alliance_mine.get("my_role", "")) == "deputy":
+						alliance_notice(_ally_id, notice_text)
+						print("MPLOG ally2 notice set")
+						_ally2_stage = 4
+				4:
+					alliance_request_home()
+					if String(alliance_mine.get("notice", "")) == notice_text:
+						print("MPLOG ally2 mem done")
+						_ally_quit_at = now + 800
+		"verify":
+			match _ally2_stage:
+				0:
+					alliance_request_home()
+					if not alliance_mine.is_empty():
+						for q in alliance_mine.get("quests", []):
+							print("MPLOG ally2 verify quest key=",
+									String(q.get("key", "")),
+									" prog=", int(q.get("prog", 0)),
+									" done=", bool(q.get("done", false)))
+						for mem in alliance_mine.get("members", []):
+							print("MPLOG ally2 verify member user=",
+									String(mem.get("user", "")),
+									" games=", int(mem.get("week_games", 0)),
+									" wins=", int(mem.get("week_wins", 0)),
+									" week=", int(mem.get("week", 0)))
+						var has_seed := false
+						for cm in alliance_mine.get("chat", []):
+							if String(cm.get("text", "")) == "Chào cả nhà 17b":
+								has_seed = true
+						print("MPLOG ally2 verify history has=", has_seed,
+								" lines=", (alliance_mine.get("chat", []) as Array).size())
+						print("MPLOG ally2 verify notice=",
+								String(alliance_mine.get("notice", "")))
+						print("MPLOG ally2 verify done")
+						_ally2_stage = 1
+						_ally_quit_at = now + 800
+	return true
+
+
+## 17b captures: open the REAL alliance screen on a given tab
+## (--mp-alliance2-tab=members|requests|quests|activity|chat),
+## optionally with a member detail card open
+## (--mp-alliance2-member=<username>), then save the shot.
+## The account must already belong to the alliance (the
+## capture harness seeds the store beforehand).
+func _auto_alliance2_shot(cs) -> void:
+	var now := Time.get_ticks_msec()
+	if _auto_home_at == 0:
+		_auto_home_at = now
+	if now < _ally_next_poll:
+		return
+	_ally_next_poll = now + 700
+	match _ally2_stage:
+		0:
+			if now - _auto_home_at > 800:
+				alliance_request_home()
+				_ally2_stage = 1
+		1:
+			if not alliance_mine.is_empty():
+				if cs != null and cs.has_method("open_alliance_shot"):
+					cs.open_alliance_shot()
+				_ally2_stage = 2
+				_ally_next_poll = now + 1500
+			elif now - _auto_home_at > 15000:
+				print("MPLOG ally2 shot: no alliance for this account")
+				get_tree().quit()
+		2:
+			var scr = cs.get("alliance_screen") if cs != null else null
+			if scr != null:
+				var tab := String(auto.get("mp-alliance2-tab", "members"))
+				if tab == "chat":
+					scr.shot_open_chat()
+				else:
+					scr.shot_set_tab(tab, String(auto.get("mp-alliance2-member", "")))
+			_ally2_stage = 3
+			_ally_next_poll = now + 1400
+		3:
+			_auto_shot_done = true
+			_save_shot(String(auto["mp-shot-alliance2"]))
+			print("MPLOG ally2 shot saved tab=", String(auto.get("mp-alliance2-tab", "members")))
 			get_tree().quit()
 
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -55,6 +56,22 @@ const (
 	AllianceReqMsgMax   = 80
 	AllianceLogCap      = 60
 
+	// 17b additions (Bé's defaults, flagged in KE-HOACH §17b):
+	// the notice board is a single short line, chat history
+	// keeps the last 50 lines server-side, tags are 2–5
+	// letters/digits, and the past-champions list caps at 12.
+	AllianceNoticeMax = 140
+	AllianceChatCap   = 50
+	AllianceTagMin    = 2
+	AllianceTagMax    = 5
+	AllianceChampCap  = 12
+
+	// Meta keys for the weekly-race crown (17b): the settled
+	// marker is the last week key a settlement ran for; the
+	// champions value is a JSON list, newest first.
+	metaAllyChampSettled = "alliance_champ_settled"
+	metaAllyChampions    = "alliance_champions"
+
 	AllianceModeOpen    = "open"
 	AllianceModeRequest = "request"
 
@@ -100,18 +117,26 @@ var (
 	ErrAllyLeaderLeave = errors.New("Hội trưởng phải chuyển quyền hoặc giải tán liên minh trước khi rời")
 	ErrAllyNoTarget    = errors.New("Không tìm thấy người chơi này")
 	ErrAllySelf        = errors.New("Không thể thao tác lên chính mình")
+	ErrAllyBadTag      = errors.New("Tag liên minh phải có 2–5 ký tự (chỉ chữ và số)")
+	ErrAllyTagTaken    = errors.New("Tag liên minh đã có người dùng")
+	ErrAllyNoticeLong  = errors.New("Thông báo tối đa 140 ký tự")
 )
 
 // AllianceMember is one member row: role, join time and the
 // weekly contribution (WeekKey = the Monday of the week the
 // points belong to, "2006-01-02" server-local; a stale key
-// reads as 0 — the lazy weekly reset).
+// reads as 0 — the lazy weekly reset). WeekGames/WeekWins
+// (17b) count the member's banked matches/wins in the same
+// week — fed by the same MatchFeed as the quests, so the
+// member detail panel needs no separate bookkeeping.
 type AllianceMember struct {
-	User     string `json:"user"`
-	Role     string `json:"role"`
-	JoinedAt int64  `json:"joined_at"`
-	WeekKey  string `json:"week_key,omitempty"`
-	WeekPts  int    `json:"week_pts"`
+	User      string `json:"user"`
+	Role      string `json:"role"`
+	JoinedAt  int64  `json:"joined_at"`
+	WeekKey   string `json:"week_key,omitempty"`
+	WeekPts   int    `json:"week_pts"`
+	WeekGames int    `json:"week_games,omitempty"`
+	WeekWins  int    `json:"week_wins,omitempty"`
 }
 
 // AllianceRequest is one pending join application.
@@ -134,6 +159,41 @@ type AllianceEvent struct {
 	Text string `json:"text"`
 }
 
+// AllianceChatMsg is one persisted alliance-chat line (17b).
+// User is the sender's username; Name their display name at
+// send time (history reads the same after a rename).
+type AllianceChatMsg struct {
+	User string `json:"user"`
+	Name string `json:"name"`
+	Text string `json:"text"`
+	At   int64  `json:"at"`
+}
+
+// AllianceQuests is one alliance's weekly-quest state (17b):
+// progress counters for the three fixed templates, keyed by
+// week like member contributions (lazy Monday reset). Done
+// flags latch for the week — a dispute revert can pull
+// progress back below a threshold but never un-grants (and
+// never re-grants) the reward.
+type AllianceQuests struct {
+	Week          string `json:"week,omitempty"`
+	Matches       int    `json:"matches"`
+	Wins          int    `json:"wins"`
+	RankedWins    int    `json:"ranked_wins"`
+	DoneMatches   bool   `json:"done_matches,omitempty"`
+	DoneWins      bool   `json:"done_wins,omitempty"`
+	DoneRanked    bool   `json:"done_ranked,omitempty"`
+}
+
+// AllianceChamp is one weekly-race champion record (17b),
+// stored as a JSON list in the store meta (newest first).
+type AllianceChamp struct {
+	Week   string `json:"week"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Points int    `json:"points"`
+}
+
 // Alliance is the whole guild state.
 type Alliance struct {
 	ID        string            `json:"id"`
@@ -148,6 +208,28 @@ type Alliance struct {
 	Requests  []AllianceRequest `json:"requests,omitempty"`
 	Invites   []AllianceInvite  `json:"invites,omitempty"`
 	Log       []AllianceEvent   `json:"log,omitempty"`
+	// 17b: Tag is the short unique alliance tag shown as
+	// [TAG] before members' names (presentation only — the
+	// name is resolved server-side, never in any sim).
+	Tag string `json:"tag,omitempty"`
+	// 17b: the notice board (leader/deputy editable).
+	Notice   string `json:"notice,omitempty"`
+	NoticeBy string `json:"notice_by,omitempty"`
+	NoticeAt int64  `json:"notice_at,omitempty"`
+	// 17b: persisted chat history, oldest first, cap 50.
+	Chat []AllianceChatMsg `json:"chat,omitempty"`
+	// 17b: weekly quests + the weekly-points bonus they
+	// grant (WeekBonus counts toward the weekly ranking
+	// only while WeekBonusKey is the current week).
+	Quests      AllianceQuests `json:"quests"`
+	WeekBonus   int            `json:"week_bonus,omitempty"`
+	WeekBonusKey string        `json:"week_bonus_key,omitempty"`
+	// 17b: last week's final weekly-points snapshot, taken
+	// by touchWeek before it zeroes the rows — the crown
+	// settlement reads it (a week nobody touches until long
+	// after still settles from this snapshot).
+	PrevWeekKey string `json:"prev_week_key,omitempty"`
+	PrevWeekPts int    `json:"prev_week_pts,omitempty"`
 }
 
 func copyAlliance(a *Alliance) *Alliance {
@@ -159,6 +241,7 @@ func copyAlliance(a *Alliance) *Alliance {
 	c.Requests = append([]AllianceRequest(nil), a.Requests...)
 	c.Invites = append([]AllianceInvite(nil), a.Invites...)
 	c.Log = append([]AllianceEvent(nil), a.Log...)
+	c.Chat = append([]AllianceChatMsg(nil), a.Chat...)
 	return &c
 }
 
@@ -209,6 +292,12 @@ func weekKeyOf(t time.Time) string {
 	return d.AddDate(0, 0, -offset).Format("2006-01-02")
 }
 
+// prevWeekKey is the week key of the last COMPLETED week
+// (the Monday seven days before this week's Monday).
+func prevWeekKey(t time.Time) string {
+	return weekKeyOf(t.AddDate(0, 0, -7))
+}
+
 // Alliances is the alliance service: store + accounts lookups.
 type Alliances struct {
 	mu    sync.Mutex
@@ -254,28 +343,242 @@ func (as *Alliances) ofUser(user string) *Alliance {
 	return nil
 }
 
-// touchWeek applies the lazy weekly reset to a's member rows
-// (in memory; persisted on the next save of that alliance).
+// touchWeek applies the lazy weekly reset to a: member rows
+// (points + 17b match/win counters), the quest state and the
+// quest weekly-points bonus (in memory; persisted on the next
+// save of that alliance). BEFORE zeroing, it snapshots the
+// just-finished week's total into PrevWeek* (17b) so the
+// crown settlement can crown last week's winner even when
+// nobody touched the alliance during the new week.
 func (as *Alliances) touchWeek(a *Alliance) {
-	key := weekKeyOf(as.now())
+	now := as.now()
+	key := weekKeyOf(now)
+	pw := prevWeekKey(now)
+	// Snapshot last week's total once (the first touch in a
+	// later week): member rows still carrying pw, plus the
+	// quest bonus if it belongs to pw.
+	if a.PrevWeekKey != pw {
+		pts := 0
+		found := false
+		for _, m := range a.Members {
+			if m.WeekKey == pw {
+				pts += m.WeekPts
+				found = true
+			}
+		}
+		if a.WeekBonusKey == pw {
+			pts += a.WeekBonus
+			found = true
+		}
+		// Rows two+ weeks stale mean last week was never
+		// played here — its total is genuinely 0.
+		a.PrevWeekKey = pw
+		if found {
+			a.PrevWeekPts = pts
+		} else {
+			a.PrevWeekPts = 0
+		}
+	}
 	for i := range a.Members {
 		if a.Members[i].WeekKey != key {
 			a.Members[i].WeekKey = key
 			a.Members[i].WeekPts = 0
+			a.Members[i].WeekGames = 0
+			a.Members[i].WeekWins = 0
 		}
+	}
+	if a.Quests.Week != key {
+		a.Quests = AllianceQuests{Week: key}
+	}
+	if a.WeekBonusKey != key {
+		a.WeekBonus = 0
+		a.WeekBonusKey = key
 	}
 }
 
-// weekPoints is a's total contribution in the current week.
+// weekPoints is a's total weekly points in the current week:
+// member contributions + the quest bonus (17b).
 func (as *Alliances) weekPoints(a *Alliance) int {
-	key := weekKeyOf(as.now())
+	return as.weekPointsFor(a, weekKeyOf(as.now()))
+}
+
+// weekPointsFor is a's weekly-points total for week wk: the
+// live rows for the current week, the snapshot for last
+// week, or a direct sum over stale rows for any other week.
+func (as *Alliances) weekPointsFor(a *Alliance, wk string) int {
+	if wk == a.PrevWeekKey {
+		return a.PrevWeekPts
+	}
 	sum := 0
 	for _, m := range a.Members {
-		if m.WeekKey == key {
+		if m.WeekKey == wk {
 			sum += m.WeekPts
 		}
 	}
+	if a.WeekBonusKey == wk {
+		sum += a.WeekBonus
+	}
 	return sum
+}
+
+// ---- 17b weekly quests ------------------------------------
+
+// questDef is one fixed weekly-quest template. Targets and
+// rewards are Bé's defaults — flagged in KE-HOACH §17b.
+type questDef struct {
+	key       string
+	label     string
+	target    int
+	xpReward  int
+	ptsReward int
+}
+
+var allianceQuestDefs = []questDef{
+	{"matches", "Toàn liên minh đấu 40 trận", 40, 150, 30},
+	{"wins", "Toàn liên minh thắng 15 trận", 15, 200, 40},
+	{"ranked_wins", "Thắng 5 trận Đấu Hạng", 5, 250, 50},
+}
+
+func questProgress(q AllianceQuests, key string) int {
+	switch key {
+	case "matches":
+		return q.Matches
+	case "wins":
+		return q.Wins
+	case "ranked_wins":
+		return q.RankedWins
+	}
+	return 0
+}
+
+func questDone(q AllianceQuests, key string) bool {
+	switch key {
+	case "matches":
+		return q.DoneMatches
+	case "wins":
+		return q.DoneWins
+	case "ranked_wins":
+		return q.DoneRanked
+	}
+	return false
+}
+
+func questSetDone(q *AllianceQuests, key string) {
+	switch key {
+	case "matches":
+		q.DoneMatches = true
+	case "wins":
+		q.DoneWins = true
+	case "ranked_wins":
+		q.DoneRanked = true
+	}
+}
+
+// checkQuests grants any newly-completed quest's reward
+// (alliance XP + weekly-points bonus), once per week.
+// as.mu held; caller saves.
+func (as *Alliances) checkQuests(a *Alliance) {
+	for _, d := range allianceQuestDefs {
+		if questDone(a.Quests, d.key) {
+			continue
+		}
+		if questProgress(a.Quests, d.key) < d.target {
+			continue
+		}
+		questSetDone(&a.Quests, d.key)
+		a.XP += d.xpReward
+		a.WeekBonus += d.ptsReward
+		as.logf(a, "Hoàn thành nhiệm vụ tuần «%s» (+%d XP, +%d điểm tuần)",
+			d.label, d.xpReward, d.ptsReward)
+	}
+}
+
+// ---- 17b weekly-race crown --------------------------------
+
+// champs reads the past-champions list from the store meta
+// (newest first; corrupt/absent reads as empty).
+func (as *Alliances) champs() []AllianceChamp {
+	raw, ok := as.store.GetMeta(metaAllyChampions)
+	if !ok || raw == "" {
+		return nil
+	}
+	var list []AllianceChamp
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil
+	}
+	return list
+}
+
+func (as *Alliances) saveChamps(list []AllianceChamp) {
+	if len(list) > AllianceChampCap {
+		list = list[:AllianceChampCap]
+	}
+	raw, err := json.Marshal(list)
+	if err == nil {
+		_ = as.store.PutMeta(metaAllyChampions, string(raw))
+	}
+}
+
+// settleChamp records last week's champion the first time
+// any read path runs in a new week (lazy, like every weekly
+// reset here). The winner is picked with the leaderboard's
+// own ordering — weekly points desc, total XP desc, name
+// asc — and only crowned with points > 0. The settled
+// marker advances even when nobody is crowned, and a week
+// the whole server slept through is simply skipped.
+// as.mu held by callers.
+func (as *Alliances) settleChamp() {
+	lastW := prevWeekKey(as.now())
+	if settled, _ := as.store.GetMeta(metaAllyChampSettled); settled == lastW {
+		return
+	}
+	var best *Alliance
+	bestPts := 0
+	for _, a := range as.all() {
+		as.touchWeek(a)
+		pts := as.weekPointsFor(a, lastW)
+		switch {
+		case best == nil:
+			best, bestPts = a, pts
+		case pts != bestPts:
+			if pts > bestPts {
+				best, bestPts = a, pts
+			}
+		case a.XP != best.XP:
+			if a.XP > best.XP {
+				best, bestPts = a, pts
+			}
+		case strings.ToLower(a.Name) < strings.ToLower(best.Name):
+			best, bestPts = a, pts
+		}
+	}
+	if best != nil && bestPts > 0 {
+		list := as.champs()
+		// Idempotence guard: never record the same week twice.
+		dup := false
+		for _, c := range list {
+			if c.Week == lastW {
+				dup = true
+			}
+		}
+		if !dup {
+			list = append([]AllianceChamp{
+				{Week: lastW, ID: best.ID, Name: best.Name, Points: bestPts},
+			}, list...)
+			as.saveChamps(list)
+		}
+	}
+	_ = as.store.PutMeta(metaAllyChampSettled, lastW)
+}
+
+// champNow returns the current crown holder: the champion
+// recorded for the last completed week, if any.
+func (as *Alliances) champNow() (AllianceChamp, bool) {
+	list := as.champs()
+	if len(list) == 0 || list[0].Week != prevWeekKey(as.now()) {
+		return AllianceChamp{}, false
+	}
+	return list[0], true
 }
 
 func (as *Alliances) logf(a *Alliance, format string, args ...any) {
@@ -398,15 +701,20 @@ func validAllianceName(name string) bool {
 // ---- operations ------------------------------------------
 
 // Create founds a new alliance with creator as its leader.
-func (as *Alliances) Create(creator, name, badge, mode, desc string) (*Alliance, error) {
+// The tag (17b) is required and unique case-insensitively.
+func (as *Alliances) Create(creator, name, tag, badge, mode, desc string) (*Alliance, error) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	name = strings.TrimSpace(name)
+	tag = strings.TrimSpace(tag)
 	if creator == "" {
 		return nil, ErrAllyNotMember
 	}
 	if !validAllianceName(name) {
 		return nil, ErrAllyBadName
+	}
+	if !validAllianceTag(tag) {
+		return nil, ErrAllyBadTag
 	}
 	if !validAllianceBadge(badge) {
 		return nil, ErrAllyBadBadge
@@ -422,6 +730,9 @@ func (as *Alliances) Create(creator, name, badge, mode, desc string) (*Alliance,
 			return nil, ErrAllyNameTaken
 		}
 	}
+	if as.tagTaken(tag, "") {
+		return nil, ErrAllyTagTaken
+	}
 	if rs := []rune(strings.TrimSpace(desc)); len(rs) > AllianceDescMax {
 		desc = string(rs[:AllianceDescMax])
 	} else {
@@ -429,7 +740,7 @@ func (as *Alliances) Create(creator, name, badge, mode, desc string) (*Alliance,
 	}
 	a := &Alliance{
 		ID: newAllianceID(as.store), Name: name, Badge: badge,
-		Mode: mode, Desc: desc, Leader: creator,
+		Mode: mode, Desc: desc, Leader: creator, Tag: tag,
 		CreatedAt: as.now().Unix(),
 		Members: []AllianceMember{{
 			User: creator, Role: AllianceRoleLeader,
@@ -637,6 +948,20 @@ func (as *Alliances) Invite(id, actor, targetName string) (string, error) {
 	a.Invites = append(a.Invites, AllianceInvite{User: target, By: actor, At: as.now().Unix()})
 	as.logf(a, "%s đã mời %s vào liên minh", as.nameOf(actor), as.nameOf(target))
 	as.save(a)
+	// 17b: the invite ALSO lands as a mailbox letter. The
+	// mail system carries no action payload, so the letter
+	// is informational — it points at the alliance screen,
+	// where the invite record (the source of truth) is
+	// accepted/declined through the normal op. Best effort:
+	// a failed letter never fails the invite.
+	tag := ""
+	if a.Tag != "" {
+		tag = " [" + a.Tag + "]"
+	}
+	_ = as.acc.DeliverLetter(target,
+		"Lời mời vào liên minh "+a.Name,
+		fmt.Sprintf("%s đã mời bạn vào liên minh %s%s.\n\nMở trang Liên minh để trả lời: vào Bảng xếp hạng → tab Liên minh, hoặc bấm hàng Liên minh trong trang Hồ sơ, rồi chấp nhận hoặc từ chối ở mục Lời mời.",
+			as.nameOf(actor), a.Name, tag))
 	return target, nil
 }
 
@@ -852,9 +1177,11 @@ func (as *Alliances) Transfer(id, actor, target string) error {
 	return nil
 }
 
-// UpdateSettings edits badge / join mode / description
-// (leader only).
-func (as *Alliances) UpdateSettings(id, actor, badge, mode, desc string) error {
+// UpdateSettings edits tag / badge / join mode /
+// description (leader only). An empty tag keeps the current
+// one, so pre-17b clients (and alliances founded before
+// tags existed) are never forced through tag validation.
+func (as *Alliances) UpdateSettings(id, actor, tag, badge, mode, desc string) error {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	a, ok := as.get(id)
@@ -864,6 +1191,15 @@ func (as *Alliances) UpdateSettings(id, actor, badge, mode, desc string) error {
 	am := memberOf(a, actor)
 	if am == nil || am.Role != AllianceRoleLeader {
 		return ErrAllyNoPerm
+	}
+	tag = strings.TrimSpace(tag)
+	if tag != "" {
+		if !validAllianceTag(tag) {
+			return ErrAllyBadTag
+		}
+		if as.tagTaken(tag, a.ID) {
+			return ErrAllyTagTaken
+		}
 	}
 	if !validAllianceBadge(badge) {
 		return ErrAllyBadBadge
@@ -875,6 +1211,9 @@ func (as *Alliances) UpdateSettings(id, actor, badge, mode, desc string) error {
 		desc = string(rs[:AllianceDescMax])
 	} else {
 		desc = string(rs)
+	}
+	if tag != "" {
+		a.Tag = tag
 	}
 	a.Badge, a.Mode, a.Desc = badge, mode, desc
 	as.logf(a, "%s đã cập nhật cài đặt liên minh", as.nameOf(actor))
@@ -928,6 +1267,164 @@ func (as *Alliances) Accrue(user string, delta int) {
 	as.save(a)
 }
 
+// FeedMatch is the Accounts.MatchFeed target (17b): one
+// banked match (delta +1) or one un-banked match (delta −1,
+// a dispute revert) for a member — feeding the member's
+// weekly match/win counters and the alliance's weekly
+// quests from the SAME banking events as Accrue, so a match
+// can never count twice. Ranked wins are told apart by the
+// ranked flag the ranked banking paths pass. Quest rewards
+// latch once per week (see AllianceQuests).
+func (as *Alliances) FeedMatch(user string, won bool, ranked bool, delta int) {
+	if user == "" || delta == 0 {
+		return
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a := as.ofUser(user)
+	if a == nil {
+		return
+	}
+	as.touchWeek(a)
+	m := memberOf(a, user)
+	if m == nil {
+		return
+	}
+	if delta > 0 {
+		m.WeekGames++
+		if won {
+			m.WeekWins++
+		}
+		a.Quests.Matches++
+		if won {
+			a.Quests.Wins++
+			if ranked {
+				a.Quests.RankedWins++
+			}
+		}
+		as.checkQuests(a)
+	} else {
+		// Un-banked: pull the counters back (never below 0);
+		// a latched quest reward stays granted.
+		if m.WeekGames > 0 {
+			m.WeekGames--
+		}
+		if won && m.WeekWins > 0 {
+			m.WeekWins--
+		}
+		if a.Quests.Matches > 0 {
+			a.Quests.Matches--
+		}
+		if won {
+			if a.Quests.Wins > 0 {
+				a.Quests.Wins--
+			}
+			if ranked && a.Quests.RankedWins > 0 {
+				a.Quests.RankedWins--
+			}
+		}
+	}
+	as.save(a)
+}
+
+// TagOf resolves a user's alliance tag for presentation
+// ([TAG] prefixes in chat / friends / profile payloads).
+// "" for guests and the unaffiliated. Presentation ONLY —
+// never read by any sim or checksum path.
+func (as *Alliances) TagOf(user string) string {
+	if user == "" {
+		return ""
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	if a := as.ofUser(user); a != nil {
+		return a.Tag
+	}
+	return ""
+}
+
+// validAllianceTag: 2–5 characters, letters/digits only
+// (Unicode letters allowed, no spaces or punctuation).
+func validAllianceTag(tag string) bool {
+	n := utf8.RuneCountInString(tag)
+	if n < AllianceTagMin || n > AllianceTagMax {
+		return false
+	}
+	for _, r := range tag {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// tagTaken reports whether another alliance already uses
+// tag (case-insensitive), excluding alliance exceptID.
+func (as *Alliances) tagTaken(tag, exceptID string) bool {
+	for _, a := range as.all() {
+		if a.ID != exceptID && a.Tag != "" && strings.EqualFold(a.Tag, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetNotice edits the notice board (leader + deputies).
+// Live fan-out is the hub's job; this only persists.
+func (as *Alliances) SetNotice(id, actor, text string) error {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a, ok := as.get(id)
+	if !ok {
+		return ErrAllyNotFound
+	}
+	if !as.canModerate(a, actor) {
+		return ErrAllyNoPerm
+	}
+	text = strings.TrimSpace(text)
+	if utf8.RuneCountInString(text) > AllianceNoticeMax {
+		return ErrAllyNoticeLong
+	}
+	a.Notice = text
+	a.NoticeBy = actor
+	a.NoticeAt = as.now().Unix()
+	as.logf(a, "%s đã cập nhật thông báo liên minh", as.nameOf(actor))
+	as.save(a)
+	return nil
+}
+
+// AddChatMsg persists one alliance-chat line (17b history,
+// cap 50, oldest dropped). Called by the hub ONLY for lines
+// that passed the rate limit and were actually relayed, so
+// the history is exactly what members saw.
+func (as *Alliances) AddChatMsg(id, user, name, text string) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a, ok := as.get(id)
+	if !ok {
+		return
+	}
+	a.Chat = append(a.Chat, AllianceChatMsg{
+		User: user, Name: name, Text: text, At: as.now().Unix(),
+	})
+	if len(a.Chat) > AllianceChatCap {
+		a.Chat = a.Chat[len(a.Chat)-AllianceChatCap:]
+	}
+	as.save(a)
+}
+
+// ChatHistory returns a copy of the persisted chat lines
+// (member-only: callers check membership first).
+func (as *Alliances) ChatHistory(id string) []AllianceChatMsg {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a, ok := as.get(id)
+	if !ok {
+		return nil
+	}
+	return append([]AllianceChatMsg(nil), a.Chat...)
+}
+
 // MemberUsers returns the member username list (chat fan-out).
 func (as *Alliances) MemberUsers(id string) []string {
 	as.mu.Lock()
@@ -963,6 +1460,8 @@ func (as *Alliances) memberWire(m AllianceMember, online func(string) bool) map[
 		"user": m.User, "name": name, "avatar": avatar, "level": level,
 		"role": m.Role, "week": m.WeekPts, "online": on, "seen": seen,
 		"joined_at": m.JoinedAt,
+		// 17b member detail: this week's banked matches/wins.
+		"week_games": m.WeekGames, "week_wins": m.WeekWins,
 	}
 }
 
@@ -1002,6 +1501,42 @@ func (as *Alliances) View(a *Alliance, viewer string, online func(string) bool) 
 		"leader": a.Leader, "leader_name": as.nameOf(a.Leader),
 		"my_role": myRole, "members": mrows,
 	}
+	// 17b payload: tag, notice board, chat history, weekly
+	// quests, crown marker + past-champions history.
+	out["tag"] = a.Tag
+	out["notice"] = a.Notice
+	out["notice_by"] = ""
+	if a.NoticeBy != "" {
+		out["notice_by"] = as.nameOf(a.NoticeBy)
+	}
+	out["notice_at"] = a.NoticeAt
+	chat := make([]map[string]any, 0, len(a.Chat))
+	for _, cm := range a.Chat {
+		chat = append(chat, map[string]any{
+			"user": cm.User, "name": cm.Name, "text": cm.Text, "at": cm.At,
+		})
+	}
+	out["chat"] = chat
+	qrows := make([]map[string]any, 0, len(allianceQuestDefs))
+	for _, d := range allianceQuestDefs {
+		qrows = append(qrows, map[string]any{
+			"key": d.key, "label": d.label,
+			"prog": questProgress(a.Quests, d.key), "target": d.target,
+			"done": questDone(a.Quests, d.key),
+			"xp": d.xpReward, "pts": d.ptsReward,
+		})
+	}
+	out["quests"] = qrows
+	out["quest_week"] = a.Quests.Week
+	champ, hasChamp := as.champNow()
+	out["champion"] = hasChamp && champ.ID == a.ID
+	hist := make([]map[string]any, 0)
+	for _, c := range as.champs() {
+		hist = append(hist, map[string]any{
+			"week": c.Week, "id": c.ID, "name": c.Name, "points": c.Points,
+		})
+	}
+	out["champions"] = hist
 	if me != nil && (me.Role == AllianceRoleLeader || me.Role == AllianceRoleDeputy) {
 		reqs := make([]map[string]any, 0, len(a.Requests))
 		for _, r := range a.Requests {
@@ -1036,6 +1571,7 @@ func (as *Alliances) View(a *Alliance, viewer string, online func(string) bool) 
 func (as *Alliances) HomeFor(user string, online func(string) bool) (map[string]any, []map[string]any) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+	as.settleChamp() // 17b: lazy weekly-crown settlement
 	var mine map[string]any
 	if a := as.ofUser(user); a != nil {
 		mine = as.View(a, user, online)
@@ -1049,6 +1585,7 @@ func (as *Alliances) HomeFor(user string, online func(string) bool) (map[string]
 					"id": a.ID, "name": a.Name, "badge": a.Badge,
 					"level": level, "members": len(a.Members),
 					"by_name": as.nameOf(iv.By), "at": iv.At,
+					"tag": a.Tag,
 				})
 			}
 		}
@@ -1095,6 +1632,7 @@ func (as *Alliances) ListWire(user, search string) []map[string]any {
 			"level": level, "members": len(a.Members), "cap": AllianceCap,
 			"leader_name": as.nameOf(a.Leader), "requested": requested,
 			"full": len(a.Members) >= AllianceCap,
+			"tag": a.Tag,
 		})
 	}
 	return rows
@@ -1106,6 +1644,8 @@ func (as *Alliances) ListWire(user, search string) []map[string]any {
 func (as *Alliances) RankingWire(user string) ([]map[string]any, map[string]any) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+	as.settleChamp() // 17b: lazy weekly-crown settlement
+	champ, hasChamp := as.champNow()
 	ranked := as.ranked()
 	rows := make([]map[string]any, 0, len(ranked))
 	var me map[string]any
@@ -1116,6 +1656,7 @@ func (as *Alliances) RankingWire(user string) ([]map[string]any, map[string]any)
 			"level": level, "members": len(a.Members), "cap": AllianceCap,
 			"week": as.weekPoints(a), "xp": a.XP,
 			"leader_name": as.nameOf(a.Leader), "pos": i + 1,
+			"tag": a.Tag, "champion": hasChamp && champ.ID == a.ID,
 		}
 		rows = append(rows, row)
 		if memberOf(a, user) != nil {

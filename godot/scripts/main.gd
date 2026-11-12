@@ -788,7 +788,12 @@ func _mp_setup_slots() -> void:
 	ordered.sort_custom(func(a, b): return int(a.get("slot", 0)) < int(b.get("slot", 0)))
 	for p in ordered:
 		slot_teams.append(int(p.get("team", int(p.get("slot", 0)))))
-		slot_names.append(str(p.get("name", "Người chơi")))
+		# 17b: slot_names is presentation-only (HUD panels,
+		# overhead labels, toasts) — the [TAG] prefix is
+		# composed here from the server player view and never
+		# enters sim state or checksums.
+		slot_names.append(Net.ally_disp(str(p.get("name", "Người chơi")),
+				str(p.get("ally_tag", ""))))
 		slot_chars.append(Characters.normalize_char(str(p.get("char", ""))))
 		slot_skins.append(Characters.normalize_skin(str(p.get("skin", ""))))
 		print("MPLOG in-match chars slot=", int(p.get("slot", 0)),
@@ -1288,11 +1293,13 @@ func diplomacy_local_gift(to: int, rtype: String, amount: int) -> void:
 func _player_display_name(slot: int) -> String:
 	for p in Net.players:
 		if int(p.get("slot", -1)) == slot:
-			return String(p.get("name", "Người chơi %d" % (slot + 1)))
+			# 17b: [TAG] prefix, presentation only.
+			return Net.ally_disp(String(p.get("name", "Người chơi %d" % (slot + 1))),
+					String(p.get("ally_tag", "")))
 	return "Người chơi %d" % (slot + 1)
 
 
-func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: String) -> void:
+func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: String, ally_tag: String = "") -> void:
 	# "alliance" (17a) is the lobby guild channel: the alliance
 	# screen owns it — it never lands in a match's chat or toast.
 	if scope == "lobby" or scope == "alliance" or hud == null:
@@ -1304,9 +1311,11 @@ func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: Strin
 	if scope == "team" and diplomacy_active() and from_slot != local_slot \
 			and stance_of(local_slot, from_slot) != DIP_ALLY:
 		return
-	hud.add_chat_line(sender_name, text, scope, from_slot)
+	# 17b: [TAG] before the sender's name (presentation only).
+	var disp := Net.ally_disp(sender_name, ally_tag)
+	hud.add_chat_line(disp, text, scope, from_slot)
 	if not hud.is_chat_open() and from_slot != local_slot:
-		hud.show_message("%s: %s" % [sender_name, text])
+		hud.show_message("%s: %s" % [disp, text])
 
 
 func _mp_on_resync_started(tick: int, source_slot: int) -> void:

@@ -27,6 +27,8 @@ const FA_LEAVE := 0xF2F5
 const FA_PLUS := 0x2B
 const FA_CHECK := 0xF00C
 const FA_XMARK := 0xF00D
+const FA_BULLHORN := 0xF0A1
+const FA_TASKS := 0xF0AE
 
 const GOLD := Color(1.0, 0.85, 0.4)
 const GOLD_TXT := Color(0.98, 0.8, 0.35)
@@ -63,6 +65,9 @@ var _search_text := ""
 var _create_open := false
 var _invite_open := false
 var _settings_open := false
+var _notice_open := false # 17b notice editor card
+var _member_sort := "week" # 17b: "week" | "level" | "recent"
+var _detail_user := "" # 17b: member-detail card target ("" = closed)
 var _chat_open := false
 var _arm := "" # two-tap confirm key ("leave" / "disband" / "transfer:<user>")
 var _arm_at := 0
@@ -136,7 +141,7 @@ func _ready() -> void:
 	Net.alliance_list_received.connect(func(_rows: Array) -> void:
 		if visible and Net.alliance_mine.is_empty():
 			_render())
-	Net.chat_received.connect(func(scope: String, _f: int, _n: String, _t: String) -> void:
+	Net.chat_received.connect(func(scope: String, _f: int, _n: String, _t: String, _tag: String) -> void:
 		if visible and _chat_open and scope == "alliance":
 			_render_chat_lines()
 			_scroll_chat_bottom())
@@ -150,6 +155,9 @@ func open() -> void:
 	_tab = "members"
 	_chat_open = false
 	_arm = ""
+	_notice_open = false
+	_detail_user = ""
+	_member_sort = "week"
 	_status_msg = ""
 	_sig = "\u0001"
 	_poll = 0.0
@@ -447,7 +455,8 @@ func _render() -> void:
 	# refreshes never clobber a half-typed field.
 	var sig := JSON.stringify([Net.alliance_mine, Net.alliance_invites,
 			Net.alliance_rows, _tab, _create_open, _invite_open,
-			_settings_open, _arm, Net.account_name])
+			_settings_open, _notice_open, _member_sort, _detail_user,
+			Net.friends_rows, _arm, Net.account_name])
 	if sig == _sig:
 		return
 	_sig = sig
@@ -524,14 +533,24 @@ func _build_joined() -> void:
 	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_body.add_child(cols)
 	# ---- left column: profile card + actions ----------------
+	# The column scrolls: with tag + crown + notice the profile
+	# card outgrows 720p, and the action buttons must stay
+	# reachable (when everything fits, nothing changes).
+	var left_scroll := ScrollContainer.new()
+	left_scroll.custom_minimum_size = Vector2(372, 0)
+	left_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	cols.add_child(left_scroll)
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 12)
 	left.custom_minimum_size = Vector2(372, 0)
-	cols.add_child(left)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_scroll.add_child(left)
 	left.add_child(_profile_card(mine))
 	left.add_child(_actions_card(mine))
 	if _invite_open and String(mine.get("my_role", "")) in ["leader", "deputy"]:
 		left.add_child(_invite_card(mine))
+	if _notice_open and String(mine.get("my_role", "")) in ["leader", "deputy"]:
+		left.add_child(_notice_card(mine))
 	if _settings_open and String(mine.get("my_role", "")) == "leader":
 		left.add_child(_settings_card(mine))
 	var fill := Control.new()
@@ -551,7 +570,10 @@ func _build_joined() -> void:
 	if req_count > 0:
 		req_label += " (%d)" % req_count
 	tabs.add_child(_tab_btn("requests", req_label))
+	tabs.add_child(_tab_btn("quests", "Nhiệm vụ"))
 	tabs.add_child(_tab_btn("activity", "Hoạt động"))
+	if _detail_user != "":
+		right.add_child(_member_detail_card(mine))
 	var content := _card(14)
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(content)
@@ -565,6 +587,8 @@ func _build_joined() -> void:
 	match _tab:
 		"requests":
 			_fill_requests(cv, mine)
+		"quests":
+			_fill_quests(cv, mine)
 		"activity":
 			_fill_activity(cv, mine)
 		_:
@@ -597,6 +621,11 @@ func _profile_card(mine: Dictionary) -> PanelContainer:
 	var nm := _label(String(mine.get("name", "")), 21, GOLD_TXT, true)
 	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pv.add_child(nm)
+	# 17b: the alliance tag under the name.
+	if String(mine.get("tag", "")) != "":
+		var tg := _label("[%s]" % String(mine.get("tag", "")), 13, GOLD)
+		tg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pv.add_child(tg)
 	if String(mine.get("desc", "")) != "":
 		var ds := _label_wrap(String(mine.get("desc", "")), 12, MUTED)
 		ds.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -610,6 +639,14 @@ func _profile_card(mine: Dictionary) -> PanelContainer:
 	pills.add_child(_pill("Hạng %d toàn server" % rank if rank > 0 else "Chưa xếp hạng",
 			Color(1, 1, 1, 0.06), MUTED))
 	pv.add_child(pills)
+	# 17b: last week's champion carries the crown marker.
+	if bool(mine.get("champion", false)):
+		var crowns := HBoxContainer.new()
+		crowns.alignment = BoxContainer.ALIGNMENT_CENTER
+		crowns.add_theme_constant_override("separation", 6)
+		crowns.add_child(_fa(FA_CROWN, 13, GOLD_TXT))
+		crowns.add_child(_label("Vô địch tuần trước", 13, GOLD_TXT, true))
+		pv.add_child(crowns)
 	var xrow := HBoxContainer.new()
 	xrow.add_child(_label("XP liên minh", 13, MUTED))
 	var sp := Control.new()
@@ -635,6 +672,23 @@ func _profile_card(mine: Dictionary) -> PanelContainer:
 	pv.add_child(_stat_row("Điểm tuần này", _fmt(int(mine.get("week", 0)))))
 	pv.add_child(_stat_row("Hội trưởng", String(mine.get("leader_name", ""))))
 	pv.add_child(_stat_row("Ngày lập", _date_str(int(mine.get("created_at", 0)))))
+	# 17b: the notice board sits at the card's foot.
+	var sep2 := HSeparator.new()
+	sep2.add_theme_stylebox_override("separator", _sb(Color(1, 1, 1, 0.08), 1))
+	pv.add_child(sep2)
+	var nhead := HBoxContainer.new()
+	nhead.add_theme_constant_override("separation", 6)
+	nhead.add_child(_fa(FA_BULLHORN, 12, GOLD_TXT))
+	nhead.add_child(_label("THÔNG BÁO", 12, GOLD_TXT, true))
+	pv.add_child(nhead)
+	var notice := String(mine.get("notice", ""))
+	if notice != "":
+		pv.add_child(_label_wrap(notice, 13, PAPER))
+		if String(mine.get("notice_by", "")) != "":
+			pv.add_child(_label("— %s · %s" % [String(mine.get("notice_by", "")),
+					_ago(int(mine.get("notice_at", 0)))], 11, DIM))
+	else:
+		pv.add_child(_label_wrap("Chưa có thông báo nào.", 12, DIM))
 	return card
 
 
@@ -650,17 +704,30 @@ func _actions_card(mine: Dictionary) -> PanelContainer:
 		inv.pressed.connect(func() -> void:
 			_invite_open = not _invite_open
 			_settings_open = false
+			_notice_open = false
+			if _invite_open:
+				Net.request_friends() # 17b: feed the friend picker
 			_sig = "\u0001"
 			_render())
 		vb.add_child(inv)
 	var chatb := _icon_btn("Chat liên minh", FA_COMMENTS)
 	chatb.pressed.connect(func() -> void: _open_chat(mine))
 	vb.add_child(chatb)
+	if role in ["leader", "deputy"]:
+		var notb := _icon_btn("Thông báo liên minh", FA_BULLHORN)
+		notb.pressed.connect(func() -> void:
+			_notice_open = not _notice_open
+			_invite_open = false
+			_settings_open = false
+			_sig = "\u0001"
+			_render())
+		vb.add_child(notb)
 	if role == "leader":
 		var setb := _icon_btn("Cài đặt liên minh", FA_GEAR)
 		setb.pressed.connect(func() -> void:
 			_settings_open = not _settings_open
 			_invite_open = false
+			_notice_open = false
 			_sig = "\u0001"
 			_render())
 		vb.add_child(setb)
@@ -710,8 +777,70 @@ func _invite_card(mine: Dictionary) -> PanelContainer:
 	edit.text_submitted.connect(func(_t: String) -> void: do_invite.call())
 	row.add_child(send)
 	vb.add_child(row)
-	vb.add_child(_label_wrap("Người được mời sẽ thấy lời mời ở trang Liên minh của họ.",
-			12, DIM))
+	vb.add_child(_label_wrap("Người được mời cũng nhận một thư trong Hộp thư và trả lời "
+			+ "ở trang Liên minh của họ.", 12, DIM))
+	# 17b friend picker: tap a friend to invite them through
+	# the same server invite path (username resolution).
+	vb.add_child(_section("CHỌN TỪ BẠN BÈ"))
+	if Net.friends_rows.is_empty():
+		vb.add_child(_label_wrap("Chưa có bạn bè nào trong danh sách — hãy thêm bạn "
+				+ "ở trang Bạn bè, hoặc mời bằng tên ở trên.", 12, DIM))
+	for f in Net.friends_rows:
+		vb.add_child(_friend_pick_row(f, mine, ally_id))
+	return card
+
+
+## One friend-picker row: avatar, name (+ their [TAG] if any),
+## online state, and a Mời button (disabled for yourself and
+## for members of THIS alliance).
+func _friend_pick_row(f: Dictionary, mine: Dictionary, ally_id: String) -> HBoxContainer:
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	hb.add_child(_avatar(String(f.get("avatar_id", "knight")), 32))
+	var nv := VBoxContainer.new()
+	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	nv.add_child(_label(Net.ally_disp(String(f.get("display_name",
+			String(f.get("user", "?")))), String(f.get("ally_tag", ""))), 13, PAPER))
+	var online := bool(f.get("online", false))
+	nv.add_child(_label("Trực tuyến" if online else "Ngoại tuyến", 11,
+			Color(0.45, 0.85, 0.55) if online else DIM))
+	hb.add_child(nv)
+	var fuser := String(f.get("user", ""))
+	var already := false
+	for mem in mine.get("members", []):
+		if String(mem.get("user", "")) == fuser:
+			already = true
+	var b := _small_btn("Đã ở liên minh" if already else "Mời")
+	b.disabled = already or fuser == Net.account_name
+	if not b.disabled:
+		b.pressed.connect(func() -> void:
+			Net.alliance_invite(ally_id, fuser)
+			_show_status("Đã gửi lời mời tới %s." % String(f.get("display_name", fuser))))
+	hb.add_child(b)
+	return hb
+
+
+## 17b notice editor (leader/deputy): one short line, max 140
+## characters, pushed live to every member's screen.
+func _notice_card(mine: Dictionary) -> PanelContainer:
+	var card := _card(12)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	card.add_child(vb)
+	vb.add_child(_section("THÔNG BÁO LIÊN MINH"))
+	var edit := _field("Thông báo cho cả liên minh…", String(mine.get("notice", "")))
+	edit.max_length = 140
+	vb.add_child(edit)
+	var ally_id := String(mine.get("id", ""))
+	var save := _button("Đăng thông báo", true)
+	save.pressed.connect(func() -> void:
+		Net.alliance_notice(ally_id, edit.text.strip_edges())
+		_notice_open = false
+		_show_status("Đã cập nhật thông báo liên minh."))
+	vb.add_child(save)
+	vb.add_child(_label_wrap("Tối đa 140 ký tự. Mọi thành viên đang mở trang "
+			+ "Liên minh sẽ thấy thông báo mới ngay.", 12, DIM))
 	return card
 
 
@@ -721,6 +850,11 @@ func _settings_card(mine: Dictionary) -> PanelContainer:
 	vb.add_theme_constant_override("separation", 8)
 	card.add_child(vb)
 	vb.add_child(_section("CÀI ĐẶT LIÊN MINH"))
+	# 17b: the alliance tag (2–5 letters/digits, unique).
+	vb.add_child(_label("Tag liên minh (2–5 ký tự chữ/số)", 13, MUTED))
+	var tag_edit := _field("VD: SL123", String(mine.get("tag", "")))
+	tag_edit.max_length = 5
+	vb.add_child(tag_edit)
 	vb.add_child(_label("Màu khiên", 13, MUTED))
 	var badge_opt := _option(BADGE_ORDER.map(func(id: String) -> String:
 			return "Khiên " + String(BADGE_NAMES[id])), 0)
@@ -739,7 +873,8 @@ func _settings_card(mine: Dictionary) -> PanelContainer:
 	var ally_id := String(mine.get("id", ""))
 	var save := _button("Lưu cài đặt", true)
 	save.pressed.connect(func() -> void:
-		Net.alliance_settings(ally_id, String(BADGE_ORDER[badge_opt.selected]),
+		Net.alliance_settings(ally_id, tag_edit.text.strip_edges(),
+				String(BADGE_ORDER[badge_opt.selected]),
 				"open" if mode_opt.selected == 0 else "request",
 				desc_edit.text.strip_edges())
 		_settings_open = false
@@ -768,12 +903,91 @@ func _member_header() -> HBoxContainer:
 	return hb
 
 
+const MEMBER_SORTS: Array = ["week", "level", "recent"]
+const MEMBER_SORT_NAMES: Array = ["Đóng góp tuần", "Cấp", "Hoạt động gần nhất"]
+
+
 func _fill_members(cv: VBoxContainer, mine: Dictionary) -> void:
+	# 17b sort bar: Đóng góp tuần · Cấp · Hoạt động gần nhất.
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 8)
+	srow.add_child(_label("Sắp xếp:", 13, MUTED))
+	var opt := _option(MEMBER_SORT_NAMES, maxi(0, MEMBER_SORTS.find(_member_sort)))
+	opt.custom_minimum_size = Vector2(210, 34)
+	opt.add_theme_font_size_override("font_size", 13)
+	opt.item_selected.connect(func(idx: int) -> void:
+		_member_sort = String(MEMBER_SORTS[idx])
+		_sig = "\u0001"
+		_render())
+	srow.add_child(opt)
+	cv.add_child(srow)
 	cv.add_child(_member_header())
 	var my_role := String(mine.get("my_role", ""))
 	var ally_id := String(mine.get("id", ""))
-	for mem in mine.get("members", []):
+	var members: Array = (mine.get("members", []) as Array).duplicate()
+	match _member_sort:
+		"level":
+			members.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				if int(a.get("level", 1)) != int(b.get("level", 1)):
+					return int(a.get("level", 1)) > int(b.get("level", 1))
+				return int(a.get("week", 0)) > int(b.get("week", 0)))
+		"recent":
+			members.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				var oa := bool(a.get("online", false))
+				var ob := bool(b.get("online", false))
+				if oa != ob:
+					return oa
+				return int(a.get("seen", 0)) > int(b.get("seen", 0)))
+		_:
+			members.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return int(a.get("week", 0)) > int(b.get("week", 0)))
+	for mem in members:
 		cv.add_child(_member_row(mem, my_role, ally_id))
+
+
+## 17b member detail card: everything the alliance record
+## already knows about one member — level, role, join date,
+## this week's contribution + banked matches/wins, and their
+## last-online state. No extra data is collected for it.
+func _member_detail_card(mine: Dictionary) -> PanelContainer:
+	var mem: Dictionary = {}
+	for m in mine.get("members", []):
+		if String(m.get("user", "")) == _detail_user:
+			mem = m
+			break
+	var card := _card(12, 2)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 7)
+	card.add_child(vb)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	head.add_child(_avatar(String(mem.get("avatar", "knight")), 44))
+	var nv := VBoxContainer.new()
+	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	nv.add_child(_label(String(mem.get("name", _detail_user)), 16, PAPER, true))
+	nv.add_child(_label("Cấp %d" % int(mem.get("level", 1)), 12, MUTED))
+	head.add_child(nv)
+	head.add_child(_role_pill(String(mem.get("role", "member"))))
+	var close_b := _small_btn("Đóng")
+	close_b.custom_minimum_size = Vector2(64, 30)
+	close_b.pressed.connect(func() -> void:
+		_detail_user = ""
+		_sig = "\u0001"
+		_render())
+	head.add_child(close_b)
+	vb.add_child(head)
+	if mem.is_empty():
+		vb.add_child(_label_wrap("Thành viên này không còn trong liên minh.", 13, MUTED))
+		return card
+	vb.add_child(_stat_row("Ngày gia nhập", _date_str(int(mem.get("joined_at", 0)))))
+	vb.add_child(_stat_row("Đóng góp tuần này", _fmt(int(mem.get("week", 0)))))
+	vb.add_child(_stat_row("Trận đã đấu tuần này", str(int(mem.get("week_games", 0)))))
+	vb.add_child(_stat_row("Trận thắng tuần này", str(int(mem.get("week_wins", 0)))))
+	var online := bool(mem.get("online", false))
+	vb.add_child(_stat_row("Trạng thái", "Đang trực tuyến" if online
+			else "Hoạt động " + _ago(int(mem.get("seen", 0)))))
+	return card
 
 
 func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelContainer:
@@ -829,6 +1043,14 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	st.add_child(_label("Trực tuyến" if online else _ago(int(mem.get("seen", 0))),
 			12, Color(0.45, 0.85, 0.55) if online else MUTED))
 	hb.add_child(st)
+	# 17b: every row opens the member detail card.
+	var detail := _small_btn("Chi tiết")
+	detail.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	detail.pressed.connect(func() -> void:
+		_detail_user = String(mem.get("user", ""))
+		_sig = "\u0001"
+		_render())
+	hb.add_child(detail)
 	# Contextual actions (server re-checks every permission).
 	var target := String(mem.get("user", ""))
 	var t_role := String(mem.get("role", "member"))
@@ -920,7 +1142,91 @@ func _request_row(rq: Dictionary, ally_id: String) -> PanelContainer:
 	return row
 
 
+## 17b weekly quests tab: three collective quests fed by the
+## members' banked matches (server-side). Completing one
+## grants alliance XP + weekly points, once per week; the
+## slate resets every Monday.
+func _fill_quests(cv: VBoxContainer, mine: Dictionary) -> void:
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 7)
+	head.add_child(_fa(FA_TASKS, 14, GOLD_TXT))
+	head.add_child(_label("NHIỆM VỤ TUẦN CỦA LIÊN MINH", 13, GOLD_TXT, true))
+	cv.add_child(head)
+	cv.add_child(_label_wrap("Mọi trận ghi sổ của thành viên đều tính chung. "
+			+ "Hoàn thành để nhận XP và điểm tuần cho cả liên minh — "
+			+ "nhiệm vụ làm mới vào thứ Hai hằng tuần.", 12, DIM))
+	var quests: Array = mine.get("quests", [])
+	if quests.is_empty():
+		cv.add_child(_label_wrap("Chưa có nhiệm vụ nào.", 13, MUTED))
+		return
+	for q in quests:
+		cv.add_child(_quest_row(q))
+
+
+func _quest_row(q: Dictionary) -> PanelContainer:
+	var done := bool(q.get("done", false))
+	var row := PanelContainer.new()
+	row.add_theme_stylebox_override("panel", _sb(Color(0.07, 0.10, 0.17, 0.55), 10,
+			Color(0.98, 0.8, 0.35, 0.55) if done else PANEL_LINE, 1))
+	var inner := MarginContainer.new()
+	inner.add_theme_constant_override("margin_left", 12)
+	inner.add_theme_constant_override("margin_right", 12)
+	inner.add_theme_constant_override("margin_top", 9)
+	inner.add_theme_constant_override("margin_bottom", 9)
+	row.add_child(inner)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	inner.add_child(vb)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	var lb := _label(String(q.get("label", "")), 15, PAPER, true)
+	lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(lb)
+	if done:
+		top.add_child(_pill("Đã hoàn thành", Color(0.98, 0.8, 0.35), Color(0.1, 0.08, 0.02)))
+	top.add_child(_label("%s / %s" % [_fmt(int(q.get("prog", 0))),
+			_fmt(int(q.get("target", 1)))], 14, GOLD_TXT if done else PAPER))
+	vb.add_child(top)
+	var bar := ProgressBar.new()
+	bar.min_value = 0
+	bar.max_value = maxi(1, int(q.get("target", 1)))
+	bar.value = mini(int(q.get("prog", 0)), int(q.get("target", 1)))
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 12)
+	bar.add_theme_stylebox_override("background", _sb(Color(0.05, 0.06, 0.10, 0.9), 6))
+	bar.add_theme_stylebox_override("fill", _sb(
+			Color(0.98, 0.8, 0.35) if done else Color(0.85, 0.65, 0.20), 6))
+	vb.add_child(bar)
+	vb.add_child(_label("Thưởng: +%d XP liên minh · +%d điểm tuần" % [
+			int(q.get("xp", 0)), int(q.get("pts", 0))], 12, DIM))
+	return row
+
+
 func _fill_activity(cv: VBoxContainer, mine: Dictionary) -> void:
+	# 17b: past weekly champions (the crown history) sit
+	# above the activity log.
+	var champs: Array = mine.get("champions", [])
+	if not champs.is_empty():
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 7)
+		head.add_child(_fa(FA_CROWN, 13, GOLD_TXT))
+		head.add_child(_label("VÔ ĐỊCH CÁC TUẦN TRƯỚC", 13, GOLD_TXT, true))
+		cv.add_child(head)
+		for c in champs:
+			var wk := String(c.get("week", ""))
+			var parts := wk.split("-")
+			var wtxt := wk
+			if parts.size() == 3:
+				wtxt = "%s/%s/%s" % [parts[2], parts[1], parts[0]]
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			row.add_child(_label_wrap("Tuần %s — %s" % [wtxt,
+					String(c.get("name", ""))], 13, PAPER))
+			row.add_child(_label("%s điểm" % _fmt(int(c.get("points", 0))), 12, GOLD_TXT))
+			cv.add_child(row)
+		var sep := HSeparator.new()
+		sep.add_theme_stylebox_override("separator", _sb(Color(1, 1, 1, 0.08), 1))
+		cv.add_child(sep)
 	var log: Array = mine.get("log", [])
 	if log.is_empty():
 		cv.add_child(_label_wrap("Chưa có hoạt động nào.", 13, MUTED))
@@ -1007,7 +1313,8 @@ func _render_chat_lines() -> void:
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 6)
 		var nm := String(ln.get("name", "?"))
-		hb.add_child(_label(nm + ":", 13,
+		# 17b: [TAG] before the sender's name.
+		hb.add_child(_label(Net.ally_disp(nm, String(ln.get("tag", ""))) + ":", 13,
 				Color(0.45, 0.9, 0.6) if nm == my_name else GOLD_TXT, true))
 		hb.add_child(_label_wrap(String(ln.get("text", "")), 13, PAPER))
 		lv.add_child(hb)
@@ -1019,6 +1326,23 @@ func _scroll_chat_bottom() -> void:
 	await get_tree().process_frame
 	if _chat_scroll != null and is_instance_valid(_chat_scroll):
 		_chat_scroll.scroll_vertical = 1 << 30
+
+
+# ------------------------------------------------------------ capture hooks
+
+## Capture-harness helpers (17b shots): jump straight to a
+## tab, optionally with a member's detail card open, or into
+## the chat view. Not used by normal play.
+func shot_set_tab(tab: String, member_user := "") -> void:
+	_tab = tab
+	_detail_user = member_user
+	_sig = "\u0001"
+	_render()
+
+
+func shot_open_chat() -> void:
+	if not Net.alliance_mine.is_empty():
+		_open_chat(Net.alliance_mine)
 
 
 # ------------------------------------------------------------ not joined
@@ -1081,6 +1405,10 @@ func _create_card() -> PanelContainer:
 	var name_edit := _field("Tên liên minh (3–24 ký tự)…")
 	name_edit.max_length = 24
 	vb.add_child(name_edit)
+	# 17b: the tag is chosen at creation (leader-editable later).
+	var tag_edit := _field("Tag liên minh (2–5 ký tự chữ/số, VD: SL123)…")
+	tag_edit.max_length = 5
+	vb.add_child(tag_edit)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var bcol := VBoxContainer.new()
@@ -1112,7 +1440,11 @@ func _create_card() -> PanelContainer:
 		if nm.length() < 3:
 			_show_status("Tên liên minh phải có ít nhất 3 ký tự.")
 			return
-		Net.alliance_create(nm, String(BADGE_ORDER[badge_opt.selected]),
+		var tg := tag_edit.text.strip_edges()
+		if tg.length() < 2:
+			_show_status("Tag liên minh phải có 2–5 ký tự (chỉ chữ và số).")
+			return
+		Net.alliance_create(nm, tg, String(BADGE_ORDER[badge_opt.selected]),
 				"open" if mode_opt.selected == 0 else "request",
 				desc_edit.text.strip_edges())
 		_create_open = false)
@@ -1124,7 +1456,8 @@ func _create_card() -> PanelContainer:
 		_render())
 	brow.add_child(cancel)
 	vb.add_child(brow)
-	vb.add_child(_label_wrap("Tạo liên minh miễn phí. Tên liên minh là duy nhất trên toàn server.",
+	vb.add_child(_label_wrap("Tạo liên minh miễn phí. Tên và tag liên minh đều là duy nhất "
+			+ "trên toàn server; tag hiện dạng [TAG] trước tên thành viên.",
 			12, DIM))
 	return card
 
@@ -1146,7 +1479,8 @@ func _invite_row(inv: Dictionary) -> PanelContainer:
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	nv.add_child(_label(String(inv.get("name", "")), 16, GOLD_TXT, true))
+	nv.add_child(_label(Net.ally_disp(String(inv.get("name", "")),
+			String(inv.get("tag", ""))), 16, GOLD_TXT, true))
 	nv.add_child(_label("Cấp %d · %d/%d thành viên · %s mời bạn" % [
 			int(inv.get("level", 1)), int(inv.get("members", 0)), 30,
 			String(inv.get("by_name", ""))], 12, MUTED))
@@ -1179,7 +1513,8 @@ func _join_row(rowd: Dictionary) -> PanelContainer:
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	nv.add_child(_label(String(rowd.get("name", "")), 16, GOLD_TXT, true))
+	nv.add_child(_label(Net.ally_disp(String(rowd.get("name", "")),
+			String(rowd.get("tag", ""))), 16, GOLD_TXT, true))
 	nv.add_child(_label("Cấp %d · %d/%d thành viên · Hội trưởng: %s" % [
 			int(rowd.get("level", 1)), int(rowd.get("members", 0)),
 			int(rowd.get("cap", 30)), String(rowd.get("leader_name", ""))], 12, MUTED))

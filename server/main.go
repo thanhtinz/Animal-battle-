@@ -127,6 +127,9 @@ type clientMsg struct {
 	Badge  string `json:"badge"`
 	Desc   string `json:"desc"`
 	Role   string `json:"role"`
+	// Tag (17b): the alliance tag on create/settings; the
+	// notice text rides Text.
+	Tag string `json:"tag"`
 }
 
 type session struct {
@@ -261,6 +264,9 @@ func (s *session) sendFriends() {
 		rows = s.acc.FriendsOf(s.user)
 		for i := range rows {
 			rows[i].Online = s.hub.IsOnline(rows[i].User)
+			if s.hub.allis != nil {
+				rows[i].AllyTag = s.hub.allis.TagOf(rows[i].User)
+			}
 		}
 		if rows == nil {
 			rows = []FriendEntry{}
@@ -832,7 +838,7 @@ func (s *session) handle(raw []byte) {
 		"alliance_reject", "alliance_invite", "alliance_accept_invite",
 		"alliance_decline_invite", "alliance_leave", "alliance_kick",
 		"alliance_role", "alliance_transfer", "alliance_settings",
-		"alliance_disband", "alliance_chat":
+		"alliance_disband", "alliance_chat", "alliance_notice":
 		// Alliances (17a). Accounts only — guests can neither
 		// create, join, apply nor chat (same rule as tournaments).
 		as := s.hub.allis
@@ -863,7 +869,7 @@ func (s *session) handle(raw []byte) {
 			rows := as.ListWire(s.user, m.Name)
 			s.sendJSON(map[string]any{"t": "alliance_list", "rows": rows, "total": len(rows)})
 		case "alliance_create":
-			a, err := as.Create(s.user, m.Name, m.Badge, m.Mode, m.Desc)
+			a, err := as.Create(s.user, m.Name, m.Tag, m.Badge, m.Mode, m.Desc)
 			if err != nil {
 				s.sendErr(err)
 				return
@@ -945,7 +951,17 @@ func (s *session) handle(raw []byte) {
 			pushHome(m.User)
 		case "alliance_settings":
 			members := as.MemberUsers(m.AllyID)
-			if err := as.UpdateSettings(m.AllyID, s.user, m.Badge, m.Mode, m.Desc); err != nil {
+			if err := as.UpdateSettings(m.AllyID, s.user, m.Tag, m.Badge, m.Mode, m.Desc); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(members...)
+		case "alliance_notice":
+			// 17b notice board: leader/deputy set it, every
+			// member's open screen refreshes live.
+			members := as.MemberUsers(m.AllyID)
+			if err := as.SetNotice(m.AllyID, s.user, m.Text); err != nil {
 				s.sendErr(err)
 				return
 			}
@@ -1165,6 +1181,10 @@ func main() {
 	// member contribution + alliance XP from recorded results.
 	hub.allis = NewAlliances(store, acc)
 	acc.MatchHook = hub.allis.Accrue
+	// 17b: the match feed drives weekly quests + member
+	// counters; the tag resolver feeds profile payloads.
+	acc.MatchFeed = hub.allis.FeedMatch
+	acc.AllyTagOf = hub.allis.TagOf
 	// Replay archive (13h): one JSON file beside the account store.
 	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
 		log.Fatalf("replay store: %v", err)

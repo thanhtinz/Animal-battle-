@@ -1559,11 +1559,17 @@ func _lb_alliance_card(pos: int, row: Dictionary) -> PanelContainer:
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var nm := _label(String(row.get("name", "")), 16, name_col)
+	var nm := _label(Net.ally_disp(String(row.get("name", "")),
+			String(row.get("tag", ""))), 16, name_col)
 	nv.add_child(nm)
 	nv.add_child(_label("Cấp %d · %d/%d thành viên · Hội trưởng: %s" % [
 			int(row.get("level", 1)), int(row.get("members", 0)),
 			int(row.get("cap", 30)), String(row.get("leader_name", ""))], 12, sub_col))
+	# 17b: the weekly-race crown holder carries a gold marker.
+	if bool(row.get("champion", false)):
+		var crown := _label("Vô địch tuần trước", 12,
+				Color(0.24, 0.15, 0.02) if on_gold else Color(1, 0.84, 0.3))
+		nv.add_child(crown)
 	hb.add_child(nv)
 	var wv := VBoxContainer.new()
 	wv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1704,10 +1710,11 @@ func _bind_signals() -> void:
 			_fill_browser())
 
 
-func _on_chat_received(scope: String, _from: int, sender_name: String, text: String) -> void:
+func _on_chat_received(scope: String, _from: int, sender_name: String, text: String, ally_tag: String = "") -> void:
 	if scope != "lobby" or _chat_log == null:
 		return
-	_chat_log.text += "%s: %s\n" % [sender_name, text]
+	# 17b: [TAG] before the sender's name when they have one.
+	_chat_log.text += "%s: %s\n" % [Net.ally_disp(sender_name, ally_tag), text]
 
 
 func _process(_delta: float) -> void:

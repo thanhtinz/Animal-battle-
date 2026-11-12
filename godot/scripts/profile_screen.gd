@@ -402,7 +402,10 @@ func _refresh() -> void:
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		name_col.add_child(hint)
 	else:
-		name_col.add_child(_label(Net.display_name(), 23, Color.WHITE))
+		# 17b: [TAG] before the name when the account is in an
+		# alliance (tag resolved into the profile server-side).
+		name_col.add_child(_label(Net.ally_disp(Net.display_name(),
+				String(p.get("ally_tag", ""))), 23, Color.WHITE))
 		var id_row := HBoxContainer.new()
 		id_row.add_theme_constant_override("separation", 6)
 		var acc_id := int(p.get("id", 0))
