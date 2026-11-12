@@ -170,10 +170,16 @@ func setup(p_game) -> void:
 	visible = false
 	Net.auth_ok.connect(func(_t, _p) -> void: if visible: _refresh())
 	Net.auth_out.connect(func() -> void: if visible: _refresh())
+	# 17a: the Liên minh row renders from the live alliance
+	# payload and re-renders when a fresh one lands.
+	Net.alliance_home_received.connect(func(_m: Dictionary, _i: Array) -> void:
+		if visible: _refresh())
 
 
 func open() -> void:
 	visible = true
+	if Net.account_name != "":
+		Net.alliance_request_home()
 	_refresh()
 
 
@@ -491,6 +497,9 @@ func _refresh() -> void:
 	title_row.add_child(pen_holder)
 	_body.add_child(title_row)
 
+	# Liên minh row (17a): the account's real alliance from the
+	# live payload; the whole value is a button into the
+	# alliance screen (Main closes this profile first).
 	var ally_row := HBoxContainer.new()
 	ally_row.add_theme_constant_override("separation", 8)
 	var al := _label("Liên minh:", 15, MUTED)
@@ -500,7 +509,22 @@ func _refresh() -> void:
 	aic.custom_minimum_size = Vector2(20, 20)
 	aic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ally_row.add_child(aic)
-	ally_row.add_child(_label("Chưa có liên minh", 16))
+	var ally_btn := Button.new()
+	ally_btn.flat = true
+	ally_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	ally_btn.add_theme_font_size_override("font_size", 16)
+	if Net.alliance_mine.is_empty():
+		ally_btn.text = "Chưa có liên minh — bấm để mở"
+		ally_btn.add_theme_color_override("font_color", MUTED)
+		ally_btn.add_theme_color_override("font_hover_color", PAPER)
+	else:
+		ally_btn.text = String(Net.alliance_mine.get("name", ""))
+		ally_btn.add_theme_color_override("font_color", Color(0.98, 0.8, 0.35))
+		ally_btn.add_theme_color_override("font_hover_color", Color(1.0, 0.86, 0.45))
+	ally_btn.pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_alliance"):
+			game.home_open_alliance())
+	ally_row.add_child(ally_btn)
 	_body.add_child(ally_row)
 
 	# ---- rank cards

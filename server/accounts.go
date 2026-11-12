@@ -521,6 +521,11 @@ type Store interface {
 	PutTournament(t *Tournament) error
 	DeleteTournament(id string) error
 	Tournaments() []*Tournament
+	// Alliances are the 17a alliance states, keyed by id.
+	GetAlliance(id string) (*Alliance, bool)
+	PutAlliance(a *Alliance) error
+	DeleteAlliance(id string) error
+	Alliances() []*Alliance
 }
 
 type storeData struct {
@@ -528,6 +533,7 @@ type storeData struct {
 	Tokens      map[string]*tokenRec   `json:"tokens"`
 	Meta        map[string]string      `json:"meta,omitempty"`
 	Tournaments map[string]*Tournament `json:"tournaments,omitempty"`
+	Alliances   map[string]*Alliance   `json:"alliances,omitempty"`
 }
 
 type FileStore struct {
@@ -545,6 +551,7 @@ func NewFileStore(path string) (*FileStore, error) {
 	fs.data.Tokens = make(map[string]*tokenRec)
 	fs.data.Meta = make(map[string]string)
 	fs.data.Tournaments = make(map[string]*Tournament)
+	fs.data.Alliances = make(map[string]*Alliance)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -567,6 +574,9 @@ func NewFileStore(path string) (*FileStore, error) {
 		}
 		if fs.data.Tournaments == nil {
 			fs.data.Tournaments = make(map[string]*Tournament)
+		}
+		if fs.data.Alliances == nil {
+			fs.data.Alliances = make(map[string]*Alliance)
 		}
 	}
 	return fs, nil
@@ -692,6 +702,43 @@ func (fs *FileStore) Tournaments() []*Tournament {
 	return out
 }
 
+func (fs *FileStore) GetAlliance(id string) (*Alliance, bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	a, ok := fs.data.Alliances[id]
+	if !ok {
+		return nil, false
+	}
+	return copyAlliance(a), true
+}
+
+func (fs *FileStore) PutAlliance(a *Alliance) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.data.Alliances == nil {
+		fs.data.Alliances = make(map[string]*Alliance)
+	}
+	fs.data.Alliances[a.ID] = copyAlliance(a)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) DeleteAlliance(id string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	delete(fs.data.Alliances, id)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) Alliances() []*Alliance {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	out := make([]*Alliance, 0, len(fs.data.Alliances))
+	for _, a := range fs.data.Alliances {
+		out = append(out, copyAlliance(a))
+	}
+	return out
+}
+
 // ------------------------------------------------------------- service
 
 var (
@@ -710,6 +757,31 @@ type Accounts struct {
 	// SeasonDays is the season length (the -season-days flag);
 	// values <= 0 fall back to DefaultSeasonDays.
 	SeasonDays int
+	// MatchHook, when set, fires once per account per BANKED
+	// match result with that match's XP delta (+10, +30 on a
+	// win — the same values XPFor derives from Matches/Wins;
+	// negative when RecordMatchRevert unbanks one). 17a wires
+	// it to alliance contribution accrual. It always runs with
+	// the accounts lock RELEASED, after the result is durable,
+	// and a hook must never fail the banking path.
+	MatchHook func(user string, xpDelta int)
+}
+
+// matchXPDelta is one recorded match's XP value for its
+// player: 10 for playing, +20 for winning (see XPFor).
+func matchXPDelta(won bool) int {
+	if won {
+		return 30
+	}
+	return 10
+}
+
+// fireMatchHook delivers one banked match's XP delta to the
+// hook, if any. Callers invoke it AFTER releasing ac.mu.
+func (ac *Accounts) fireMatchHook(user string, won bool) {
+	if ac.MatchHook != nil {
+		ac.MatchHook(user, matchXPDelta(won))
+	}
 }
 
 func NewAccounts(store Store) *Accounts {
@@ -1274,11 +1346,25 @@ func (ac *Accounts) MarkMailRead(user string, id int64) (int, error) {
 
 // RecordMatch banks one finished match for an account.
 func (ac *Accounts) RecordMatch(user string, won bool) error {
+	banked, err := ac.recordMatch(user, won)
+	if err != nil {
+		return err
+	}
+	if banked {
+		ac.fireMatchHook(user, won)
+	}
+	return nil
+}
+
+// recordMatch is RecordMatch's locked body; it reports whether
+// a result was actually banked (false = the account vanished,
+// nothing to bank).
+func (ac *Accounts) recordMatch(user string, won bool) (bool, error) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	a, ok := ac.store.GetAccount(user)
 	if !ok {
-		return nil // account vanished; nothing to bank
+		return false, nil // account vanished; nothing to bank
 	}
 	a.Matches++
 	if won {
@@ -1287,7 +1373,10 @@ func (ac *Accounts) RecordMatch(user string, won bool) error {
 		a.Losses++
 	}
 	a.LastPlayed = ac.now().Unix()
-	return ac.store.PutAccount(a)
+	if err := ac.store.PutAccount(a); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RecordMatchRevert is the exact inverse of RecordMatch (15h):
@@ -1296,11 +1385,24 @@ func (ac *Accounts) RecordMatch(user string, won bool) error {
 // W/L and the XP derived from them return to pre-match values.
 // Counters never go negative.
 func (ac *Accounts) RecordMatchRevert(user string, won bool) error {
+	unbanked, err := ac.recordMatchRevert(user, won)
+	if err != nil {
+		return err
+	}
+	if unbanked && ac.MatchHook != nil {
+		ac.MatchHook(user, -matchXPDelta(won))
+	}
+	return nil
+}
+
+// recordMatchRevert is RecordMatchRevert's locked body; it
+// reports whether a banked result was actually removed.
+func (ac *Accounts) recordMatchRevert(user string, won bool) (bool, error) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	a, ok := ac.store.GetAccount(user)
 	if !ok {
-		return nil
+		return false, nil
 	}
 	if a.Matches > 0 {
 		a.Matches--
@@ -1314,7 +1416,10 @@ func (ac *Accounts) RecordMatchRevert(user string, won bool) error {
 			a.Losses--
 		}
 	}
-	return ac.store.PutAccount(a)
+	if err := ac.store.PutAccount(a); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RecordTournamentFinish banks one tournament podium finish
@@ -1521,7 +1626,12 @@ func (ac *Accounts) RecordRankedResultFull(winner, loser string) (RankedOutcome,
 // match context (map + referee-reported duration) the history
 // panel displays.
 func (ac *Accounts) RecordRankedResultMeta(winner, loser, biome, layout string, durationTicks int, replayID string) (RankedOutcome, RankedOutcome, error) {
-	return ac.recordRankedResult(winner, loser, biome, layout, durationTicks, replayID, "")
+	wo, lo, err := ac.recordRankedResult(winner, loser, biome, layout, durationTicks, replayID, "")
+	if err == nil {
+		ac.fireMatchHook(winner, true)
+		ac.fireMatchHook(loser, false)
+	}
+	return wo, lo, err
 }
 
 // RecordRankedResultReason is RecordRankedResultMeta plus the
@@ -1530,7 +1640,12 @@ func (ac *Accounts) RecordRankedResultMeta(winner, loser, biome, layout string, 
 // +1 credit for a completed ranked match; a loss by DISCONNECT
 // costs the loser an extra −5.
 func (ac *Accounts) RecordRankedResultReason(winner, loser, biome, layout string, durationTicks int, replayID, reason string) (RankedOutcome, RankedOutcome, error) {
-	return ac.recordRankedResult(winner, loser, biome, layout, durationTicks, replayID, reason)
+	wo, lo, err := ac.recordRankedResult(winner, loser, biome, layout, durationTicks, replayID, reason)
+	if err == nil {
+		ac.fireMatchHook(winner, true)
+		ac.fireMatchHook(loser, false)
+	}
+	return wo, lo, err
 }
 
 func (ac *Accounts) recordRankedResult(winner, loser, biome, layout string, durationTicks int, replayID, reason string) (RankedOutcome, RankedOutcome, error) {
@@ -1645,6 +1760,16 @@ func (ac *Accounts) recordRankedResult(winner, loser, biome, layout string, dura
 // player whose elimination was a disconnect) and the promotion
 // letter. Returns one RankedOutcome per user, in input order.
 func (ac *Accounts) RecordRankedPlacements(users []string, biome, layout string, durationTicks int, replayID string, disconnects map[string]bool) ([]RankedOutcome, error) {
+	outcomes, err := ac.recordRankedPlacements(users, biome, layout, durationTicks, replayID, disconnects)
+	if err == nil {
+		for _, oc := range outcomes {
+			ac.fireMatchHook(oc.User, oc.Won)
+		}
+	}
+	return outcomes, err
+}
+
+func (ac *Accounts) recordRankedPlacements(users []string, biome, layout string, durationTicks int, replayID string, disconnects map[string]bool) ([]RankedOutcome, error) {
 	field := len(users)
 	if field < 2 {
 		return nil, ErrBadCredentials

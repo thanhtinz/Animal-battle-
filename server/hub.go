@@ -182,9 +182,20 @@ type Hub struct {
 	// Tournaments (15h; set by main; nil-safe in tests).
 	// tournRooms maps "tournID/matchID" -> room code for the
 	// tournament matches whose dedicated room exists.
-	tourns       *Tournaments
-	tournRooms   map[string]string
-	OnRoomClosed func(code string) // e.g. reap the room's referee process
+	tourns     *Tournaments
+	tournRooms map[string]string
+	// Alliances (17a; set by main; nil-safe in tests).
+	allis *Alliances
+	// userConns (17a): live outbound channels per logged-in
+	// username, for lobby-level fan-out that is not tied to a
+	// room (alliance chat + alliance state pushes). A session
+	// registers on auth under a unique id and unregisters
+	// exactly itself on teardown / logout / re-auth.
+	userMu       sync.Mutex
+	userConns    map[string]map[uint64]sender
+	userSeq      uint64
+	allyChatWin  map[string][]time.Time // per-user alliance-chat rate window; guarded by userMu
+	OnRoomClosed func(code string)      // e.g. reap the room's referee process
 	queue        []*queueEntry
 	nqueue       []*queueEntry    // normal (unranked) queue, 13t
 	mmNow        func() time.Time // test seam for queue timing
@@ -204,7 +215,9 @@ func (h *Hub) nextSeqLocked() int64 {
 
 func NewHub() *Hub {
 	return &Hub{rooms: make(map[string]*Room), mmNow: time.Now,
-		online: make(map[string]int), tournRooms: make(map[string]string)}
+		online: make(map[string]int), tournRooms: make(map[string]string),
+		userConns:   make(map[string]map[uint64]sender),
+		allyChatWin: make(map[string][]time.Time)}
 }
 
 // RoomSlotUsers returns slot -> account username for a room
@@ -273,6 +286,102 @@ func (h *Hub) IsOnline(user string) bool {
 	h.onlineMu.Lock()
 	defer h.onlineMu.Unlock()
 	return h.online[user] > 0
+}
+
+// RegisterUserConn binds one live session's outbound channel
+// to a logged-in username (17a) and returns the registration
+// id the session must hand back to UnregisterUserConn.
+func (h *Hub) RegisterUserConn(user string, send sender) uint64 {
+	if user == "" || send == nil {
+		return 0
+	}
+	h.userMu.Lock()
+	defer h.userMu.Unlock()
+	if h.userConns == nil {
+		h.userConns = make(map[string]map[uint64]sender)
+	}
+	h.userSeq++
+	id := h.userSeq
+	m := h.userConns[user]
+	if m == nil {
+		m = make(map[uint64]sender)
+		h.userConns[user] = m
+	}
+	m[id] = send
+	return id
+}
+
+// UnregisterUserConn removes exactly one session's binding.
+func (h *Hub) UnregisterUserConn(user string, id uint64) {
+	if user == "" || id == 0 {
+		return
+	}
+	h.userMu.Lock()
+	defer h.userMu.Unlock()
+	if m := h.userConns[user]; m != nil {
+		delete(m, id)
+		if len(m) == 0 {
+			delete(h.userConns, user)
+		}
+	}
+}
+
+// SendToUsers delivers one message to every live session of
+// the given usernames (17a lobby fan-out). Offline users are
+// skipped silently.
+func (h *Hub) SendToUsers(users []string, msg map[string]any) {
+	h.userMu.Lock()
+	targets := make([]sender, 0, len(users))
+	for _, u := range users {
+		for _, s := range h.userConns[u] {
+			targets = append(targets, s)
+		}
+	}
+	h.userMu.Unlock()
+	for _, s := range targets {
+		sendMsg(s, msg)
+	}
+}
+
+// AllianceChatFrom is the synthetic "from" slot on alliance
+// chat lines: room chat uses player slots and observer chat
+// ObserverSlot (-2); alliance chat has no slots at all.
+const AllianceChatFrom = -3
+
+// RelayAllianceChat fans one alliance chat line out to the
+// alliance's members' live sessions (17a). Members only — the
+// caller passes the member username list from the service.
+// Rate-limited exactly like room chat (ChatRateCount per
+// ChatRateWindow, silently dropped past the budget) and
+// truncated to ChatMaxLen runes. The sender receives their own
+// line back like in room chat. Pure lobby traffic: this never
+// touches any room or match sim.
+func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string, text string) {
+	h.userMu.Lock()
+	if h.allyChatWin == nil {
+		h.allyChatWin = make(map[string][]time.Time)
+	}
+	now := time.Now()
+	win := h.allyChatWin[user][:0]
+	for _, t := range h.allyChatWin[user] {
+		if now.Sub(t) < ChatRateWindow {
+			win = append(win, t)
+		}
+	}
+	if len(win) >= ChatRateCount {
+		h.allyChatWin[user] = win
+		h.userMu.Unlock()
+		return // silently dropped
+	}
+	h.allyChatWin[user] = append(win, now)
+	h.userMu.Unlock()
+	if rs := []rune(text); len(rs) > ChatMaxLen {
+		text = string(rs[:ChatMaxLen])
+	}
+	h.SendToUsers(memberUsers, map[string]any{
+		"t": "chat", "scope": "alliance", "from": AllianceChatFrom,
+		"name": name, "text": text, "alliance": allyID,
+	})
 }
 
 // teamsFor assigns faction teams by join order for a match of n

@@ -77,6 +77,11 @@ signal tourn_list_received(rows: Array)
 signal tourn_detail_received(tourn: Dictionary)
 signal tourn_created_notice(id: String)
 signal tourn_room_joined(code: String, slot: int)
+# 17a alliances: home payload (my alliance view + my invites)
+# and the not-joined browser rows. Alliance CHAT rides the
+# shared chat_received signal with scope == "alliance".
+signal alliance_home_received(mine: Dictionary, invites: Array)
+signal alliance_list_received(rows: Array)
 
 const DEFAULT_URL := "ws://127.0.0.1:8765/ws"
 ## Sim compatibility tag; must match the server's GameVersion.
@@ -143,6 +148,10 @@ var last_rank_result: Dictionary = {} # latest rank_result payload (stage 4)
 var tourn_list_rows: Array = [] # latest tourn_list payload (15h)
 var tourn_detail: Dictionary = {} # latest tourn_detail payload (15h)
 var tourn_room: Dictionary = {} # {code, slot, tourn_id, match} once bound (15h)
+var alliance_mine: Dictionary = {} # latest alliance_home "mine" ({} = unaffiliated) (17a)
+var alliance_invites: Array = [] # alliances holding an invite for me (17a)
+var alliance_rows: Array = [] # latest alliance_list payload (17a)
+var alliance_chat_lines: Array = [] # session transcript [{name, text}] of the alliance channel (17a)
 # Stage 5 (home lobby): social + history caches and the latency
 # readout (app-level ping/pong against the relay).
 var history_rows: Array = []
@@ -216,6 +225,12 @@ var _tourn_play_sent: Dictionary = {} # match id -> msec the play request was se
 var _tourn_finished_printed: bool = false
 var _tourn_quit_at: int = 0
 var _tourn_shot_stage: int = 0
+# 17a alliance smoke driver state (--mp-alliance=create|apply|outside).
+var _ally_stage: int = 0
+var _ally_next_poll: int = 0
+var _ally_authed_at: int = 0
+var _ally_quit_at: int = 0
+var _ally_id: String = ""
 
 
 
@@ -245,6 +260,7 @@ func _ready() -> void:
 			or args.has("mp-shot-create-delay") \
 			or args.has("mp-tourn") or args.has("mp-shot-tourn-list") \
 			or args.has("mp-shot-tourn-bracket") \
+			or args.has("mp-alliance") or args.has("mp-shot-alliance") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -577,8 +593,17 @@ func _handle_message(txt: String) -> void:
 		"desync":
 			desync_notice.emit(int(m.get("tick", 0)))
 		"chat":
-			chat_received.emit(String(m.get("scope", "match")), int(m.get("from", -1)),
-					String(m.get("name", "?")), String(m.get("text", "")))
+			var cscope := String(m.get("scope", "match"))
+			var cname := String(m.get("name", "?"))
+			var ctext := String(m.get("text", ""))
+			if cscope == "alliance":
+				# 17a: keep a session transcript for the alliance
+				# screen; the line still rides chat_received.
+				alliance_chat_lines.append({"name": cname, "text": ctext})
+				if alliance_chat_lines.size() > 100:
+					alliance_chat_lines.pop_front()
+				print("MPLOG alliance chat from=", cname, " text=", ctext)
+			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext)
 		"auth_ok":
 			auth_token = String(m.get("token", ""))
 			auth_profile = m.get("profile", {})
@@ -653,6 +678,19 @@ func _handle_message(txt: String) -> void:
 			mail_rows = m.get("rows", [])
 			mail_unread = int(m.get("unread", 0))
 			mail_received.emit(mail_rows, mail_unread)
+		"alliance_home":
+			var mine_v = m.get("mine", null)
+			alliance_mine = mine_v if mine_v is Dictionary else {}
+			alliance_invites = m.get("invites", [])
+			print("MPLOG alliance home mine=", String(alliance_mine.get("name", "")),
+					" role=", String(alliance_mine.get("my_role", "")),
+					" members=", int(alliance_mine.get("members_count", 0)),
+					" invites=", alliance_invites.size())
+			alliance_home_received.emit(alliance_mine, alliance_invites)
+		"alliance_list":
+			alliance_rows = m.get("rows", [])
+			print("MPLOG alliance list rows=", alliance_rows.size())
+			alliance_list_received.emit(alliance_rows)
 		"leaderboard":
 			leaderboard_mode = String(m.get("mode", "wl"))
 			var me_v = m.get("me", {})
@@ -731,6 +769,81 @@ func tourn_create(name_: String, format: String, bracket: String, size: int) -> 
 
 func tourn_request_detail(id: String) -> void:
 	_send({"t": "tourn_detail", "tourn_id": id})
+
+
+## Alliances (17a): every mutation answers with a fresh
+## alliance_home on alliance_home_received; the browser list
+## lands on alliance_list_received; errors ride the shared
+## error -> lobby_error channel. All require a logged-in
+## account (guests are refused server-side).
+func alliance_request_home() -> void:
+	_send({"t": "alliance_home"})
+
+
+func alliance_request_list(search: String) -> void:
+	_send({"t": "alliance_list", "name": search})
+
+
+func alliance_create(ally_name: String, badge: String, mode: String, desc: String) -> void:
+	_send({"t": "alliance_create", "name": ally_name, "badge": badge,
+			"mode": mode, "desc": desc})
+
+
+func alliance_apply(id: String, msg: String) -> void:
+	_send({"t": "alliance_apply", "ally_id": id, "text": msg})
+
+
+func alliance_cancel_request(id: String) -> void:
+	_send({"t": "alliance_cancel_request", "ally_id": id})
+
+
+func alliance_approve(id: String, user: String) -> void:
+	_send({"t": "alliance_approve", "ally_id": id, "user": user})
+
+
+func alliance_reject(id: String, user: String) -> void:
+	_send({"t": "alliance_reject", "ally_id": id, "user": user})
+
+
+func alliance_invite(id: String, player_name: String) -> void:
+	_send({"t": "alliance_invite", "ally_id": id, "name": player_name})
+
+
+func alliance_accept_invite(id: String) -> void:
+	_send({"t": "alliance_accept_invite", "ally_id": id})
+
+
+func alliance_decline_invite(id: String) -> void:
+	_send({"t": "alliance_decline_invite", "ally_id": id})
+
+
+func alliance_leave(id: String) -> void:
+	_send({"t": "alliance_leave", "ally_id": id})
+
+
+func alliance_kick(id: String, user: String) -> void:
+	_send({"t": "alliance_kick", "ally_id": id, "user": user})
+
+
+func alliance_role(id: String, user: String, role: String) -> void:
+	_send({"t": "alliance_role", "ally_id": id, "user": user, "role": role})
+
+
+func alliance_transfer(id: String, user: String) -> void:
+	_send({"t": "alliance_transfer", "ally_id": id, "user": user})
+
+
+func alliance_settings(id: String, badge: String, mode: String, desc: String) -> void:
+	_send({"t": "alliance_settings", "ally_id": id, "badge": badge,
+			"mode": mode, "desc": desc})
+
+
+func alliance_disband(id: String) -> void:
+	_send({"t": "alliance_disband", "ally_id": id})
+
+
+func alliance_chat(text: String) -> void:
+	_send({"t": "alliance_chat", "text": text})
 
 
 func tourn_register(id: String, partner: String = "") -> void:
@@ -1480,6 +1593,13 @@ func _auto_process() -> void:
 	if auto.has("mp-shot-tourn-bracket") and _auto_authed and not _auto_shot_done:
 		_auto_tourn_shot(cs, true)
 		return
+	# 17a alliance smoke driver + captures.
+	if auto.has("mp-alliance") and _auto_authed:
+		if _auto_alliance_process(cs):
+			return
+	if auto.has("mp-shot-alliance") and _auto_authed and not _auto_shot_done:
+		_auto_alliance_shot(cs)
+		return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
 	# shoot and quit.
@@ -2139,6 +2259,168 @@ func _auto_tourn_process(cs) -> bool:
 ## 15h captures: list view (a freshly created open
 ## tournament) and bracket view (a started 4-entry
 ## single-elim, filled by --mp-tourn=joinany filler clients).
+## 17a alliance smoke driver: three roles prove the whole
+## flow against a live server — "create" founds a request-mode
+## alliance and approves the applicant, "apply" finds it in the
+## browser, applies, joins on approval, receives the alliance
+## chat and leaves; "outside" never joins and must receive
+## nothing. Sequencing between the processes is the shell
+## script's job (it greps the MPLOG lines).
+func _auto_alliance_process(_cs) -> bool:
+	var now := Time.get_ticks_msec()
+	if _ally_authed_at == 0:
+		_ally_authed_at = now
+	var role := String(auto.get("mp-alliance", "apply"))
+	var aname := String(auto.get("mp-alliance-name", "Hội Khói Lam"))
+	# Global timeout: fail loudly instead of hanging the smoke.
+	if _ally_quit_at == 0 and now - _ally_authed_at > 110000:
+		print("MPLOG alliance TIMEOUT role=", role, " stage=", _ally_stage)
+		_ally_quit_at = now + 500
+	if _ally_quit_at > 0:
+		if now >= _ally_quit_at:
+			get_tree().quit()
+		return true
+	if now < _ally_next_poll:
+		return true
+	_ally_next_poll = now + 900
+	match role:
+		"create":
+			match _ally_stage:
+				0:
+					print("MPLOG alliance create sent name=", aname)
+					alliance_create(aname, "red", "request", "Chung một chiến tuyến")
+					_ally_stage = 1
+				1:
+					alliance_request_home()
+					if not alliance_mine.is_empty():
+						_ally_id = String(alliance_mine.get("id", ""))
+						print("MPLOG alliance created id=", _ally_id,
+								" name=", String(alliance_mine.get("name", "")))
+						_ally_stage = 2
+				2:
+					alliance_request_home()
+					# Approve any pending request the moment it lands.
+					for rq in alliance_mine.get("requests", []):
+						print("MPLOG alliance approving user=",
+								String(rq.get("user", "")))
+						alliance_approve(_ally_id, String(rq.get("user", "")))
+						_ally_stage = 3
+				3:
+					alliance_request_home()
+					if int(alliance_mine.get("members_count", 0)) >= 2:
+						for mem in alliance_mine.get("members", []):
+							print("MPLOG alliance member user=",
+									String(mem.get("user", "")),
+									" role=", String(mem.get("role", "")))
+						alliance_chat("Xin chào liên minh 17a")
+						print("MPLOG alliance chat sent")
+						_ally_stage = 4
+				4:
+					alliance_request_home()
+					if int(alliance_mine.get("members_count", 0)) == 1:
+						print("MPLOG alliance flow done")
+						_ally_quit_at = now + 800
+		"apply":
+			match _ally_stage:
+				0:
+					alliance_request_list(aname)
+					for row in alliance_rows:
+						if String(row.get("name", "")) == aname:
+							_ally_id = String(row.get("id", ""))
+							print("MPLOG alliance found id=", _ally_id)
+							_ally_stage = 1
+							break
+				1:
+					print("MPLOG alliance apply sent id=", _ally_id)
+					alliance_apply(_ally_id, "Cho mình xin vào với")
+					_ally_stage = 2
+				2:
+					alliance_request_home()
+					if not alliance_mine.is_empty():
+						print("MPLOG alliance joined role=",
+								String(alliance_mine.get("my_role", "")),
+								" name=", String(alliance_mine.get("name", "")),
+								" leader=", String(alliance_mine.get("leader_name", "")))
+						_ally_stage = 3
+				3:
+					# The chat receipt itself is printed by the
+					# "chat" dispatch (MPLOG alliance chat from=…).
+					if not alliance_chat_lines.is_empty():
+						_ally_stage = 4
+				4:
+					print("MPLOG alliance leave sent")
+					alliance_leave(_ally_id)
+					_ally_stage = 5
+				5:
+					alliance_request_home()
+					if alliance_mine.is_empty():
+						print("MPLOG alliance flow done")
+						_ally_quit_at = now + 800
+		"outside":
+			match _ally_stage:
+				0:
+					alliance_request_home()
+					if now - _ally_authed_at > 3000:
+						_ally_stage = 1
+				1:
+					if now - _ally_authed_at > 26000:
+						print("MPLOG alliance outsider clean mine=",
+								0 if alliance_mine.is_empty() else 1,
+								" chats=", alliance_chat_lines.size())
+						_ally_quit_at = now + 500
+	return true
+
+
+## 17a captures: open the REAL alliance screen and save the
+## shot. With --mp-alliance-name=<name> the shot client first
+## applies to that alliance and waits for approval (a headless
+## leader driver approves), so the joined view photographs
+## real membership; without a name it photographs whatever
+## state the account is in (the not-joined browser for a
+## fresh account).
+func _auto_alliance_shot(cs) -> void:
+	var now := Time.get_ticks_msec()
+	if _auto_home_at == 0:
+		_auto_home_at = now
+	if now < _ally_next_poll:
+		return
+	_ally_next_poll = now + 700
+	var aname := String(auto.get("mp-alliance-name", ""))
+	match _ally_stage:
+		0:
+			if aname == "":
+				_ally_stage = 2
+			elif now - _auto_home_at > 800:
+				alliance_request_list(aname)
+				_ally_stage = 1
+		1:
+			if not alliance_mine.is_empty():
+				print("MPLOG alliance shot joined name=",
+						String(alliance_mine.get("name", "")))
+				_ally_stage = 2
+			else:
+				alliance_request_home()
+				if _ally_id == "":
+					for row in alliance_rows:
+						if String(row.get("name", "")) == aname:
+							_ally_id = String(row.get("id", ""))
+							print("MPLOG alliance shot apply id=", _ally_id)
+							alliance_apply(_ally_id, "Xin vào để chụp ảnh")
+							break
+		2:
+			if aname == "" and now - _auto_home_at < 1500:
+				return
+			if cs != null and cs.has_method("open_alliance_shot"):
+				cs.open_alliance_shot()
+			_ally_stage = 3
+			_ally_next_poll = now + 2600
+		3:
+			_auto_shot_done = true
+			_save_shot(String(auto["mp-shot-alliance"]))
+			print("MPLOG alliance shot saved")
+			get_tree().quit()
+
+
 func _auto_tourn_shot(cs, bracket: bool) -> void:
 	var now := Time.get_ticks_msec()
 	if _auto_home_at == 0:

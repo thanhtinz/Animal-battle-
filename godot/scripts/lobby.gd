@@ -1016,12 +1016,12 @@ func _browser_row(row: Dictionary) -> PanelContainer:
 ## and a sticky "Hạng của tôi" footer whose
 ## position the server computes over the FULL ordering
 ## (LeaderboardV2), not just the visible top 20.
-## The Liên minh tab is an honest EMPTY STATE: there is no
-## alliance system in the game yet, so it renders a centred
-## notice instead of data and never asks the server. (The
-## server's wins/losses board mode "wl" still exists in the
-## protocol and in _lb_score_text/_lb_sub_text for other
-## callers; it simply has no tab here anymore.)
+## The Liên minh tab (17a) ranks the server's alliances by
+## weekly contribution points (server mode "alliance"); its
+## rows open the real alliance screen. (The server's
+## wins/losses board mode "wl" still exists in the protocol
+## and in _lb_score_text/_lb_sub_text for other callers; it
+## simply has no tab here anymore.)
 
 func _lb_sb(bg: Color, radius: int, border: Color = Color(0, 0, 0, 0), bw: int = 0) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1211,8 +1211,7 @@ func _set_lb_mode(mode: String) -> void:
 	_lb_mode = mode
 	_lb_data = []
 	_lb_me = {}
-	if mode != "alliance":
-		Net.request_leaderboard(mode)
+	Net.request_leaderboard(mode)
 	_fill_leaderboard()
 
 
@@ -1229,8 +1228,7 @@ func open_ranked_leaderboard() -> void:
 func _show_lb() -> void:
 	_panel_cc.visible = false
 	_lb_root.visible = true
-	if _lb_mode != "alliance":
-		Net.request_leaderboard(_lb_mode)
+	Net.request_leaderboard(_lb_mode)
 	_fill_leaderboard()
 
 
@@ -1398,8 +1396,8 @@ func _fill_leaderboard() -> void:
 	for ch in _lb_footer_box.get_children():
 		_lb_footer_box.remove_child(ch)
 		ch.queue_free()
-	# The Liên minh tab: no column headers, no data — an
-	# honest empty state instead (see _fill_lb_alliance).
+	# The Liên minh tab: no player column headers — alliance
+	# rows carry their own layout (see _fill_lb_alliance).
 	if _lb_cols != null:
 		_lb_cols.visible = _lb_mode != "alliance"
 	if _lb_mode == "alliance":
@@ -1442,41 +1440,142 @@ func _fill_leaderboard() -> void:
 		_lb_rows_box.add_child(_lb_card(pos, row))
 
 
-## The Liên minh tab's empty state: no alliance system exists
-## in the game yet, so the board shows a centred shield
-## emblem, the no-data line and the coming-soon line. No rows
-## are faked, nothing is requested from the server, and the
-## footer says plainly the viewer belongs to no alliance.
+## The Liên minh tab (17a): alliances ranked by weekly
+## contribution points (server-computed order), the viewer's
+## own alliance in the sticky footer, and one clear way into
+## the alliance screen. Badge chip colours mirror the
+## alliance screen's fixed shield set.
+const LB_BADGE_COLORS := {
+	"red": Color(0.45, 0.08, 0.10), "blue": Color(0.10, 0.25, 0.55),
+	"teal": Color(0.05, 0.35, 0.38), "green": Color(0.10, 0.32, 0.12),
+	"gold": Color(0.45, 0.35, 0.05), "purple": Color(0.25, 0.12, 0.42),
+}
+
+
 func _fill_lb_alliance() -> void:
-	var note := _label("Bạn chưa thuộc liên minh nào.", 15, Color(0.85, 0.88, 0.95))
-	note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_lb_footer_box.add_child(note)
-	var centre := CenterContainer.new()
-	centre.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	centre.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	# The scroll's child is only as tall as its content, so
-	# claim the full viewport height to truly centre the
-	# block vertically on the board.
-	var sc := _lb_rows_box.get_parent() as ScrollContainer
-	if sc != null and sc.size.y > 0.0:
-		centre.custom_minimum_size.y = sc.size.y - 4.0
-	_lb_rows_box.add_child(centre)
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
-	centre.add_child(vb)
-	var ic := GlassIcon.new()
-	ic.kind = "emblem"
-	ic.custom_minimum_size = Vector2(84, 84)
-	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	ic.modulate = Color(1, 1, 1, 0.75)
-	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(ic)
-	var l1 := _label("Chưa có dữ liệu liên minh", 19, Color(0.92, 0.94, 0.98))
-	l1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(l1)
-	var l2 := _label("Hệ thống liên minh sắp ra mắt.", 14, TXT_DIM)
-	l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(l2)
+	# Footer: the viewer's own alliance (or the honest note).
+	if Net.account_name == "":
+		var gl := _label("Đăng nhập để xem liên minh của bạn.", 15, Color(0.85, 0.88, 0.95))
+		gl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_lb_footer_box.add_child(gl)
+	elif Net.leaderboard_mode != "alliance":
+		var wl := _label("Đang tải hạng liên minh…", 15, Color(0.85, 0.88, 0.95))
+		wl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_lb_footer_box.add_child(wl)
+	elif not _lb_me.is_empty() and _lb_me.get("row") is Dictionary:
+		var r: Dictionary = _lb_me["row"]
+		var mine := _label("Liên minh của bạn: #%d · %s · %s điểm tuần" % [
+				int(_lb_me.get("pos", 0)), String(r.get("name", "")),
+				_lb_fmt_num(int(r.get("week", 0)))], 15, Color(0.85, 0.88, 0.95))
+		mine.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mine.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_lb_footer_box.add_child(mine)
+		_lb_footer_box.add_child(_lb_open_alliance_btn())
+	else:
+		var note := _label("Bạn chưa thuộc liên minh nào.", 15, Color(0.85, 0.88, 0.95))
+		note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_lb_footer_box.add_child(note)
+		_lb_footer_box.add_child(_lb_open_alliance_btn())
+	# Rows.
+	if Net.leaderboard_mode != "alliance":
+		var l := _label("Đang tải…", 16, TXT_DIM)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_lb_rows_box.add_child(l)
+		return
+	if _lb_data.is_empty():
+		var l := _label("Chưa có liên minh nào trên server.", 15, TXT_DIM)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_lb_rows_box.add_child(l)
+		return
+	var pos := 0
+	for row in _lb_data:
+		pos += 1
+		_lb_rows_box.add_child(_lb_alliance_card(pos, row))
+
+
+func _lb_fmt_num(n: int) -> String:
+	var s := str(absi(n))
+	var out := ""
+	while s.length() > 3:
+		out = "." + s.right(3) + out
+		s = s.left(s.length() - 3)
+	return ("-" if n < 0 else "") + s + out
+
+
+func _lb_open_alliance_btn() -> Button:
+	var b := Button.new()
+	b.text = "Mở trang Liên minh"
+	b.custom_minimum_size = Vector2(190, 40)
+	b.add_theme_font_size_override("font_size", 14)
+	b.add_theme_stylebox_override("normal",
+			_lb_sb(Color(0.98, 0.8, 0.35), 8))
+	b.add_theme_stylebox_override("hover",
+			_lb_sb(Color(1.0, 0.86, 0.45), 8))
+	b.add_theme_stylebox_override("pressed",
+			_lb_sb(Color(0.88, 0.7, 0.28), 8))
+	b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
+	b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
+	b.pressed.connect(func() -> void:
+		_close_leaderboard()
+		if game != null and game.has_method("home_open_alliance"):
+			game.home_open_alliance())
+	return b
+
+
+func _lb_alliance_card(pos: int, row: Dictionary) -> PanelContainer:
+	var on_gold := pos == 1
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(0, 64)
+	if on_gold:
+		card.add_theme_stylebox_override("panel", _lb_gold_style())
+	else:
+		var flat := StyleBoxFlat.new()
+		flat.bg_color = Color(0, 0, 0, 0)
+		flat.border_color = Color(1, 1, 1, 0.08)
+		flat.border_width_bottom = 1
+		flat.content_margin_left = 10
+		flat.content_margin_right = 10
+		flat.content_margin_top = 5
+		flat.content_margin_bottom = 5
+		card.add_theme_stylebox_override("panel", flat)
+	var name_col := Color(0.14, 0.10, 0.02) if on_gold else Color.WHITE
+	var sub_col := Color(0.34, 0.25, 0.09) if on_gold else Color(0.75, 0.79, 0.88)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 12)
+	card.add_child(hb)
+	var rank := _label("#%d" % pos, 17, name_col)
+	rank.custom_minimum_size = Vector2(44, 0)
+	rank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rank.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(rank)
+	var chip := PanelContainer.new()
+	chip.custom_minimum_size = Vector2(30, 36)
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip.add_theme_stylebox_override("panel", _lb_sb(
+			LB_BADGE_COLORS.get(String(row.get("badge", "red")), Color(0.45, 0.08, 0.1)), 7,
+			Color(0.98, 0.8, 0.35, 0.9), 2))
+	hb.add_child(chip)
+	var nv := VBoxContainer.new()
+	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var nm := _label(String(row.get("name", "")), 16, name_col)
+	nv.add_child(nm)
+	nv.add_child(_label("Cấp %d · %d/%d thành viên · Hội trưởng: %s" % [
+			int(row.get("level", 1)), int(row.get("members", 0)),
+			int(row.get("cap", 30)), String(row.get("leader_name", ""))], 12, sub_col))
+	hb.add_child(nv)
+	var wv := VBoxContainer.new()
+	wv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var wk := _label(_lb_fmt_num(int(row.get("week", 0))), 17,
+			Color(0.24, 0.15, 0.02) if on_gold else Color(1, 0.95, 0.8))
+	wk.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	wv.add_child(wk)
+	var wl := _label("điểm tuần", 11, sub_col)
+	wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	wv.add_child(wl)
+	hb.add_child(wv)
+	return card
 
 
 ## Ranked queue waiting presentation (13p): the ornate

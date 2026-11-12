@@ -1293,7 +1293,9 @@ func _player_display_name(slot: int) -> String:
 
 
 func _mp_on_chat(scope: String, from_slot: int, sender_name: String, text: String) -> void:
-	if scope == "lobby" or hud == null:
+	# "alliance" (17a) is the lobby guild channel: the alliance
+	# screen owns it — it never lands in a match's chat or toast.
+	if scope == "lobby" or scope == "alliance" or hud == null:
 		return
 	# 15b: in a diplomacy match the team channel belongs to the
 	# CURRENT alliance — a sender who is not (or no longer) our
@@ -3097,6 +3099,7 @@ func open_friends_shot(tab: String = "all") -> void:
 ## Profile screen (13l): opened by tapping the home avatar.
 var profile_screen = null
 var tournament_screen = null
+var alliance_screen = null
 
 
 func _ensure_profile() -> void:
@@ -3224,6 +3227,31 @@ func open_tournament_shot(mode: String) -> void:
 		tournament_screen.open_detail(String(Net.tourn_detail.get("id", "")))
 	else:
 		tournament_screen.open()
+
+
+## Alliances (17a): the leaderboard's Liên minh tab and the
+## profile's Liên minh row open the alliance screen (its own
+## layer over home, like Profile/Tournament). Entry points
+## close their own surface first (the profile here; the
+## leaderboard board closes itself in lobby.gd).
+func _ensure_alliance() -> void:
+	if alliance_screen == null:
+		alliance_screen = AllianceScreen.new()
+		alliance_screen.setup(self)
+		add_child(alliance_screen)
+
+
+func home_open_alliance() -> void:
+	if profile_screen != null:
+		profile_screen.close()
+	_ensure_alliance()
+	alliance_screen.open()
+
+
+## Capture-harness entry: open the real alliance screen.
+func open_alliance_shot() -> void:
+	show_home()
+	home_open_alliance()
 
 
 ## Home settings: relay address shared with the lobby.

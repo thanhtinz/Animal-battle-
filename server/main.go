@@ -117,6 +117,16 @@ type clientMsg struct {
 	Partner    string `json:"partner"`
 	Uphold     bool   `json:"uphold"`
 	Side       int    `json:"side"`
+	// Alliances (17a): the alliance id; create/settings carry
+	// the badge colour id + description; the request message
+	// rides Text, the join mode rides Mode ("open"/"request"),
+	// role changes ride Role, and invite/kick/approve targets
+	// ride User (a username the server already knows) or Name
+	// (invite: a free-typed player name to resolve).
+	AllyID string `json:"ally_id"`
+	Badge  string `json:"badge"`
+	Desc   string `json:"desc"`
+	Role   string `json:"role"`
 }
 
 type session struct {
@@ -128,6 +138,9 @@ type session struct {
 	in    bool   // has a room slot
 	user  string // logged-in account name ("" = guest)
 	token string // session token issued at login
+	// userConnID (17a): this session's registration id in the
+	// hub's per-user connection registry (alliance fan-out).
+	userConnID uint64
 	// Referee sessions (ranked rooms): the connection IS a room's
 	// dedicated referee process, authenticated by token.
 	isReferee bool
@@ -180,6 +193,19 @@ func (s *session) sendAuthErr(err error) {
 	s.sendJSON(map[string]any{"t": "auth_error", "msg": err.Error()})
 }
 
+// sendAllyHome pushes this session's fresh alliance_home
+// payload (17a): their alliance view (nil when unaffiliated)
+// plus pending invites.
+func (s *session) sendAllyHome() {
+	as := s.hub.allis
+	if as == nil {
+		s.sendJSON(map[string]any{"t": "alliance_home", "mine": nil, "invites": []map[string]any{}})
+		return
+	}
+	mine, invites := as.HomeFor(s.user, s.hub.IsOnline)
+	s.sendJSON(map[string]any{"t": "alliance_home", "mine": mine, "invites": invites})
+}
+
 // onAuthed runs after a successful register/login: if the session
 // is already sitting in a room, bind the slot to the account.
 // (Characters are drawn at match start and cosmetic skins resolve
@@ -190,13 +216,24 @@ func (s *session) onAuthed() {
 	}
 }
 
+// unbindUserConn drops this session's alliance fan-out
+// registration, if any (17a).
+func (s *session) unbindUserConn() {
+	if s.user != "" && s.userConnID != 0 {
+		s.hub.UnregisterUserConn(s.user, s.userConnID)
+	}
+	s.userConnID = 0
+}
+
 func (s *session) authOK(token string, p Profile) {
 	if s.user != "" && s.user != p.User {
 		s.hub.SetOnline(s.user, false) // account switch on one session
 	}
+	s.unbindUserConn()
 	s.token = token
 	s.user = p.User
 	s.hub.SetOnline(p.User, true)
+	s.userConnID = s.hub.RegisterUserConn(p.User, s.senderOrConn())
 	s.sendJSON(map[string]any{
 		"t": "auth_ok", "token": token,
 		"profile": p, // {user, wins, losses, matches, mmr, rank{...}, unread_mail}
@@ -377,6 +414,7 @@ func (s *session) handle(raw []byte) {
 		s.sendMail()
 	case "logout":
 		s.acc.Logout(s.token)
+		s.unbindUserConn()
 		if s.user != "" {
 			s.hub.SetOnline(s.user, false)
 		}
@@ -433,6 +471,24 @@ func (s *session) handle(raw []byte) {
 		s.sendJSON(map[string]any{"t": "active_skin", "skin": NormalizeSkinID(m.Skin)})
 	case "leaderboard":
 		mode := m.Mode
+		if mode == "alliance" {
+			// Liên minh tab (17a): alliances ranked by weekly
+			// points; rows carry alliance fields, me is the
+			// viewer's own alliance row (with its position).
+			if s.hub.allis == nil {
+				s.sendJSON(map[string]any{"t": "leaderboard", "mode": "alliance",
+					"rows": []map[string]any{}, "me": nil})
+				return
+			}
+			arows, ame := s.hub.allis.RankingWire(s.user)
+			var me any
+			if ame != nil {
+				me = map[string]any{"pos": ame["pos"], "row": ame}
+			}
+			s.sendJSON(map[string]any{"t": "leaderboard", "mode": "alliance",
+				"rows": arows, "me": me})
+			return
+		}
 		if mode != "ranked" && mode != "friends" {
 			mode = "wl"
 		}
@@ -771,6 +827,151 @@ func (s *session) handle(raw []byte) {
 			}
 			s.sendTournDetail(m.TournID)
 		}
+	case "alliance_home", "alliance_list", "alliance_create",
+		"alliance_apply", "alliance_cancel_request", "alliance_approve",
+		"alliance_reject", "alliance_invite", "alliance_accept_invite",
+		"alliance_decline_invite", "alliance_leave", "alliance_kick",
+		"alliance_role", "alliance_transfer", "alliance_settings",
+		"alliance_disband", "alliance_chat":
+		// Alliances (17a). Accounts only — guests can neither
+		// create, join, apply nor chat (same rule as tournaments).
+		as := s.hub.allis
+		if as == nil {
+			s.sendErr(ErrAllyNotFound)
+			return
+		}
+		if s.user == "" {
+			s.sendErr(ErrAllyLogin)
+			return
+		}
+		// pushHome refreshes OTHER affected users' open alliance
+		// screens (approvals, kicks, invites, …).
+		pushHome := func(users ...string) {
+			for _, u := range users {
+				if u == "" || u == s.user {
+					continue
+				}
+				mine, invites := as.HomeFor(u, s.hub.IsOnline)
+				s.hub.SendToUsers([]string{u}, map[string]any{
+					"t": "alliance_home", "mine": mine, "invites": invites})
+			}
+		}
+		switch m.T {
+		case "alliance_home":
+			s.sendAllyHome()
+		case "alliance_list":
+			rows := as.ListWire(s.user, m.Name)
+			s.sendJSON(map[string]any{"t": "alliance_list", "rows": rows, "total": len(rows)})
+		case "alliance_create":
+			a, err := as.Create(s.user, m.Name, m.Badge, m.Mode, m.Desc)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			_ = a
+			s.sendAllyHome()
+		case "alliance_apply":
+			if err := as.Apply(m.AllyID, s.user, m.Text); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+		case "alliance_cancel_request":
+			if err := as.CancelRequest(m.AllyID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+		case "alliance_approve":
+			if err := as.Approve(m.AllyID, s.user, m.User); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(m.User)
+		case "alliance_reject":
+			if err := as.Reject(m.AllyID, s.user, m.User); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(m.User)
+		case "alliance_invite":
+			target, err := as.Invite(m.AllyID, s.user, m.Name)
+			if err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(target)
+		case "alliance_accept_invite":
+			if err := as.AcceptInvite(s.user, m.AllyID); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+		case "alliance_decline_invite":
+			if err := as.DeclineInvite(s.user, m.AllyID); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+		case "alliance_leave":
+			if err := as.Leave(m.AllyID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+		case "alliance_kick":
+			if err := as.Kick(m.AllyID, s.user, m.User); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(m.User)
+		case "alliance_role":
+			if err := as.SetRole(m.AllyID, s.user, m.User, m.Role); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(m.User)
+		case "alliance_transfer":
+			if err := as.Transfer(m.AllyID, s.user, m.User); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(m.User)
+		case "alliance_settings":
+			members := as.MemberUsers(m.AllyID)
+			if err := as.UpdateSettings(m.AllyID, s.user, m.Badge, m.Mode, m.Desc); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(members...)
+		case "alliance_disband":
+			members := as.MemberUsers(m.AllyID)
+			if err := as.Disband(m.AllyID, s.user); err != nil {
+				s.sendErr(err)
+				return
+			}
+			s.sendAllyHome()
+			pushHome(members...)
+		case "alliance_chat":
+			a := as.OfUser(s.user)
+			if a == nil {
+				s.sendErr(ErrAllyNotMember)
+				return
+			}
+			text := strings.TrimSpace(m.Text)
+			if text == "" {
+				return
+			}
+			s.hub.RelayAllianceChat(s.user, s.acc.DisplayNameOf(s.user), a.ID,
+				as.MemberUsers(a.ID), text)
+		}
 	case "create":
 		if s.in || s.obs != nil {
 			s.sendJSON(map[string]any{"t": "error", "msg": "already in a room"})
@@ -925,6 +1126,7 @@ func (s *session) gone() {
 		s.obs, s.obsCode = nil, ""
 	}
 	if s.user != "" {
+		s.unbindUserConn()
 		s.hub.SetOnline(s.user, false)
 		s.user = ""
 	}
@@ -959,6 +1161,10 @@ func main() {
 	hub.acc = acc
 	// Tournaments (15h): server-side state over the same store.
 	hub.tourns = NewTournaments(store, acc)
+	// Alliances (17a): same store; the match-banking hook feeds
+	// member contribution + alliance XP from recorded results.
+	hub.allis = NewAlliances(store, acc)
+	acc.MatchHook = hub.allis.Accrue
 	// Replay archive (13h): one JSON file beside the account store.
 	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
 		log.Fatalf("replay store: %v", err)
