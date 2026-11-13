@@ -39,6 +39,7 @@ const BTN_BG := Color(0.13, 0.16, 0.24)
 const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
 const FA_MIC := 0xF130
 const FA_BULLHORN := 0xF0A1
+const FA_REPLY := 0xF3E5
 
 const TABS := ["system", "world", "alliance", "dm"]
 const TAB_NAMES := {
@@ -52,6 +53,7 @@ var _body: VBoxContainer
 var _status: Label
 var _tab := "world"
 var _dm_peer := ""
+var _reply_to: Dictionary = {}
 var _picker_open := false
 var _loa_mode := false
 var _sig := ""
@@ -470,12 +472,37 @@ func _line_row(line: Dictionary) -> Control:
 	var tag := String(line.get("tag", ""))
 	if tag != "":
 		head.add_child(_label("<%s>" % tag, 12, MUTED))
-	var uname := String(line.get("user", ""))
-	if uname != "":
-		head.add_child(_label("@%s" % uname, 12, MUTED))
+	# Owner rule 2026-11-12: the @username appears ONLY on a
+	# message that REPLIES to someone — it names the player
+	# being replied to. Ordinary lines show avatar, display
+	# name, title and <TAG> only.
+	var rto: Dictionary = line.get("reply_to", {}) if line.get("reply_to") is Dictionary else {}
+	if not rto.is_empty() and String(rto.get("user", "")) != "":
+		head.add_child(_label("@%s" % String(rto.get("user", "")), 12, Color(0.55, 0.75, 1.0)))
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sp)
+	var uname := String(line.get("user", ""))
+	if uname != "":
+		var rb := Button.new()
+		rb.text = String.chr(FA_REPLY)
+		rb.add_theme_font_override("font", _fa_font)
+		rb.add_theme_font_size_override("font_size", 11)
+		rb.custom_minimum_size = Vector2(24, 20)
+		rb.add_theme_color_override("font_color", MUTED)
+		rb.add_theme_color_override("font_hover_color", GOLD_TXT)
+		rb.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 6))
+		rb.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.08), 6))
+		rb.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.12), 6))
+		rb.add_theme_stylebox_override("focus", _sb(Color(0, 0, 0, 0), 6))
+		rb.tooltip_text = "Trả lời"
+		var rname := String(line.get("name", ""))
+		rb.pressed.connect(func() -> void:
+			_reply_to = {"user": uname, "name": rname}
+			_render()
+			if _edit != null and is_instance_valid(_edit):
+				_edit.grab_focus())
+		head.add_child(rb)
 	head.add_child(_label(_line_time(line), 12, MUTED))
 	if bool(line.get("voice", false)):
 		col.add_child(_voice_cell(line))
@@ -744,6 +771,26 @@ func _input_bar(channel: String) -> Control:
 	var send := _button("Gửi Loa" if _loa_mode else "Gửi", true, 76)
 	send.pressed.connect(func() -> void: _send_current(channel))
 	row.add_child(send)
+	if not _reply_to.is_empty():
+		var chip := HBoxContainer.new()
+		chip.add_theme_constant_override("separation", 8)
+		chip.add_child(_label("Đang trả lời %s (@%s)" % [
+			String(_reply_to.get("name", "")), String(_reply_to.get("user", ""))],
+			12, Color(0.55, 0.75, 1.0)))
+		var cx := Button.new()
+		cx.text = "X"
+		cx.custom_minimum_size = Vector2(22, 22)
+		cx.add_theme_font_size_override("font_size", 11)
+		cx.add_theme_stylebox_override("normal", _btn_sb(Color(0.62, 0.16, 0.13), 6))
+		cx.add_theme_stylebox_override("hover", _btn_sb(Color(0.75, 0.2, 0.16), 6))
+		cx.add_theme_stylebox_override("pressed", _btn_sb(Color(0.5, 0.12, 0.1), 6))
+		cx.add_theme_color_override("font_color", Color.WHITE)
+		cx.tooltip_text = "Huỷ trả lời"
+		cx.pressed.connect(func() -> void:
+			_reply_to = {}
+			_render())
+		chip.add_child(cx)
+		bar.add_child(chip)
 	bar.add_child(row)
 	return bar
 
@@ -783,6 +830,9 @@ func _send_current(channel: String) -> void:
 		Net.use_megaphone(text)
 		_loa_mode = false
 	else:
+		if not _reply_to.is_empty() and Net.has_method("set_chat_reply"):
+			Net.set_chat_reply(_reply_to)
+		_reply_to = {}
 		match channel:
 			"world":
 				Net.world_chat(text)
