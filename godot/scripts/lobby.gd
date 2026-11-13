@@ -65,8 +65,12 @@ var _lb_me: Dictionary = {}
 var _lb_root: Control
 var _lb_rows_box: VBoxContainer
 var _lb_tabs: Dictionary = {}
-var _lb_cols: HBoxContainer
-var _lb_help: Label
+var _lb_cols: MarginContainer
+var _lb_cols_hb: HBoxContainer
+var _lb_scroll: ScrollContainer
+var _lb_empty_box: CenterContainer
+var _lb_empty_inner: VBoxContainer
+var _lb_fa_font: Font
 var _lb_footer: PanelContainer
 var _lb_footer_box: HBoxContainer
 var _lb_board_tex: Texture2D
@@ -1008,28 +1012,102 @@ func _browser_row(row: Dictionary) -> PanelContainer:
 	return card
 
 
-## Leaderboard board (13g addendum restyle): a FULL-SCREEN
-## board covering the viewport edge-to-edge (opaque, square
-## corners — 13m follow-up; it was an inset glass board
-## over the dimmed home art before). Since 13q its fill is
-## the shared info-page background and its header the shared
-## page header (PageShell — same solid navy + back pill +
-## title as Hồ sơ / Bạn bè; the old per-page gradient fill
-## and gold-arrow header are gone). Below the header: three
-## slanted tabs (Toàn server / Bạn bè /
-## Liên minh), model-style rows (laurel-leaf wreaths for the
-## top 3, gold-framed avatar, name + ladder sub-line, emblem
-## texture + tier name, swords + dot-formatted MMR; #1 is a
-## gold-gradient bar, other rows flat with hairline separators)
-## and a sticky "Hạng của tôi" footer whose
-## position the server computes over the FULL ordering
-## (LeaderboardV2), not just the visible top 20.
-## The Liên minh tab (17a) ranks the server's alliances by
-## weekly contribution points (server mode "alliance"); its
-## rows open the real alliance screen. (The server's
-## wins/losses board mode "wl" still exists in the protocol
-## and in _lb_score_text/_lb_sub_text for other callers; it
-## simply has no tab here anymore.)
+## Leaderboard board: a FULL-SCREEN board covering the
+## viewport edge-to-edge (opaque, square corners — 13m
+## follow-up). Since 13q its fill is the shared info-page
+## background and its header the shared page header
+## (PageShell — same solid navy + back pill + title as
+## Hồ sơ / Bạn bè).
+## 17i (BXH half): the interior follows the approved
+## friends-panel language — ONE slate content card under
+## the header holding a segmented tab row (Toàn server /
+## Bạn bè / Liên minh; active = gold fill, dark text), a column
+## header row aligned exactly with the row grid, ROW
+## CARDS (laurel-wreath badges for the top 3, framed
+## avatar, name + ladder sub-line, emblem texture + tier
+## name, khanda + dot-formatted MMR; #1 gold-gradient,
+## #2/#3 subtle silver/bronze tints, my row gold-bordered)
+## and the "Hạng của tôi" footer folded INTO the card as
+## its bottom strip — its position is computed by the
+## server over the FULL ordering (LeaderboardV2), not
+## just the visible top 20. Empty states are centred in
+## the card (big muted FA icon + one line).
+## The Liên minh tab (17a) ranks the server's alliances
+## by weekly contribution points (server mode "alliance").
+## (The server's wins/losses board mode "wl" still exists
+## in the protocol and in _lb_score_text/_lb_sub_text for
+## other callers; it simply has no tab here anymore.)
+
+# The friends-panel card dialect (home_lobby.gd's FR_*
+# constants), copied so the two screens read as one family.
+const LB_CARD_BG := Color(0.05, 0.07, 0.13)
+const LB_CARD_LINE := Color(0.30, 0.34, 0.46)
+const LB_ROW_BG := Color(1, 1, 1, 0.045)
+const LB_ROW_LINE := Color(1, 1, 1, 0.08)
+const LB_MUTED := Color(0.62, 0.66, 0.75)
+const LB_GOLD := Color(0.98, 0.8, 0.35)
+const LB_FA_PATH := "res://assets/fonts/fa-solid-900.ttf"
+const LB_FA_TROPHY := 0xF091
+const LB_FA_GROUP := 0xF0C0
+const LB_FA_SHIELD := 0xF3ED
+const LB_FA_KHANDA := 0xF66D
+# Row-grid column widths, shared by the header row and
+# every row card so the two align exactly.
+const LB_COL_RANK := 64.0
+const LB_COL_TIER := 210.0
+const LB_COL_POINTS := 150.0
+const LB_COL_LEVEL := 80.0
+const LB_COL_WEEK := 130.0
+
+
+## One Font Awesome glyph as a label (the chat hub /
+## friends pattern: vendored fa-solid font + chr()).
+func _lb_fa(cp: int, px: int, col: Color) -> Label:
+	if _lb_fa_font == null:
+		_lb_fa_font = load(LB_FA_PATH)
+	var l := Label.new()
+	l.text = String.chr(cp)
+	l.add_theme_font_override("font", _lb_fa_font)
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## Button stylebox, 17c calibration: EXPLICIT content
+## margins (L/R 10, T 0, B 2) so bordered and borderless
+## states lay text out in the same box (same helper as
+## the friends panel's _fr_btn_sb).
+func _lb_btn_sb(bg: Color, radius: int, border: Color = Color(0, 0, 0, 0), bw: int = 0) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_corner_radius_all(radius)
+	if bw > 0:
+		s.border_color = border
+		s.set_border_width_all(bw)
+	s.content_margin_left = 10
+	s.content_margin_right = 10
+	s.content_margin_top = 0
+	s.content_margin_bottom = 2
+	return s
+
+
+## Row-card stylebox (friends dialect): radius 10,
+## content margins L/R 12, T/B 9.
+func _lb_row_sb(bg: Color, border: Color, bw: int = 1) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_corner_radius_all(10)
+	if bw > 0:
+		s.border_color = border
+		s.set_border_width_all(bw)
+	s.content_margin_left = 12
+	s.content_margin_right = 12
+	s.content_margin_top = 9
+	s.content_margin_bottom = 9
+	return s
 
 func _lb_sb(bg: Color, radius: int, border: Color = Color(0, 0, 0, 0), bw: int = 0) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1147,72 +1225,171 @@ func _build_leaderboard_v2() -> void:
 	# overlaid on the board.
 	_lb_root.add_child(PageShell.header("Bảng xếp hạng",
 			Callable(self, "_close_leaderboard")))
+	# ONE content card (17i dialect): slate fill, 1px line,
+	# radius 12, uniform 14px padding — everything else
+	# lives inside it.
+	var card := PanelContainer.new()
+	var csb := StyleBoxFlat.new()
+	csb.bg_color = LB_CARD_BG
+	csb.set_corner_radius_all(12)
+	csb.border_color = LB_CARD_LINE
+	csb.set_border_width_all(1)
+	csb.content_margin_left = 14
+	csb.content_margin_right = 14
+	csb.content_margin_top = 14
+	csb.content_margin_bottom = 14
+	card.add_theme_stylebox_override("panel", csb)
+	board.add_child(card)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 7)
-	board.add_child(vb)
-	# Slanted tabs.
+	vb.add_theme_constant_override("separation", 10)
+	card.add_child(vb)
+	# Segmented tab row inside the card: three equal
+	# buttons (active = gold fill + dark text).
 	var tabs := HBoxContainer.new()
-	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
-	tabs.add_theme_constant_override("separation", 10)
+	tabs.add_theme_constant_override("separation", 8)
 	for spec in [["ranked", "Toàn server"], ["friends", "Bạn bè"], ["alliance", "Liên minh"]]:
-		var tab := LbTab.new(spec[1])
-		tab.custom_minimum_size = Vector2(248, 44)
+		var b := Button.new()
+		b.text = spec[1]
+		b.custom_minimum_size = Vector2(0, 42)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 16)
 		var mode: String = spec[0]
-		tab.pressed.connect(func() -> void: _set_lb_mode(mode))
-		_lb_tabs[mode] = tab
-		tabs.add_child(tab)
+		b.pressed.connect(func() -> void: _set_lb_mode(mode))
+		_lb_tabs[mode] = b
+		tabs.add_child(b)
 	vb.add_child(tabs)
-	_lb_help = _label("Điểm xếp hạng là điểm MMR dùng để ghép trận — thắng tăng, thua giảm.", 13, TXT_DIM)
-	_lb_help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lb_help.visible = false
-	vb.add_child(_lb_help)
-	# Column headers, aligned with the row cells below.
-	var cols := HBoxContainer.new()
-	_lb_cols = cols
-	cols.add_theme_constant_override("separation", 10)
-	var c1 := _label("Hạng", 15, Color(0.85, 0.87, 0.92))
-	c1.custom_minimum_size = Vector2(96, 0)
-	c1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cols.add_child(c1)
-	var c2sp := Control.new()
-	c2sp.custom_minimum_size = Vector2(50, 0)
-	cols.add_child(c2sp)
-	var c2 := _label("Người chơi", 15, Color(0.85, 0.87, 0.92))
-	c2.custom_minimum_size = Vector2(250, 0)
-	cols.add_child(c2)
-	var csp := Control.new()
-	csp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cols.add_child(csp)
-	var c3 := _label("Điểm xếp hạng", 15, Color(0.85, 0.87, 0.92))
-	cols.add_child(c3)
-	var help_btn := Button.new()
-	help_btn.text = "?"
-	help_btn.custom_minimum_size = Vector2(30, 30)
-	help_btn.add_theme_font_size_override("font_size", 15)
-	help_btn.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9))
-	help_btn.add_theme_stylebox_override("normal",
-			_lb_sb(Color(1, 1, 1, 0.1), 15, Color(1, 1, 1, 0.35), 1))
-	help_btn.add_theme_stylebox_override("hover",
-			_lb_sb(Color(1, 0.85, 0.4, 0.2), 15, Color(1, 0.85, 0.4, 0.6), 1))
-	help_btn.pressed.connect(func() -> void: _lb_help.visible = not _lb_help.visible)
-	cols.add_child(help_btn)
-	vb.add_child(cols)
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	vb.add_child(scroll)
+	_lb_paint_tabs()
+	# Column headers, aligned EXACTLY with the row grid:
+	# the header row is inset by the row cards' own 12px
+	# content margin on both sides, then mirrors the row
+	# cells (LB_COL_* widths, 10px separation). Its labels
+	# are (re)built per mode by _lb_paint_cols().
+	_lb_cols = MarginContainer.new()
+	_lb_cols.add_theme_constant_override("margin_left", 12)
+	_lb_cols.add_theme_constant_override("margin_right", 12)
+	_lb_cols_hb = HBoxContainer.new()
+	_lb_cols_hb.add_theme_constant_override("separation", 10)
+	_lb_cols.add_child(_lb_cols_hb)
+	vb.add_child(_lb_cols)
+	# The list.
+	_lb_scroll = ScrollContainer.new()
+	_lb_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_lb_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vb.add_child(_lb_scroll)
 	_lb_rows_box = VBoxContainer.new()
 	_lb_rows_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_lb_rows_box.add_theme_constant_override("separation", 4)
-	scroll.add_child(_lb_rows_box)
-	# Sticky footer: the viewer's own row + full-order position.
+	_lb_rows_box.add_theme_constant_override("separation", 8)
+	_lb_scroll.add_child(_lb_rows_box)
+	# Centred empty state (one surface, swapped with the
+	# scroll): big muted FA icon + one short line.
+	_lb_empty_box = CenterContainer.new()
+	_lb_empty_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_lb_empty_box.visible = false
+	vb.add_child(_lb_empty_box)
+	_lb_empty_inner = VBoxContainer.new()
+	_lb_empty_inner.add_theme_constant_override("separation", 10)
+	_lb_empty_box.add_child(_lb_empty_inner)
+	# Divider over the footer strip.
+	var div := PanelContainer.new()
+	div.custom_minimum_size = Vector2(0, 1)
+	var dsb := StyleBoxFlat.new()
+	dsb.bg_color = Color(1, 1, 1, 0.10)
+	div.add_theme_stylebox_override("panel", dsb)
+	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(div)
+	# Sticky footer, folded INTO the card as its bottom
+	# strip: a row card with a gold border — the viewer's
+	# own row + full-order position.
 	_lb_footer = PanelContainer.new()
 	_lb_footer.add_theme_stylebox_override("panel",
-			_lb_sb(Color(0.04, 0.08, 0.2, 0.98), 10, Color(0.4, 0.65, 1.0), 2))
+			_lb_row_sb(LB_ROW_BG, Color(1, 0.85, 0.4, 0.7), 1))
 	_lb_footer_box = HBoxContainer.new()
 	_lb_footer_box.add_theme_constant_override("separation", 10)
 	_lb_footer.add_child(_lb_footer_box)
 	vb.add_child(_lb_footer)
+
+
+## Tab button states: the active mode is gold with dark
+## text; the rest are subtle dark (friends _fr dialect).
+func _lb_paint_tabs() -> void:
+	for mode in _lb_tabs:
+		var b: Button = _lb_tabs[mode]
+		if mode == _lb_mode:
+			b.add_theme_stylebox_override("normal", _lb_btn_sb(LB_GOLD, 9))
+			b.add_theme_stylebox_override("hover", _lb_btn_sb(Color(1.0, 0.86, 0.45), 9))
+			b.add_theme_stylebox_override("pressed", _lb_btn_sb(Color(0.88, 0.7, 0.28), 9))
+			b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
+			b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
+			b.add_theme_color_override("font_pressed_color", Color(0.1, 0.08, 0.02))
+		else:
+			b.add_theme_stylebox_override("normal", _lb_btn_sb(Color(1, 1, 1, 0.04), 9))
+			b.add_theme_stylebox_override("hover", _lb_btn_sb(Color(1, 1, 1, 0.09), 9))
+			b.add_theme_stylebox_override("pressed", _lb_btn_sb(Color(1, 1, 1, 0.07), 9))
+			b.add_theme_color_override("font_color", TXT)
+			b.add_theme_color_override("font_hover_color", TXT)
+			b.add_theme_color_override("font_pressed_color", TXT)
+
+
+func _lb_col_label(text: String, w: float, align: HorizontalAlignment) -> Label:
+	var l := _label(text, 13, LB_MUTED)
+	l.custom_minimum_size = Vector2(w, 0)
+	l.horizontal_alignment = align
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return l
+
+
+func _lb_col_spacer(w: float) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(w, 0)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return c
+
+
+## (Re)builds the column header labels for the current
+## mode, mirroring the row grid cell for cell.
+func _lb_paint_cols() -> void:
+	if _lb_cols_hb == null:
+		return
+	for ch in _lb_cols_hb.get_children():
+		_lb_cols_hb.remove_child(ch)
+		ch.queue_free()
+	if _lb_mode == "alliance":
+		_lb_cols_hb.add_child(_lb_col_label("HẠNG", LB_COL_RANK, HORIZONTAL_ALIGNMENT_CENTER))
+		_lb_cols_hb.add_child(_lb_col_spacer(31))
+		var a2 := _lb_col_label("LIÊN MINH", 0, HORIZONTAL_ALIGNMENT_LEFT)
+		a2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_lb_cols_hb.add_child(a2)
+		_lb_cols_hb.add_child(_lb_col_label("CẤP", LB_COL_LEVEL, HORIZONTAL_ALIGNMENT_CENTER))
+		_lb_cols_hb.add_child(_lb_col_label("ĐIỂM TUẦN", LB_COL_WEEK, HORIZONTAL_ALIGNMENT_RIGHT))
+	else:
+		_lb_cols_hb.add_child(_lb_col_label("HẠNG", LB_COL_RANK, HORIZONTAL_ALIGNMENT_CENTER))
+		_lb_cols_hb.add_child(_lb_col_spacer(44))
+		var p2 := _lb_col_label("NGƯỜI CHƠI", 0, HORIZONTAL_ALIGNMENT_LEFT)
+		p2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_lb_cols_hb.add_child(p2)
+		_lb_cols_hb.add_child(_lb_col_label("BẬC HẠNG", LB_COL_TIER, HORIZONTAL_ALIGNMENT_LEFT))
+		_lb_cols_hb.add_child(_lb_col_label("ĐIỂM", LB_COL_POINTS, HORIZONTAL_ALIGNMENT_RIGHT))
+
+
+## The centred empty state: hides the scroll, shows the
+## icon + line surface instead.
+func _lb_show_empty(cp: int, line: String) -> void:
+	for ch in _lb_empty_inner.get_children():
+		_lb_empty_inner.remove_child(ch)
+		ch.queue_free()
+	var ic := _lb_fa(cp, 44, Color(0.45, 0.48, 0.58))
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_lb_empty_inner.add_child(ic)
+	var l := _label(line, 15, LB_MUTED)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lb_empty_inner.add_child(l)
+	_lb_scroll.visible = false
+	_lb_empty_box.visible = true
+
+
+func _lb_hide_empty() -> void:
+	_lb_empty_box.visible = false
+	_lb_scroll.visible = true
 
 
 func _set_lb_mode(mode: String) -> void:
@@ -1279,30 +1456,64 @@ func _lb_tier_name(row: Dictionary) -> String:
 	return short
 
 
-## One board row (also used, with footer styling, for "my rank").
-## Model layout: rows sit FLAT on the board (no card fill) with a
-## hairline separator; #1 is a full gold-gradient bar with dark
-## text; the centre is Tín's emblem texture + tier name (stars
-## live in the sub-line under the player name).
+## The rank cell (LB_COL_RANK wide): the laurel-wreath
+## badge for the top 3 (owner art language), a plain
+## gold-grey number for the rest.
+func _lb_rank_cell(pos: int, on_gold: bool) -> Control:
+	if pos >= 1 and pos <= 3:
+		var wn := WreathNum.new(pos)
+		wn.custom_minimum_size = Vector2(LB_COL_RANK, 54)
+		wn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		if on_gold:
+			wn.set_on_gold(true)
+		return wn
+	var l := _label(str(pos), 20,
+			Color(0.30, 0.22, 0.05) if on_gold else Color(0.80, 0.78, 0.72))
+	l.custom_minimum_size = Vector2(LB_COL_RANK, 0)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return l
+
+
+## The row tint for a position: #1 the gold gradient,
+## #2/#3 subtle silver/bronze tints, my own row (outside
+## the tints) gold-bordered, the rest the standard row
+## card. Shared by the player and alliance rows.
+func _lb_pos_style(pos: int, mine: bool) -> StyleBox:
+	if pos == 1:
+		var g := _lb_gold_style()
+		g.content_margin_left = 12
+		g.content_margin_right = 12
+		g.content_margin_top = 9
+		g.content_margin_bottom = 9
+		return g
+	if pos == 2:
+		return _lb_row_sb(Color(0.75, 0.78, 0.85, 0.10),
+				Color(0.83, 0.86, 0.92, 0.35))
+	if pos == 3:
+		return _lb_row_sb(Color(0.85, 0.55, 0.28, 0.10),
+				Color(0.87, 0.56, 0.30, 0.35))
+	if mine:
+		return _lb_row_sb(LB_ROW_BG, Color(1, 0.85, 0.4, 0.7))
+	return _lb_row_sb(LB_ROW_BG, LB_ROW_LINE)
+
+
+## One board row as a ROW CARD (also used, with footer
+## styling, for "my rank"): rank cell, framed avatar,
+## name + ladder sub-line, emblem texture + tier name,
+## khanda + dot-formatted score — on the LB_COL_* grid
+## the column header mirrors.
 func _lb_card(pos: int, row: Dictionary, footer: bool = false) -> PanelContainer:
 	var on_gold := pos == 1 and not footer
+	var mine := not footer and Net.account_name != "" \
+			and String(row.get("user", "")) == Net.account_name
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(0, 74)
 	if footer:
-		card.add_theme_stylebox_override("panel",
-				_lb_sb(Color(0, 0, 0, 0), 10))
-	elif on_gold:
-		card.add_theme_stylebox_override("panel", _lb_gold_style())
-	else:
 		var flat := StyleBoxFlat.new()
 		flat.bg_color = Color(0, 0, 0, 0)
-		flat.border_color = Color(1, 1, 1, 0.08)
-		flat.border_width_bottom = 1
-		flat.content_margin_left = 10
-		flat.content_margin_right = 10
-		flat.content_margin_top = 5
-		flat.content_margin_bottom = 5
 		card.add_theme_stylebox_override("panel", flat)
+	else:
+		card.add_theme_stylebox_override("panel", _lb_pos_style(pos, mine))
 	var name_col := Color(0.14, 0.10, 0.02) if on_gold else Color.WHITE
 	var sub_col := Color(0.34, 0.25, 0.09) if on_gold else Color(0.75, 0.79, 0.88)
 	var tier_col := Color(0.16, 0.11, 0.02) if on_gold else RankBadge.tier_color(
@@ -1313,77 +1524,68 @@ func _lb_card(pos: int, row: Dictionary, footer: bool = false) -> PanelContainer
 	hb.add_theme_constant_override("separation", 10)
 	card.add_child(hb)
 	if footer:
-		var mine := VBoxContainer.new()
-		mine.custom_minimum_size = Vector2(96, 0)
-		mine.alignment = BoxContainer.ALIGNMENT_CENTER
-		var cap := _label("Hạng của tôi", 12, Color(0.8, 0.85, 0.95))
+		var mine_box := VBoxContainer.new()
+		mine_box.custom_minimum_size = Vector2(84, 0)
+		mine_box.alignment = BoxContainer.ALIGNMENT_CENTER
+		mine_box.add_theme_constant_override("separation", 0)
+		var cap := _label("HẠNG CỦA TÔI", 10, Color(0.8, 0.85, 0.95))
 		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		mine.add_child(cap)
-		var big := _label(str(pos), 27, Color(1, 0.9, 0.5))
+		mine_box.add_child(cap)
+		var big := _label(str(pos), 26, Color(1, 0.9, 0.5))
 		big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		mine.add_child(big)
-		hb.add_child(mine)
+		mine_box.add_child(big)
+		hb.add_child(mine_box)
 	else:
-		var wn := WreathNum.new(pos)
-		wn.custom_minimum_size = Vector2(96, 60)
-		wn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if on_gold:
-			wn.set_on_gold(true)
-		hb.add_child(wn)
+		hb.add_child(_lb_rank_cell(pos, on_gold))
 	# Avatar (17d): the row account's own avatar + equipped
-	# frame, composed by the shared helper inside the gold
-	# frame (static first frame at this size).
-	var frame := PanelContainer.new()
-	frame.add_theme_stylebox_override("panel",
-			_lb_sb(Color(0, 0, 0, 0.3), 6, Color(1, 0.85, 0.4, 0.85), 2))
-	frame.custom_minimum_size = Vector2(56, 56)
-	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hb.add_child(frame)
+	# frame, composed by the shared helper (static first
+	# frame at this size) — the friends-row treatment.
 	var av := AvatarFrame.new()
-	av.custom_minimum_size = Vector2(52, 52)
+	av.custom_minimum_size = Vector2(44, 44)
+	av.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	av.set_content(Avatars.texture_for_user(String(row.get("avatar_id", "")),
 			String(row.get("user", ""))), String(row.get("frame_id", "")), false)
-	frame.add_child(av)
-	av.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Name + sub-line (rank text with star progress).
+	hb.add_child(av)
+	# Name + sub-line (rank text with star progress). The
+	# [TAG] prefix rides along when a row carries one
+	# (Net.ally_disp, as on the other surfaces).
 	var name_box := VBoxContainer.new()
-	name_box.custom_minimum_size = Vector2(250, 0)
+	name_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	name_box.add_theme_constant_override("separation", 1)
-	var nm := _label(String(row.get("display_name", String(row.get("user", "?")))), 19, name_col)
+	var nm := _label(Net.ally_disp(
+			String(row.get("display_name", String(row.get("user", "?")))),
+			String(row.get("ally_tag", ""))), 16, name_col)
 	name_box.add_child(nm)
 	name_box.add_child(_label(_lb_sub_text(row), 13, sub_col))
 	hb.add_child(name_box)
-	# Centre: emblem texture + tier name.
+	# Tier cell: emblem texture + tier name.
 	var centre := HBoxContainer.new()
-	centre.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	centre.add_theme_constant_override("separation", 10)
+	centre.custom_minimum_size = Vector2(LB_COL_TIER, 0)
+	centre.add_theme_constant_override("separation", 8)
 	var em := TextureRect.new()
 	em.texture = RankBadge.emblem_texture(int(row.get("rank_tier", 0)),
 			bool(row.get("emperor", false)))
-	em.custom_minimum_size = Vector2(35, 45)
+	em.custom_minimum_size = Vector2(26, 34)
 	em.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	em.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	em.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	em.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	centre.add_child(em)
-	var tn := _label(_lb_tier_name(row), 18, tier_col)
+	var tn := _label(_lb_tier_name(row), 16, tier_col)
 	tn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	centre.add_child(tn)
 	hb.add_child(centre)
-	# Score: crossed swords + value.
+	# Score cell: FA khanda + value, right-aligned.
 	var score := HBoxContainer.new()
-	score.custom_minimum_size = Vector2(180, 0)
+	score.custom_minimum_size = Vector2(LB_COL_POINTS, 0)
 	score.alignment = BoxContainer.ALIGNMENT_END
-	score.add_theme_constant_override("separation", 7)
-	var sic := GlassIcon.new()
-	sic.kind = "swords"
-	sic.custom_minimum_size = Vector2(24, 24)
+	score.add_theme_constant_override("separation", 6)
+	var sic := _lb_fa(LB_FA_KHANDA, 15,
+			Color(0.35, 0.22, 0.04) if on_gold else Color(0.98, 0.83, 0.4))
 	sic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	if on_gold:
-		sic.modulate = Color(0.35, 0.22, 0.04)
 	score.add_child(sic)
-	var sv := _label(_lb_score_text(row), 23, score_col)
+	var sv := _label(_lb_score_text(row), 20, score_col)
 	sv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	score.add_child(sv)
 	hb.add_child(score)
@@ -1393,20 +1595,16 @@ func _lb_card(pos: int, row: Dictionary, footer: bool = false) -> PanelContainer
 func _fill_leaderboard() -> void:
 	if _lb_rows_box == null:
 		return
-	for mode in _lb_tabs:
-		_lb_tabs[mode].set_active(mode == _lb_mode)
+	_lb_paint_tabs()
+	_lb_paint_cols()
+	_lb_hide_empty()
 	for ch in _lb_rows_box.get_children():
 		_lb_rows_box.remove_child(ch)
 		ch.queue_free()
 	for ch in _lb_footer_box.get_children():
 		_lb_footer_box.remove_child(ch)
 		ch.queue_free()
-	# The Liên minh tab: no player column headers — alliance
-	# rows carry their own layout (see _fill_lb_alliance).
-	if _lb_cols != null:
-		_lb_cols.visible = _lb_mode != "alliance"
 	if _lb_mode == "alliance":
-		_lb_help.visible = false
 		_fill_lb_alliance()
 		return
 	# Footer first (it also renders while rows load).
@@ -1425,9 +1623,8 @@ func _fill_leaderboard() -> void:
 		_lb_footer_box.add_child(wl)
 	# Rows.
 	if _lb_mode == "friends" and Net.account_name == "":
-		var l := _label("Đăng nhập để xem bảng xếp hạng bạn bè.", 16, TXT_DIM)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_lb_rows_box.add_child(l)
+		_lb_show_empty(LB_FA_GROUP,
+				"Đăng nhập để xem bảng xếp hạng bạn bè.")
 		return
 	if Net.leaderboard_mode != _lb_mode:
 		var l := _label("Đang tải…", 16, TXT_DIM)
@@ -1435,9 +1632,11 @@ func _fill_leaderboard() -> void:
 		_lb_rows_box.add_child(l)
 		return
 	if _lb_data.is_empty():
-		var l := _label("Chưa có tài khoản nào có thành tích.", 15, TXT_DIM)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_lb_rows_box.add_child(l)
+		if _lb_mode == "friends":
+			_lb_show_empty(LB_FA_GROUP, "Chưa có bạn nào có thành tích.")
+		else:
+			_lb_show_empty(LB_FA_TROPHY,
+					"Chưa có tài khoản nào có thành tích.")
 		return
 	var pos := 0
 	for row in _lb_data:
@@ -1484,9 +1683,7 @@ func _fill_lb_alliance() -> void:
 		_lb_rows_box.add_child(l)
 		return
 	if _lb_data.is_empty():
-		var l := _label("Chưa có liên minh nào trên server.", 15, TXT_DIM)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_lb_rows_box.add_child(l)
+		_lb_show_empty(LB_FA_SHIELD, "Chưa có liên minh nào trên server.")
 		return
 	var pos := 0
 	for row in _lb_data:
@@ -1509,11 +1706,11 @@ func _lb_open_alliance_btn() -> Button:
 	b.custom_minimum_size = Vector2(190, 40)
 	b.add_theme_font_size_override("font_size", 14)
 	b.add_theme_stylebox_override("normal",
-			_lb_sb(Color(0.98, 0.8, 0.35), 8))
+			_lb_btn_sb(LB_GOLD, 8))
 	b.add_theme_stylebox_override("hover",
-			_lb_sb(Color(1.0, 0.86, 0.45), 8))
+			_lb_btn_sb(Color(1.0, 0.86, 0.45), 8))
 	b.add_theme_stylebox_override("pressed",
-			_lb_sb(Color(0.88, 0.7, 0.28), 8))
+			_lb_btn_sb(Color(0.88, 0.7, 0.28), 8))
 	b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
 	b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
 	b.pressed.connect(func() -> void:
@@ -1525,54 +1722,50 @@ func _lb_open_alliance_btn() -> Button:
 
 func _lb_alliance_card(pos: int, row: Dictionary) -> PanelContainer:
 	var on_gold := pos == 1
+	# My own alliance's row is gold-bordered (outside the
+	# top-3 tints), matched by alliance id.
+	var mine := false
+	if not _lb_me.is_empty() and _lb_me.get("row") is Dictionary:
+		var my_id := String((_lb_me["row"] as Dictionary).get("id", ""))
+		mine = my_id != "" and my_id == String(row.get("id", ""))
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(0, 64)
-	if on_gold:
-		card.add_theme_stylebox_override("panel", _lb_gold_style())
-	else:
-		var flat := StyleBoxFlat.new()
-		flat.bg_color = Color(0, 0, 0, 0)
-		flat.border_color = Color(1, 1, 1, 0.08)
-		flat.border_width_bottom = 1
-		flat.content_margin_left = 10
-		flat.content_margin_right = 10
-		flat.content_margin_top = 5
-		flat.content_margin_bottom = 5
-		card.add_theme_stylebox_override("panel", flat)
+	card.add_theme_stylebox_override("panel", _lb_pos_style(pos, mine))
 	var name_col := Color(0.14, 0.10, 0.02) if on_gold else Color.WHITE
 	var sub_col := Color(0.34, 0.25, 0.09) if on_gold else Color(0.75, 0.79, 0.88)
 	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 12)
+	hb.add_theme_constant_override("separation", 10)
 	card.add_child(hb)
-	var rank := _label("#%d" % pos, 17, name_col)
-	rank.custom_minimum_size = Vector2(44, 0)
-	rank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	rank.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hb.add_child(rank)
-	# 17e addendum: the alliance badge is its icon texture
-	# tinted by its slot colour (ally_badge.gd).
-	var chip := CenterContainer.new()
-	chip.custom_minimum_size = Vector2(36, 36)
-	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	chip.add_child(AllyBadge.make(int(row.get("badge_icon", 1)),
-			int(row.get("badge_color", 0)), 32))
-	hb.add_child(chip)
+	hb.add_child(_lb_rank_cell(pos, on_gold))
+	# The alliance PENNANT badge (ally_badge.gd — the
+	# hanging-banner mark), ~30px.
+	var badge := AllyBadge.make(int(row.get("badge_icon", 1)),
+			int(row.get("badge_color", 0)), 30)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(badge)
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var nm := _label(Net.ally_disp(String(row.get("name", "")),
 			String(row.get("tag", ""))), 16, name_col)
 	nv.add_child(nm)
-	nv.add_child(_label("Cấp %d · %d/%d thành viên · Hội trưởng: %s" % [
-			int(row.get("level", 1)), int(row.get("members", 0)),
-			int(row.get("cap", 30)), String(row.get("leader_name", ""))], 12, sub_col))
+	nv.add_child(_label("%d/%d thành viên · Hội trưởng: %s" % [
+			int(row.get("members", 0)), int(row.get("cap", 30)),
+			String(row.get("leader_name", ""))], 12, sub_col))
 	# 17b: the weekly-race crown holder carries a gold marker.
 	if bool(row.get("champion", false)):
 		var crown := _label("Vô địch tuần trước", 12,
 				Color(0.24, 0.15, 0.02) if on_gold else Color(1, 0.84, 0.3))
 		nv.add_child(crown)
 	hb.add_child(nv)
+	# Level cell (its own column, per the header grid).
+	var lv := _label("Cấp %d" % int(row.get("level", 1)), 15, name_col)
+	lv.custom_minimum_size = Vector2(LB_COL_LEVEL, 0)
+	lv.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(lv)
+	# Weekly points cell, right-aligned.
 	var wv := VBoxContainer.new()
+	wv.custom_minimum_size = Vector2(LB_COL_WEEK, 0)
 	wv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var wk := _label(_lb_fmt_num(int(row.get("week", 0))), 17,
 			Color(0.24, 0.15, 0.02) if on_gold else Color(1, 0.95, 0.8))
