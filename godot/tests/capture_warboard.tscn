@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://empireage_capture_warboard"]
+
+[ext_resource type="Script" path="res://tests/capture_warboard.gd" id="1"]
+
+[node name="CaptureWarBoard" type="Node"]
+script = ExtResource("1")

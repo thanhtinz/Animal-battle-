@@ -475,6 +475,7 @@ func _build() -> void:
 	_build_chip()
 	_build_top_right()
 	_build_banner()
+	_build_bracket_button()
 	_build_chat_ticker()
 	_build_rail()
 	_build_bottom_band()
@@ -596,15 +597,28 @@ func _layout_chip() -> void:
 ## by a dark silhouette of itself offset behind it as a
 ## soft drop shadow. The holder (and its tap target) keeps
 ## the full sz footprint either way.
+## A hand-drawn disc for the round icon buttons. The old
+## StyleBoxFlat disc (corner radius = half the size) left
+## a visible vertical seam through the middle of every
+## chip (owner catch 2026-11-12: "sao có dấu | trong
+## nút"); a plain draw_circle + draw_arc has no seam.
+class _Disc:
+	extends Control
+	func _draw() -> void:
+		var c := size * 0.5
+		var r := minf(size.x, size.y) * 0.5
+		draw_circle(c, r - 0.5, Color(0.03, 0.04, 0.08, 0.6))
+		draw_arc(c, r - 1.0, 0, TAU, 48, Color(1, 0.85, 0.4, 0.4), 1.0, true)
+
+
 func _icon_button(icon_kind: String, tip: String, sz := 48.0, bare := false) -> Dictionary:
 	var holder := Control.new()
 	holder.custom_minimum_size = Vector2(sz, sz)
 	if not bare:
-		var panel := PanelContainer.new()
-		panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-		panel.add_theme_stylebox_override("panel",
-				_sb(Color(0.03, 0.04, 0.08, 0.6), int(sz * 0.5), Color(1, 0.85, 0.4, 0.4), 1))
-		holder.add_child(panel)
+		var disc := _Disc.new()
+		disc.set_anchors_preset(Control.PRESET_FULL_RECT)
+		disc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(disc)
 	var isz := sz * 0.5625
 	var ipos := Vector2((sz - isz) * 0.5, (sz - isz) * 0.5)
 	if bare:
@@ -677,7 +691,10 @@ func _build_chat_ticker() -> void:
 	# Owner order 2026-11-12: the ticker moves to the
 	# BOTTOM-LEFT corner of the lobby.
 	bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	bar.position = Vector2(10, -48)
+	# Owner: raise the bar so its centre is level with the
+	# BẮT ĐẦU button's centre (band top + 8 + 45 from the
+	# bottom edge = 78; bar is 38 tall → top at −97).
+	bar.position = Vector2(10, -97)
 	bar.custom_minimum_size = Vector2(436, 38)
 	bar.size = Vector2(436, 38)
 	var bsb := _sb(Color(0.02, 0.03, 0.07, 0.88), 8, Color(1, 0.85, 0.4, 0.55), 1)
@@ -718,7 +735,7 @@ func _build_chat_ticker() -> void:
 	bp.custom_minimum_size = Vector2(19, 19)
 	bp.size = Vector2(19, 19)
 	bp.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	bp.position = Vector2(10 + 436 - 13, -48 - 7)
+	bp.position = Vector2(10 + 436 - 9, -97 - 10)
 	bp.visible = false
 	bp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bl := _label("", 11, Color.WHITE)
@@ -895,6 +912,57 @@ func _build_banner() -> void:
 	_show_banner(0)
 
 
+## Owner order 2026-11-12: the Đại chiến bracket board
+## gets a prominent HORIZONTAL button directly under the
+## season banner (this replaces the earlier spec idea of a
+## carousel slide as the board's lobby entry). Gold, full
+## banner width; opens the war board screen.
+func _build_bracket_button() -> void:
+	var bar := PanelContainer.new()
+	bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	bar.position = Vector2(10, 248)
+	bar.custom_minimum_size = Vector2(436, 42)
+	bar.size = Vector2(436, 42)
+	var bsb := _sb(Color(0.93, 0.72, 0.22), 9, Color(1, 0.88, 0.5, 0.9), 1)
+	bsb.content_margin_left = 14
+	bsb.content_margin_right = 14
+	bsb.content_margin_top = 0
+	bsb.content_margin_bottom = 2
+	bar.add_theme_stylebox_override("panel", bsb)
+	_root.add_child(bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(row)
+	var ic := GlassIcon.new()
+	ic.kind = "trophy"
+	ic.custom_minimum_size = Vector2(24, 24)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.modulate = Color(0.16, 0.11, 0.03)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(ic)
+	var t := _label("XEM BẢNG ĐẤU", 16, Color(0.16, 0.11, 0.03))
+	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(t)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(sp)
+	var sub := _label("Đại chiến liên minh", 12, Color(0.16, 0.11, 0.03, 0.75))
+	sub.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(sub)
+	var tap := Button.new()
+	tap.flat = true
+	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tap.tooltip_text = "Bảng đấu Đại chiến liên minh"
+	bar.add_child(tap)
+	tap.pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_war_board"):
+			game.home_open_war_board())
+
+
 func _show_banner(i: int) -> void:
 	_banner_idx = i
 	_banner_clock = 0.0
@@ -984,19 +1052,28 @@ func _build_rail() -> void:
 	_root.add_child(rail)
 	_rail_box = rail
 
-	var chips := HBoxContainer.new()
-	chips.alignment = BoxContainer.ALIGNMENT_CENTER
-	chips.add_theme_constant_override("separation", 4)
-	chips.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rail.add_child(chips)
-	var friends_btn := _icon_button("friends", "Bạn bè", 27.0)
+	# Owner order 2026-11-12 (his reference rail): the top
+	# pair carries NO round frames and sits OUTSIDE the
+	# vertical strip, above it — bare glyphs on the sky.
+	var top := HBoxContainer.new()
+	top.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	# Straddling the strip's top edge (strip starts at 76):
+	# clear of the ping row above, visibly OUTSIDE the
+	# frame's enclosed area.
+	top.position = Vector2(-(RAIL_W + 5.0), 58)
+	top.custom_minimum_size = Vector2(RAIL_W, 0)
+	top.alignment = BoxContainer.ALIGNMENT_CENTER
+	top.add_theme_constant_override("separation", 8)
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(top)
+	var friends_btn := _icon_button("friends", "Bạn bè", 30.0, true)
 	friends_btn["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
-	chips.add_child(friends_btn["holder"])
-	var chart_btn := _icon_button("chart", "Bảng xếp hạng", 27.0)
+	top.add_child(friends_btn["holder"])
+	var chart_btn := _icon_button("chart", "Bảng xếp hạng", 30.0, true)
 	chart_btn["btn"].pressed.connect(func() -> void:
 		if game != null:
 			game.home_open_leaderboard())
-	chips.add_child(chart_btn["holder"])
+	top.add_child(chart_btn["holder"])
 	# 15h: tournament entry — the trophy chip sits on its own
 	# row under the BXH / Bạn bè pair (the pair exactly fills
 	# the 58px rail; the mode panel is full, and the rail is
@@ -1090,6 +1167,14 @@ func _rebuild_rail() -> void:
 		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(_rail_portrait(r))
 		_rail_close_box.add_child(cell)
+	# Owner order 2026-11-12 (his reference rail): while a
+	# friend slot is still free, the "+" add chip closes
+	# the friend column — with no close friends at all it
+	# is the only thing above the arrow.
+	if close_rows.size() < 4:
+		var plus := _icon_button("plus", "Thêm bạn", 27.0)
+		plus["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
+		_rail_close_box.add_child(_rail_centered(plus["holder"]))
 	_fit_rail()
 
 

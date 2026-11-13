@@ -1177,6 +1177,13 @@ Mỗi mục ghi kèm **đề xuất mặc định của Bé**:
     băng chuyền banner mùa (§10.1) — không thêm chip rail (tránh
     nhầm với chip Giải đấu 15h), không đặt vào panel chế độ.
     *(Đề xuất: đúng cửa banner này.)*
+    **[SỬA ĐỔI — Tín lệnh 2026-11-12 22:03, ĐÃ LÀM]:** cửa vào
+    là một **nút ngang vàng nổi bật ngay dưới banner mùa**
+    ("XEM BẢNG ĐẤU · Đại chiến liên minh", rộng bằng banner),
+    bấm mở màn Bảng đấu — thay cho ý tưởng slide trong băng
+    chuyền. Màn Bảng đấu đã dựng ở mức khung + lịch tháng +
+    trạng thái chưa có giải; bảng thật đổ dữ liệu vào đây ở
+    Phase 2.
 14. **Nhịp giải trong tháng**: một vòng mỗi tuần (đề xuất ở §1)
     hay dồn cả giải vào **một tuần duy nhất trong tháng** (các
     vòng cách nhau 1–2 ngày như bản sửa đổi 2 đã từng ghi)?

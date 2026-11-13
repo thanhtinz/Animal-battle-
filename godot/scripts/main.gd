@@ -3125,6 +3125,7 @@ var profile_screen = null
 var tournament_screen = null
 var alliance_screen = null
 var settings_panels = null
+var war_board_screen = null
 
 
 func _ensure_profile() -> void:
@@ -3294,6 +3295,21 @@ func _ensure_tournament() -> void:
 func home_open_tournament() -> void:
 	_ensure_tournament()
 	tournament_screen.open()
+
+
+## Đại chiến bracket board (owner order 2026-11-12: the
+## gold "XEM BẢNG ĐẤU" button under the home season
+## banner opens it).
+func _ensure_war_board() -> void:
+	if war_board_screen == null:
+		war_board_screen = WarBoardScreen.new()
+		war_board_screen.setup(self)
+		add_child(war_board_screen)
+
+
+func home_open_war_board() -> void:
+	_ensure_war_board()
+	war_board_screen.open()
 
 
 ## Capture-harness entry: open the tournament screen on the

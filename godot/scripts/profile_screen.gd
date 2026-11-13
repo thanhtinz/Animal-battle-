@@ -283,7 +283,7 @@ func _build() -> void:
 	_panel.offset_right = 0
 	_panel.offset_bottom = -PANEL_BOTTOM
 	_panel.add_theme_stylebox_override("panel",
-			_sb(PageShell.BG, 10, Color(0.98, 0.8, 0.35, 0.85), 2))
+			_sb(Color(PageShell.BG, 0.76), 10, Color(0.98, 0.8, 0.35, 0.85), 2))
 	_root.add_child(_panel)
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 18)
@@ -311,7 +311,7 @@ func _build() -> void:
 	social.offset_right = -14
 	social.offset_bottom = -PANEL_BOTTOM
 	social.add_theme_stylebox_override("panel",
-			_sb(PageShell.BG, 10, Color(0.98, 0.8, 0.35, 0.85), 2))
+			_sb(Color(PageShell.BG, 0.76), 10, Color(0.98, 0.8, 0.35, 0.85), 2))
 	_root.add_child(social)
 	var smargin := MarginContainer.new()
 	smargin.add_theme_constant_override("margin_left", 14)
@@ -666,6 +666,16 @@ func _refresh() -> void:
 func shot_show_mxh(tab: String) -> void:
 	_social_tab = tab
 	_render_social()
+
+
+## Capture entry (17g): the MXH post panels, for the shot
+## driver to open comment sections / the share chooser.
+func shot_feed_panel() -> PostPanel:
+	return _feed_panel
+
+
+func shot_wall_panel() -> PostPanel:
+	return _wall_panel
 
 
 func _social_tab_btn(id: String, text: String) -> Button:
