@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # Capture harness for the home rail's REFERENCE design
 # (owner-sent screenshot: two-tab header with glowing
-# underline, big square framed portraits, diamond badges):
-#   empire_age_rail_ref_friends_v1.png — Bạn bè tab:
+# underline, big square framed portraits, diamond badges)
+# + the SYSTEM-frame pass (uniform _RailFrame — silver,
+# gold for rank #1 — around the raw avatar at 84px):
+#   empire_age_rail_sys_friends_v1.png + _crop — Bạn bè tab:
 #     HiepSi's 3 close friends (CongTuoc1 ONLINE via the
-#     idle client, wearing granted frame_06; HauTuoc1 and
-#     BaTuoc1 frameless) + the dashed "+" tile.
-#   empire_age_rail_ref_rank_v1.png — Xếp hạng tab
+#     idle client; granted frames no longer apply on the
+#     rail) + the dashed "+" tile.
+#   empire_age_rail_sys_rank_v1.png + _crop — Xếp hạng tab
 #     (--mp-rail-tab=rank): the top 5 of the seeded
 #     leaderboard (6 accounts with descending MMR:
 #     CongTuoc1 1980, HauTuoc1 1710, BaTuoc1 1490,
 #     NamTuoc1 1330, HiepSi 1240, KySiMot 1100), diamonds
 #     carrying the gold rank numbers 1-5.
+# Crops are NATIVE resolution (no upscale/resample) —
+# the owner judges sharpness from true pixels.
 # Seed modelled on capture_rail17i.sh + one extra
 # leaderboard account (as capture_leaderboard_v2.sh).
 set -u
@@ -104,7 +108,7 @@ grep -a "IDLE FRIEND LOGIN SENT" "$WORK/idle.log" > /dev/null \
 echo "IDLE FRIEND ONLINE"
 
 shoot() { # $1 = tag, $2 = extra args
-  local shot="$ROOT/shots/empire_age_rail_ref_$1_v1.png"
+  local shot="$ROOT/shots/empire_age_rail_sys_$1_v1.png"
   timeout 120 xvfb-run -a -s "-screen 0 1280x800x24" \
     "$GODOT" --path "$ROOT" --resolution 1152x648 \
     -- --mp-shot-home="$shot" --mp-account=HiepSi:secret1 $2 \
@@ -113,15 +117,14 @@ shoot() { # $1 = tag, $2 = extra args
     || { echo "NO SHOT ($1)"; tail -20 "$WORK/client_$1.log"; exit 1; }
   [ -f "$shot" ] || { echo "SHOT FILE MISSING ($1)"; exit 1; }
   echo "CAPTURE OK ($1): $shot"
-  python3 - "$shot" "$ROOT/shots/empire_age_rail_ref_$1_zoom_v1.png" <<'EOF'
+  python3 - "$shot" "$ROOT/shots/empire_age_rail_sys_$1_crop_v1.png" <<'EOF'
 import sys
 from PIL import Image
 im = Image.open(sys.argv[1])
 print("shot size:", im.size)
 crop = im.crop((1000, 40, 1152, 620))
-crop = crop.resize((crop.width * 3, crop.height * 3), Image.NEAREST)
 crop.save(sys.argv[2])
-print("zoom saved:", sys.argv[2], crop.size)
+print("native crop saved:", sys.argv[2], crop.size)
 EOF
 }
 
