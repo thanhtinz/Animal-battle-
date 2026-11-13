@@ -57,6 +57,18 @@ var (
 	ErrPostRate      = errors.New("Đăng bài quá nhanh — chờ một chút")
 )
 
+// ShareRef marks a post as a SHARE (17g): the record itself
+// carries no text/image — the wire resolves the ORIGINAL
+// post's current content at read time from OrigPostID, and
+// the fields here are the snapshot identity kept so a share
+// still knows whose post it was after the original is gone.
+type ShareRef struct {
+	OrigPostID     string `json:"orig_post_id"`
+	OrigAuthor     string `json:"orig_author"`      // username
+	OrigAuthorName string `json:"orig_author_name"` // display name at share time
+	OrigScope      string `json:"orig_scope"`       // "" personal | alliance id
+}
+
 // Post is one persisted social post (see the file header).
 type Post struct {
 	ID     string   `json:"id"`
@@ -67,6 +79,12 @@ type Post struct {
 	At     int64    `json:"at"`              // unix seconds
 	Seq    int64    `json:"seq"`             // service-monotonic tiebreak
 	Likes  []string `json:"likes,omitempty"` // usernames
+	// Reports (17g): usernames that reported this post —
+	// moderation data, stored server-side only; the wire
+	// exposes just the viewer's own reported state.
+	Reports []string `json:"reports,omitempty"`
+	// SharedFrom (17g): non-nil when this post is a share.
+	SharedFrom *ShareRef `json:"shared_from,omitempty"`
 }
 
 // ValidPostImage validates an attached-image id against the
@@ -176,6 +194,7 @@ func (ps *Posts) pruneLocked(scope, author string) {
 	sortPostsNewest(mine) // newest first; the tail is pruned
 	for _, p := range mine[capN:] {
 		_ = ps.store.DeletePost(p.ID)
+		ps.purgeCommentsLocked(p.ID)
 	}
 }
 
@@ -279,7 +298,11 @@ func (ps *Posts) Delete(id, actor string, canModerate bool) error {
 	if p.Author != actor && !canModerate {
 		return ErrPostForbidden
 	}
-	return ps.store.DeletePost(id)
+	if err := ps.store.DeletePost(id); err != nil {
+		return err
+	}
+	ps.purgeCommentsLocked(id)
+	return nil
 }
 
 // Wire renders one post for a viewer: author identity is
@@ -304,13 +327,52 @@ func (ps *Posts) Wire(p *Post, viewer string) map[string]any {
 			break
 		}
 	}
-	return map[string]any{
+	reported := false
+	for _, u := range p.Reports {
+		if u == viewer {
+			reported = true
+			break
+		}
+	}
+	w := map[string]any{
 		"id": p.ID, "author": p.Author, "author_name": name,
 		"avatar_id": avatar, "frame_id": frame, "ally_tag": tag,
 		"scope": p.Scope, "text": p.Text, "image": p.Image,
 		"at": p.At, "likes": len(p.Likes), "liked": liked,
 		"mine": p.Author == viewer,
+		// 17g: the viewer's own report state + the live
+		// comment count for the action row.
+		"reported_by_me": reported,
+		"comments":       ps.CommentCount(p.ID),
 	}
+	// 17g shares: embed the ORIGINAL post's current content
+	// (resolved now, at read time). A deleted original flips
+	// orig_gone so the client renders the tombstone line.
+	if p.SharedFrom != nil {
+		ref := p.SharedFrom
+		w["shared"] = true
+		w["orig_author"] = ref.OrigAuthor
+		w["orig_author_name"] = ref.OrigAuthorName
+		w["orig_scope"] = ref.OrigScope
+		if orig, ok := ps.store.GetPost(ref.OrigPostID); ok {
+			oName, oAvatar, oFrame := ref.OrigAuthorName, AvatarDefaultID, ""
+			if ps.acc != nil {
+				oName = ps.acc.DisplayNameOf(orig.Author)
+				oAvatar = ps.acc.AvatarOf(orig.Author)
+				oFrame = ps.acc.EquippedFrameOf(orig.Author)
+			}
+			w["orig_gone"] = false
+			w["orig_text"] = orig.Text
+			w["orig_image"] = orig.Image
+			w["orig_ts"] = orig.At
+			w["orig_author_name"] = oName
+			w["orig_avatar_id"] = oAvatar
+			w["orig_frame_id"] = oFrame
+		} else {
+			w["orig_gone"] = true
+		}
+	}
+	return w
 }
 
 // WireList renders a page of posts for a viewer.

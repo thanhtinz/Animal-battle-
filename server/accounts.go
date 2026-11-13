@@ -623,16 +623,23 @@ type Store interface {
 	PutPost(p *Post) error
 	DeletePost(id string) error
 	Posts() []*Post
+	// PostComments are the 17g comments on social posts,
+	// keyed by comment id (each record carries its post id).
+	GetPostComment(id string) (*PostComment, bool)
+	PutPostComment(c *PostComment) error
+	DeletePostComment(id string) error
+	PostComments() []*PostComment
 }
 
 type storeData struct {
-	Accounts    map[string]*Account    `json:"accounts"`
-	Tokens      map[string]*tokenRec   `json:"tokens"`
-	Meta        map[string]string      `json:"meta,omitempty"`
-	Tournaments map[string]*Tournament `json:"tournaments,omitempty"`
-	Alliances   map[string]*Alliance   `json:"alliances,omitempty"`
-	DMs         map[string]*DMThread   `json:"dms,omitempty"`
-	Posts       map[string]*Post       `json:"posts,omitempty"`
+	Accounts     map[string]*Account     `json:"accounts"`
+	Tokens       map[string]*tokenRec    `json:"tokens"`
+	Meta         map[string]string       `json:"meta,omitempty"`
+	Tournaments  map[string]*Tournament  `json:"tournaments,omitempty"`
+	Alliances    map[string]*Alliance    `json:"alliances,omitempty"`
+	DMs          map[string]*DMThread    `json:"dms,omitempty"`
+	Posts        map[string]*Post        `json:"posts,omitempty"`
+	PostComments map[string]*PostComment `json:"post_comments,omitempty"`
 }
 
 type FileStore struct {
@@ -653,6 +660,7 @@ func NewFileStore(path string) (*FileStore, error) {
 	fs.data.Alliances = make(map[string]*Alliance)
 	fs.data.DMs = make(map[string]*DMThread)
 	fs.data.Posts = make(map[string]*Post)
+	fs.data.PostComments = make(map[string]*PostComment)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -684,6 +692,9 @@ func NewFileStore(path string) (*FileStore, error) {
 		}
 		if fs.data.Posts == nil {
 			fs.data.Posts = make(map[string]*Post)
+		}
+		if fs.data.PostComments == nil {
+			fs.data.PostComments = make(map[string]*PostComment)
 		}
 	}
 	return fs, nil
@@ -892,6 +903,11 @@ func (fs *FileStore) DMThreads() []*DMThread {
 func copyPost(p *Post) *Post {
 	out := *p
 	out.Likes = append([]string(nil), p.Likes...)
+	out.Reports = append([]string(nil), p.Reports...)
+	if p.SharedFrom != nil {
+		ref := *p.SharedFrom
+		out.SharedFrom = &ref
+	}
 	return &out
 }
 
@@ -928,6 +944,48 @@ func (fs *FileStore) Posts() []*Post {
 	out := make([]*Post, 0, len(fs.data.Posts))
 	for _, p := range fs.data.Posts {
 		out = append(out, copyPost(p))
+	}
+	return out
+}
+
+func copyPostComment(c *PostComment) *PostComment {
+	out := *c
+	return &out
+}
+
+func (fs *FileStore) GetPostComment(id string) (*PostComment, bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	c, ok := fs.data.PostComments[id]
+	if !ok {
+		return nil, false
+	}
+	return copyPostComment(c), true
+}
+
+func (fs *FileStore) PutPostComment(c *PostComment) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.data.PostComments == nil {
+		fs.data.PostComments = make(map[string]*PostComment)
+	}
+	fs.data.PostComments[c.ID] = copyPostComment(c)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) DeletePostComment(id string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	delete(fs.data.PostComments, id)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) PostComments() []*PostComment {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	out := make([]*PostComment, 0, len(fs.data.PostComments))
+	for _, c := range fs.data.PostComments {
+		out = append(out, copyPostComment(c))
 	}
 	return out
 }

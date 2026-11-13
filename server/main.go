@@ -173,6 +173,14 @@ type clientMsg struct {
 	// carries the 256×256 JPEG in Image too (base64).
 	PostID string `json:"post_id"`
 	Image  string `json:"image"`
+	// Post interactions (17g): post_comment carries the
+	// parent comment in ParentID and the text in Text;
+	// post_comment_delete carries the comment in CommentID;
+	// post_share carries the destination in Target
+	// ("wall" | "alliance").
+	CommentID string `json:"comment_id"`
+	ParentID  string `json:"parent_id"`
+	Target    string `json:"target"`
 	// Reply reference (17f rider 3) on the chat send ops
 	// (world_chat / alliance_chat / dm_send): kept RAW so a
 	// malformed value can be dropped by sanitizeReplyTo
@@ -784,6 +792,19 @@ func (s *session) handle(raw []byte) {
 			return
 		}
 		s.handlePost(m)
+	case "post_report", "post_comments", "post_comment",
+		"post_comment_delete", "post_share":
+		// Post interactions (17g): reports, two-level
+		// comments, shares. Same account-only rule.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if s.hub.posts == nil {
+			s.sendErr(ErrPostNotFound)
+			return
+		}
+		s.handlePostSocial(m)
 	case "chat_react":
 		// Line reactions (17f rider 4): toggle + fan-out of
 		// the line's full reaction state. Unknown ids/emotes

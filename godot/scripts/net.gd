@@ -107,6 +107,9 @@ signal post_alliance_received(rows: Array)
 signal post_created_received(post: Dictionary)
 signal post_patched(post: Dictionary) # a like landed: row replaced in the caches
 signal post_removed(post_id: String)
+# 17g post interactions.
+signal post_comments_received(post_id: String, rows: Array)
+signal post_reported(post: Dictionary)
 signal custom_avatar_ready(user: String)
 # 17f rider 4: a chat line's reaction state changed (the
 # stored line dicts were mutated in place).
@@ -320,6 +323,7 @@ func _ready() -> void:
 			or args.has("mp-settings") or args.has("mp-shot-settings") \
 			or args.has("mp-chathub") or args.has("mp-shot-chathub") \
 			or args.has("mp-social") or args.has("mp-shot-social") \
+			or args.has("mp-social2") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -865,6 +869,20 @@ func _handle_message(txt: String) -> void:
 			var del_id := String(m.get("post_id", ""))
 			_remove_post_row(del_id)
 			post_removed.emit(del_id)
+		"post_comments":
+			# 17g: a post's full comment thread (the reply
+			# shape of every comment op).
+			var cpid := String(m.get("post_id", ""))
+			var crows: Array = m.get("rows", [])
+			_prefetch_customs(crows, "author")
+			post_comments_received.emit(cpid, crows)
+		"post_report":
+			# 17g: my report landed — the patched row carries
+			# reported_by_me for the flag's filled state.
+			var rpost: Dictionary = m.get("post", {})
+			_patch_post_row(rpost)
+			post_patched.emit(rpost)
+			post_reported.emit(rpost)
 		"avatar_custom":
 			# 17f §5: a fetched photo ("" = the account has
 			# none — the request marker stays set so surfaces
@@ -1671,6 +1689,38 @@ func post_delete(post_id: String) -> void:
 	_send({"t": "post_delete", "post_id": post_id})
 
 
+## Reports someone else's post (17g; one report per account,
+## repeats are server no-ops). The answer patches the row
+## (post_report → post_patched + post_reported).
+func post_report(post_id: String) -> void:
+	_send({"t": "post_report", "post_id": post_id})
+
+
+## Fetches a post's whole comment thread (17g). The answer
+## lands as post_comments_received.
+func post_request_comments(post_id: String) -> void:
+	_send({"t": "post_comments", "post_id": post_id})
+
+
+## Adds a comment (17g). parent_id "" = top level; a reply
+## id is fine too — the server resolves it to its root and
+## prefixes the @mention.
+func post_comment(post_id: String, parent_id: String, text: String) -> void:
+	_send({"t": "post_comment", "post_id": post_id,
+			"parent_id": parent_id, "text": text})
+
+
+func post_comment_delete(comment_id: String) -> void:
+	_send({"t": "post_comment_delete", "comment_id": comment_id})
+
+
+## Shares a post (17g): target "wall" (my personal wall) or
+## "alliance" (my alliance's Bài viết). The new share lands
+## as post_created_received.
+func post_share(post_id: String, target: String) -> void:
+	_send({"t": "post_share", "post_id": post_id, "target": target})
+
+
 ## Display-name rename (17d): set_name's sibling WITH the
 ## 30-day cooldown. Success lands as profile_update +
 ## display_name; a cooldown rejection lands as name_error +
@@ -2259,6 +2309,10 @@ func _auto_process() -> void:
 	# 17f social smoke driver.
 	if auto.has("mp-social") and _auto_authed:
 		if _auto_social_process(cs):
+			return
+	# 17g social-2 smoke driver (reports/comments/shares).
+	if auto.has("mp-social2") and _auto_authed:
+		if _auto_social2_process(cs):
 			return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
@@ -4481,6 +4535,138 @@ func _auto_social_process(cs) -> bool:
 
 
 # ------------------------------------------------------------------
+# 17g social-2 smoke driver (--mp-social2=<role>; tests/
+# social2_smoke.sh). Roles:
+#   x (SocA) — posts "Bài 17g của A" on the wall, comments
+#              on it, then shares it to the wall.
+#   y (SocB) — A's friend: reports A's post, comments on
+#              it, replies to A's own comment.
+#   z (SocC) — stranger: the 17g post must never reach z.
+
+var _s2_stage: int = 0
+var _s2_next_poll: int = 0
+var _s2_authed_at: int = 0
+var _s2_quit_at: int = 0
+var _s2_hooked: bool = false
+var _s2_post_id: String = ""
+var _s2_created: Dictionary = {}
+var _s2_thread: Array = []
+var _s2_thread_pid: String = ""
+var _s2_reported: bool = false
+var _s2_shared_ok: bool = false
+
+
+func _s2_hook() -> void:
+	if _s2_hooked:
+		return
+	_s2_hooked = true
+	post_created_received.connect(func(p: Dictionary) -> void:
+		_s2_created = p
+		if bool(p.get("shared", false)):
+			_s2_shared_ok = true)
+	post_comments_received.connect(func(pid: String, rows: Array) -> void:
+		_s2_thread_pid = pid
+		_s2_thread = rows)
+	post_reported.connect(func(p: Dictionary) -> void:
+		if bool(p.get("reported_by_me", false)):
+			_s2_reported = true)
+
+
+func _s2_find_post() -> String:
+	for r in post_feed_rows:
+		if String(r.get("author", "")) == "SocA" \
+				and String(r.get("text", "")).contains("17g"):
+			return String(r.get("id", ""))
+	return ""
+
+
+func _auto_social2_process(_cs) -> bool:
+	_s2_hook()
+	var now := Time.get_ticks_msec()
+	if _s2_authed_at == 0:
+		_s2_authed_at = now
+	if _s2_quit_at == 0 and now - _s2_authed_at > 150000:
+		print("MPLOG social2 TIMEOUT role=", String(auto.get("mp-social2", "")),
+				" stage=", _s2_stage)
+		_s2_quit_at = now + 400
+	if _s2_quit_at > 0:
+		if now >= _s2_quit_at:
+			get_tree().quit()
+		return true
+	if now < _s2_next_poll:
+		return true
+	_s2_next_poll = now + 600
+	var role := String(auto.get("mp-social2", ""))
+	match role:
+		"x":
+			match _s2_stage:
+				0:
+					post_create(false, "Bài 17g của A", "")
+					_s2_stage = 1
+				1:
+					if not _s2_created.is_empty() \
+							and not bool(_s2_created.get("shared", false)):
+						_s2_post_id = String(_s2_created.get("id", ""))
+						post_comment(_s2_post_id, "", "Chủ thớt A bình luận")
+						_s2_stage = 2
+				2:
+					if _s2_thread_pid == _s2_post_id and _s2_thread.size() >= 1:
+						print("MPLOG social2 x comment ok")
+						post_share(_s2_post_id, "wall")
+						_s2_stage = 3
+				3:
+					if _s2_shared_ok:
+						print("MPLOG social2 x share ok")
+						_s2_quit_at = now + 25000 # stay for Y
+						_s2_stage = 4
+		"y":
+			match _s2_stage:
+				0:
+					post_request_feed()
+					_s2_post_id = _s2_find_post()
+					if _s2_post_id != "":
+						post_report(_s2_post_id)
+						_s2_stage = 1
+				1:
+					if _s2_reported:
+						print("MPLOG social2 y report ok")
+						post_comment(_s2_post_id, "", "Bạn B ghé thăm")
+						_s2_stage = 2
+				2:
+					# Poll the thread: A's own comment may
+					# land after mine (no push for comments).
+					post_request_comments(_s2_post_id)
+					if _s2_thread_pid == _s2_post_id and _s2_thread.size() >= 2:
+						print("MPLOG social2 y comment ok")
+						for c in _s2_thread:
+							if String(c.get("author", "")) == "SocA":
+								post_comment(_s2_post_id,
+										String(c.get("id", "")), "B đáp lời A")
+						_s2_stage = 3
+				3:
+					if _s2_thread_pid == _s2_post_id:
+						for c in _s2_thread:
+							if String(c.get("author", "")) == "SocB" \
+									and String(c.get("parent_id", "")) != "":
+								print("MPLOG social2 y reply ok")
+								_s2_quit_at = now + 600
+								_s2_stage = 4
+		"z":
+			match _s2_stage:
+				0:
+					post_request_feed()
+					if _s2_find_post() != "":
+						print("MPLOG social2 z FAIL leaked")
+						_s2_quit_at = now + 400
+						_s2_stage = 1
+					elif now - _s2_authed_at > 25000:
+						print("MPLOG social2 z clean ok")
+						_s2_quit_at = now + 400
+						_s2_stage = 1
+	return true
+
+
+# ------------------------------------------------------------------
 # 17f social captures (--mp-shot-social=<mode> + --mp-shot-file).
 # Modes: feed / wall / album (profile MXH tabs, posts seeded
 # in the store), allyposts (create + two posts, posts tab —
@@ -4493,6 +4679,7 @@ func _auto_social_process(cs) -> bool:
 var _ssh_stage: int = 0
 var _ssh_at: int = 0
 var _ssh_posts_made: int = 0
+var _ssh_pid: String = "" # 17g: the post a shot interacts with
 
 
 func _auto_social_shot(cs) -> void:
@@ -4508,7 +4695,8 @@ func _auto_social_shot(cs) -> void:
 			if now - _auto_home_at > 900:
 				_ssh_at = now
 				match mode:
-					"feed", "wall", "album":
+					"feed", "wall", "album", "greport", "gshare", \
+					"gcomments", "gchooser":
 						post_request_feed()
 						post_request_wall()
 						_ssh_stage = 1
@@ -4596,12 +4784,65 @@ func _auto_social_shot(cs) -> void:
 				_ssh_stage = 9
 		8: # profile open → select the MXH tab next tick.
 			if cs != null and cs.profile_screen != null:
-				cs.profile_screen.shot_show_mxh(mode)
+				var tab := mode
+				if mode in ["gcomments", "gchooser", "greport"]:
+					tab = "feed"
+				elif mode == "gshare":
+					tab = "wall"
+				cs.profile_screen.shot_show_mxh(tab)
 			_ssh_at = now
-			_ssh_stage = 9
+			if mode in ["gcomments", "gchooser"]:
+				_ssh_stage = 10
+			elif mode == "gshare":
+				_ssh_stage = 12
+			else:
+				_ssh_stage = 9
 		9:
 			if now - _ssh_at > 1300:
 				_auto_shot_done = true
 				_save_shot(path)
 				print("MPLOG social shot saved mode=", mode)
 				get_tree().quit()
+		10: # 17g: open the comment section / share chooser
+			# on the first OTHER user's post in the feed.
+			if cs != null and cs.profile_screen != null:
+				var panel = cs.profile_screen.shot_feed_panel()
+				if panel != null:
+					if _ssh_pid == "":
+						_ssh_pid = panel.shot_first_post_id(false)
+					if _ssh_pid != "":
+						if mode == "gcomments":
+							panel.shot_open_comments(_ssh_pid)
+							_ssh_stage = 11
+						else:
+							panel.shot_open_share(_ssh_pid)
+							_ssh_at = now
+							_ssh_stage = 9
+			if now - _ssh_at > 9000:
+				_ssh_at = now
+				_ssh_stage = 9
+		11: # 17g comments: thread loaded → aim the reply
+			# chip at the first top-level comment.
+			if cs != null and cs.profile_screen != null:
+				var panel = cs.profile_screen.shot_feed_panel()
+				if panel != null and _ssh_pid != "" \
+						and panel.shot_comments_loaded(_ssh_pid):
+					panel.shot_reply_first(_ssh_pid)
+					_ssh_at = now
+					_ssh_stage = 12
+			if now - _ssh_at > 9000:
+				_ssh_at = now
+				_ssh_stage = 9
+		12: # 17g: scroll the list so the open thread (feed)
+			# or the share card (wall) is in frame.
+			if cs != null and cs.profile_screen != null:
+				var panel2 = cs.profile_screen.shot_wall_panel() \
+						if mode == "gshare" else cs.profile_screen.shot_feed_panel()
+				if panel2 != null:
+					if mode == "gcomments":
+						panel2.shot_show_post_bottom(_ssh_pid)
+					else:
+						panel2.shot_scroll_bottom()
+			if now - _ssh_at > 700:
+				_ssh_at = now
+				_ssh_stage = 9
