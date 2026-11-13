@@ -662,98 +662,6 @@ class _RailDiamond:
 					false)
 
 
-## Rail SYSTEM frame (owner order 2026-11-13: "phải dùng
-## khung hệ thống chứ" + "sao avatar nhân vật mờ vậy"): a
-## UNIFORM ornate metal frame the rail draws itself —
-## flat bands + hairlines, HARD edges, no gradients — worn
-## by every rail portrait INSTEAD of the granted event
-## frames (AvatarFrame keeps serving every other surface
-## exactly as before; this painter is rail-only). Silver
-## for the friends tab and rank #2–5, gold for rank #1.
-## Only the band ring, its hairlines and the corner
-## ornaments are painted here; the avatar TextureRect
-## sits in the inner window (inset = BAND) UNDER this
-## control and shows through the unpainted middle.
-class _RailFrame:
-	extends Control
-	var gold := false
-	const BAND := 6.0 # RAIL_CELL * 0.0714
-	func _draw() -> void:
-		var S := size.x
-		var b := BAND
-		var c_band := Color(0.78, 0.81, 0.87) # silver #c7cede
-		var c_hi := Color(0.93, 0.95, 0.97) # #eef1f8
-		var c_sh := Color(0.49, 0.53, 0.60) # #7d8698
-		if gold:
-			c_band = Color(0.91, 0.76, 0.41) # #e8c268
-			c_hi = Color(1.0, 0.91, 0.66) # #ffe9a8
-			c_sh = Color(0.60, 0.45, 0.18) # #9a742f
-		# Silhouette: a whisper of dark in the outermost 1px
-		# ring only, so the light metal reads against bright
-		# sky art (the window stays unpainted — the avatar
-		# TextureRect under this control shows through).
-		var sil := Color(0.02, 0.03, 0.05, 0.45)
-		draw_rect(Rect2(0, 0, S, 1), sil)
-		draw_rect(Rect2(0, S - 1, S, 1), sil)
-		draw_rect(Rect2(0, 1, 1, S - 2), sil)
-		draw_rect(Rect2(S - 1, 1, 1, S - 2), sil)
-		# Main band ring.
-		draw_rect(Rect2(1, 1, S - 2, b - 1), c_band)
-		draw_rect(Rect2(1, S - b, S - 2, b - 1), c_band)
-		draw_rect(Rect2(1, b, b - 1, S - 2 * b), c_band)
-		draw_rect(Rect2(S - b, b, b - 1, S - 2 * b), c_band)
-		# Outer lighter sub-band (the 2-band split).
-		var ob := b * 0.42
-		draw_rect(Rect2(1, 1, S - 2, ob), c_hi)
-		draw_rect(Rect2(1, S - 1 - ob, S - 2, ob), c_hi)
-		draw_rect(Rect2(1, 1 + ob, ob, S - 2 - 2 * ob), c_hi)
-		draw_rect(Rect2(S - 1 - ob, 1 + ob, ob, S - 2 - 2 * ob), c_hi)
-		# Split hairline between sub-band and main band.
-		var sc := Color(c_sh, 0.55)
-		draw_line(Vector2(1, 1 + ob), Vector2(S - 1, 1 + ob), sc, 1.0, true)
-		draw_line(Vector2(1, S - 1 - ob), Vector2(S - 1, S - 1 - ob), sc, 1.0, true)
-		draw_line(Vector2(1 + ob, 1), Vector2(1 + ob, S - 1), sc, 1.0, true)
-		draw_line(Vector2(S - 1 - ob, 1), Vector2(S - 1 - ob, S - 1), sc, 1.0, true)
-		# Inner shadow line, adjacent to the window.
-		draw_rect(Rect2(0, b - 1.5, S, 1.5), c_sh)
-		draw_rect(Rect2(0, S - b, S, 1.5), c_sh)
-		draw_rect(Rect2(b - 1.5, b, 1.5, S - 2 * b), c_sh)
-		draw_rect(Rect2(S - b, b, 1.5, S - 2 * b), c_sh)
-		# Inner dark hairline ON the window boundary (drawn
-		# over the avatar's outermost pixels — the crisp
-		# separation between frame and face).
-		var dk := Color(0.02, 0.02, 0.04, 0.9)
-		draw_line(Vector2(b, b), Vector2(S - b, b), dk, 1.0, true)
-		draw_line(Vector2(b, S - b), Vector2(S - b, S - b), dk, 1.0, true)
-		draw_line(Vector2(b, b), Vector2(b, S - b), dk, 1.0, true)
-		draw_line(Vector2(S - b, b), Vector2(S - b, S - b), dk, 1.0, true)
-		# Corner ornaments: a tiny diamond centred on the
-		# band at each corner + engraved L flourishes running
-		# along the band centreline from each corner.
-		var cc := [Vector2(b * 0.5, b * 0.5), Vector2(S - b * 0.5, b * 0.5),
-				Vector2(b * 0.5, S - b * 0.5), Vector2(S - b * 0.5, S - b * 0.5)]
-		for c in cc:
-			var r := b * 0.85
-			var pts := PackedVector2Array([c + Vector2(0, -r),
-					c + Vector2(r, 0), c + Vector2(0, r), c + Vector2(-r, 0)])
-			draw_colored_polygon(pts, c_hi)
-			var loop := PackedVector2Array(pts)
-			loop.append(pts[0])
-			draw_polyline(loop, c_sh, 1.0, true)
-			draw_circle(c, 1.3, c_sh)
-		var fc := Color(c_sh, 0.8)
-		var fl := S * 0.15
-		var f0 := b * 1.7
-		draw_line(Vector2(f0, b * 0.5), Vector2(f0 + fl, b * 0.5), fc, 1.5, true)
-		draw_line(Vector2(S - f0, b * 0.5), Vector2(S - f0 - fl, b * 0.5), fc, 1.5, true)
-		draw_line(Vector2(f0, S - b * 0.5), Vector2(f0 + fl, S - b * 0.5), fc, 1.5, true)
-		draw_line(Vector2(S - f0, S - b * 0.5), Vector2(S - f0 - fl, S - b * 0.5), fc, 1.5, true)
-		draw_line(Vector2(b * 0.5, f0), Vector2(b * 0.5, f0 + fl), fc, 1.5, true)
-		draw_line(Vector2(b * 0.5, S - f0), Vector2(b * 0.5, S - f0 - fl), fc, 1.5, true)
-		draw_line(Vector2(S - b * 0.5, f0), Vector2(S - b * 0.5, f0 + fl), fc, 1.5, true)
-		draw_line(Vector2(S - b * 0.5, S - f0), Vector2(S - b * 0.5, S - f0 - fl), fc, 1.5, true)
-
-
 ## The rail's "+" tile frame: a dashed square outline in
 ## gold (the GlassIcon plus glyph is a child, added by
 ## the builder) — the reference's frame language, not a
@@ -776,8 +684,9 @@ class _RailDashSquare:
 		_dash_line(Vector2(x1, y0), Vector2(x1, y1), col)
 		_dash_line(Vector2(x1, y1), Vector2(x0, y1), col)
 		_dash_line(Vector2(x0, y1), Vector2(x0, y0), col)
-		# Tiny solid corner diamonds — the system frame's
-		# corner ornaments, so the tile reads as family.
+		# Tiny solid corner diamonds, echoing the diamond
+		# badges under the portraits, so the tile reads as
+		# family with the framed portraits above it.
 		for c in [Vector2(x0, y0), Vector2(x1, y0),
 				Vector2(x0, y1), Vector2(x1, y1)]:
 			var r := 3.5
@@ -1184,14 +1093,17 @@ func _on_banner_tap() -> void:
 ##     divider between them, over a faint hairline. The
 ##     ACTIVE tab's glyph is gold with a short glowing
 ##     gold underline; the inactive glyph is flat grey.
-##   * A stack of LARGE SQUARE portraits (84px) in the
-##     rail's own SYSTEM frame (_RailFrame: uniform ornate
-##     metal — silver, gold for the rank #1 — drawn around
-##     the raw avatar; the granted event frames do NOT
-##     apply on this surface, per the owner's 2026-11-13
-##     "khung hệ thống" order), each with a small DIAMOND
-##     badge (dark slate + gold hairline) pinned at the
-##     frame's bottom centre, overlapping its edge.
+##   * A stack of LARGE SQUARE portraits (84px), each
+##     composed by the shared AvatarFrame helper with the
+##     person's OWN equipped frame from the owner's frame
+##     catalogue — the frames the owner added to the
+##     system (frame_01, frame_03…frame_12) — exactly as
+##     the friends panel composes them (the uniform metal
+##     _RailFrame tried on 2026-11-13 was a misread of
+##     the owner's "khung hệ thống" order and was
+##     removed), each with a small DIAMOND badge (dark
+##     slate + gold hairline) pinned at the frame's
+##     bottom centre, overlapping its edge.
 ##   * A plain gold trophy glyph at the header row's
 ##     left end (the tournament entry; the reference has
 ##     none, ours keeps the same bare-glyph treatment —
@@ -1528,10 +1440,10 @@ func _rail_render_friends() -> void:
 		var p := _rail_big_portrait(
 				String(r.get("avatar_id", "")),
 				String(r.get("user", "")),
+				String(r.get("frame_id", "")),
 				int(r.get("rank_tier", 0)),
 				bool(r.get("emperor", false)), -1,
-				String(r.get("display_name", String(r.get("user", "")))),
-				false)
+				String(r.get("display_name", String(r.get("user", "")))))
 		p["btn"].pressed.connect(
 				func() -> void: _rail_open_friends("all"))
 		_rail_stack.add_child(_rail_centered(p["holder"]))
@@ -1557,51 +1469,40 @@ func _rail_render_rank() -> void:
 		var p := _rail_big_portrait(
 				String(r.get("avatar_id", "")),
 				String(r.get("user", "")),
+				String(r.get("frame_id", "")),
 				0, false, i + 1,
-				String(r.get("display_name", String(r.get("user", "")))),
-				i == 0)
+				String(r.get("display_name", String(r.get("user", "")))))
 		p["btn"].pressed.connect(_rail_on_chart)
 		_rail_stack.add_child(_rail_centered(p["holder"]))
 
 
-## One big square rail portrait: an 84px SYSTEM frame
-## (rail-only _RailFrame — silver, or gold for the rank
-## #1) drawn around the RAW avatar texture (no granted
-## frame on this surface, per the owner's "khung hệ
-## thống" order). The avatar renders straight from its
-## full-res source into the frame's inner window, so
-## nothing is downscaled twice. A 20px diamond badge is
-## pinned at the frame's bottom centre, overlapping its
-## edge: its centre sits 7px above the frame's bottom
-## edge (3px of the badge overhangs into the 3px gap
-## before the next frame) — the tight pitch is what lets
-## five 84px portraits + their badges fit above the
-## BẮT ĐẦU button, whose art occludes this column below
-## ~y545 (measured by capture diff, 2026-11-13). num >= 0
-## draws the rank number in gold instead of the emblem.
+## One big square rail portrait: an 84px cell composed
+## by the shared AvatarFrame helper — the avatar plus
+## the person's OWN equipped frame (frame_id from the
+## row data; "" renders AvatarFrame's no-frame path),
+## exactly as the friends panel composes them. A 20px
+## diamond badge is pinned at the cell's bottom centre,
+## overlapping its edge: its centre sits 7px above the
+## cell's bottom edge (3px of the badge overhangs into
+## the 3px gap before the next cell) — the tight pitch
+## is what lets five 84px portraits + their badges fit
+## above the BẮT ĐẦU button, whose art occludes this
+## column below ~y545 (measured by capture diff,
+## 2026-11-13). num >= 0 draws the rank number in gold
+## instead of the emblem.
 func _rail_big_portrait(avatar_id: String, user: String,
-		tier: int, emperor: bool, num: int, tip: String,
-		gold_frame: bool) -> Dictionary:
+		frame_id: String, tier: int, emperor: bool,
+		num: int, tip: String) -> Dictionary:
 	var holder := Control.new()
 	holder.custom_minimum_size = Vector2(RAIL_CELL, RAIL_CELL + 3)
 	holder.size = Vector2(RAIL_CELL, RAIL_CELL + 3)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var band := _RailFrame.BAND
-	var tr := TextureRect.new()
-	tr.texture = Avatars.texture_for_user(avatar_id, user)
-	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	tr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	tr.position = Vector2(band, band)
-	tr.size = Vector2(RAIL_CELL - 2 * band, RAIL_CELL - 2 * band)
-	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(tr)
-	var fr := _RailFrame.new()
-	fr.gold = gold_frame
-	fr.custom_minimum_size = Vector2(RAIL_CELL, RAIL_CELL)
-	fr.size = Vector2(RAIL_CELL, RAIL_CELL)
-	fr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(fr)
+	var av := AvatarFrame.new()
+	av.custom_minimum_size = Vector2(RAIL_CELL, RAIL_CELL)
+	av.size = Vector2(RAIL_CELL, RAIL_CELL)
+	av.set_content(Avatars.texture_for_user(avatar_id, user),
+			frame_id, false)
+	holder.add_child(av)
 	var dia := _RailDiamond.new()
 	if num < 0:
 		dia.tex = RankBadge.emblem_texture(tier, emperor)

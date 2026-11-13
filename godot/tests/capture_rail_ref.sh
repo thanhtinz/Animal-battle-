@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Capture harness for the home rail's REFERENCE design
 # (owner-sent screenshot: two-tab header with glowing
-# underline, big square framed portraits, diamond badges)
-# + the SYSTEM-frame pass (uniform _RailFrame — silver,
-# gold for rank #1 — around the raw avatar at 84px):
-#   empire_age_rail_sys_friends_v1.png + _crop — Bạn bè tab:
+# underline, big square framed portraits, diamond badges).
+# Portraits are composed by AvatarFrame with each person's
+# OWN equipped frame from the owner's frame catalogue —
+# the seed grants frames so the shots show them properly:
+# CongTuoc1 frame_06 (Sao Vàng), HauTuoc1 frame_01 (Dây
+# Dâu Tây), BaTuoc1 frame_08 (Mây Anh Đào), KySiMot
+# frame_05 (Sân Khấu Trái Tim); NamTuoc1 and HiepSi carry
+# no frame (AvatarFrame's no-frame path).
+#   empire_age_rail_sys2_friends_v1.png + _crop — Bạn bè tab:
 #     HiepSi's 3 close friends (CongTuoc1 ONLINE via the
-#     idle client; granted frames no longer apply on the
-#     rail) + the dashed "+" tile.
-#   empire_age_rail_sys_rank_v1.png + _crop — Xếp hạng tab
+#     idle client) + the dashed "+" tile.
+#   empire_age_rail_sys2_rank_v1.png + _crop — Xếp hạng tab
 #     (--mp-rail-tab=rank): the top 5 of the seeded
-#     leaderboard (6 accounts with descending MMR:
-#     CongTuoc1 1980, HauTuoc1 1710, BaTuoc1 1490,
-#     NamTuoc1 1330, HiepSi 1240, KySiMot 1100), diamonds
-#     carrying the gold rank numbers 1-5.
+#     leaderboard (6 accounts; ladder order CongTuoc1,
+#     HauTuoc1, BaTuoc1, NamTuoc1, KySiMot, then HiepSi),
+#     diamonds carrying the gold rank numbers 1-5.
 # Crops are NATIVE resolution (no upscale/resample) —
 # the owner judges sharpness from true pixels.
 # Seed modelled on capture_rail17i.sh + one extra
@@ -67,16 +70,25 @@ store = {
                       "granted_frames": ["frame_06"]}),
     "HauTuoc1": acc("HauTuoc1", 5, 0, 7, 1710, 22, 11,
                     {"display_name": "Hầu Tước Bay",
-                     "avatar_id": "art:12", "last_online": now - 7 * 3600}),
+                     "avatar_id": "art:12",
+                     "frame_id": "frame_01",
+                     "granted_frames": ["frame_01"],
+                     "last_online": now - 7 * 3600}),
     "BaTuoc1": acc("BaTuoc1", 4, 1, 1, 1490, 15, 10,
                    {"display_name": "Bá Tước Trầm",
-                    "avatar_id": "art:05", "last_online": now - 2 * 86400}),
+                    "avatar_id": "art:05",
+                    "frame_id": "frame_08",
+                    "granted_frames": ["frame_08"],
+                    "last_online": now - 2 * 86400}),
     "NamTuoc1": acc("NamTuoc1", 3, 2, 0, 1330, 6, 4,
                     {"display_name": "Nam Tước Nhỏ",
                      "avatar_id": "art:09", "last_online": now - 35 * 60}),
     "KySiMot": acc("KySiMot", 1, 0, 1, 1100, 3, 5,
                    {"display_name": "Kỵ Sĩ Một",
-                    "avatar_id": "art:11", "last_online": now - 3600}),
+                    "avatar_id": "art:11",
+                    "frame_id": "frame_05",
+                    "granted_frames": ["frame_05"],
+                    "last_online": now - 3600}),
     "HiepSi": hiepsi,
   },
   "tokens": {},
@@ -108,7 +120,7 @@ grep -a "IDLE FRIEND LOGIN SENT" "$WORK/idle.log" > /dev/null \
 echo "IDLE FRIEND ONLINE"
 
 shoot() { # $1 = tag, $2 = extra args
-  local shot="$ROOT/shots/empire_age_rail_sys_$1_v1.png"
+  local shot="$ROOT/shots/empire_age_rail_sys2_$1_v1.png"
   timeout 120 xvfb-run -a -s "-screen 0 1280x800x24" \
     "$GODOT" --path "$ROOT" --resolution 1152x648 \
     -- --mp-shot-home="$shot" --mp-account=HiepSi:secret1 $2 \
@@ -117,7 +129,7 @@ shoot() { # $1 = tag, $2 = extra args
     || { echo "NO SHOT ($1)"; tail -20 "$WORK/client_$1.log"; exit 1; }
   [ -f "$shot" ] || { echo "SHOT FILE MISSING ($1)"; exit 1; }
   echo "CAPTURE OK ($1): $shot"
-  python3 - "$shot" "$ROOT/shots/empire_age_rail_sys_$1_crop_v1.png" <<'EOF'
+  python3 - "$shot" "$ROOT/shots/empire_age_rail_sys2_$1_crop_v1.png" <<'EOF'
 import sys
 from PIL import Image
 im = Image.open(sys.argv[1])
