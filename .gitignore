@@ -15,3 +15,7 @@ server/*.exe
 # Logs
 logs/
 *.log
+
+# stray capture-run HOME/cache
+godot/MinhKi*/
+.cache/
