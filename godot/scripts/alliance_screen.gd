@@ -426,7 +426,7 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 		cell.add_child(tb)
 		grid.add_child(cell)
 		cells.append(cell)
-	right.add_child(_label("Màu huy hiệu", 12, MUTED))
+	right.add_child(_label("Màu cờ", 12, MUTED))
 	var swrow := HBoxContainer.new()
 	swrow.add_theme_constant_override("separation", 6)
 	right.add_child(swrow)
@@ -449,11 +449,14 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 		for j in cells.size():
 			var cell2: PanelContainer = cells[j]
 			var on := (j + 1) == icon
+			# Owner: the icons are BLACK — the picker cells
+			# are parchment tiles so the black glyphs read;
+			# the chosen colour belongs to the flag preview.
 			cell2.add_theme_stylebox_override("panel", _sb(
-					Color(0.10, 0.13, 0.22, 0.9), 8,
+					Color(0.93, 0.88, 0.71) if on else Color(0.78, 0.73, 0.58, 0.95), 8,
 					GOLD if on else PANEL_LINE, 2 if on else 1))
 			var tb2: TextureButton = cell2.get_child(0)
-			tb2.modulate = col
+			tb2.modulate = Color(0.07, 0.07, 0.09)
 		for j in swatches.size():
 			var sw2: Button = swatches[j]
 			var on2 := j == int(state.get("color", 0))

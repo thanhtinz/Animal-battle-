@@ -20,7 +20,7 @@ const NAMES := {
 	9: "Đinh Ba", 10: "Bánh Răng",
 }
 const COUNT := 10
-const ASPECT := 1.30 # width / height of the flag control
+const ASPECT := 1.02 # the banner hangs portrait; box stays ~square
 
 static var _cache: Dictionary = {}
 
@@ -76,101 +76,97 @@ class FlagBadge:
 		if w < 8.0 or h < 8.0:
 			return
 		var base := AllyBadge.color_of(color_idx)
-		var x0 := w * 0.075 + clampf(w * 0.045, 2.0, 5.0) * 0.5
-		var x1 := w * 0.985
-		var y0 := h * 0.13
-		var ch := h * 0.60
-		var amp := ch * 0.10
-		var phase := 0.7
-		# Wave grows toward the fly end; the bottom edge gets
-		# a touch more travel so the cloth sags like fabric.
-		var wave := func(t: float) -> float:
-			return sin(phase + t * 5.2) * amp * (0.30 + 0.70 * t)
-		# --- soft drop shadow of the whole cloth.
-		var shadow_pts := PackedVector2Array()
-		for i in 9:
-			var tt := float(i) / 8.0
-			shadow_pts.append(Vector2(x0 + (x1 - x0) * tt + w * 0.02,
-					y0 + wave.call(tt) + h * 0.035))
-		for i in range(8, -1, -1):
-			var tt := float(i) / 8.0
-			shadow_pts.append(Vector2(x0 + (x1 - x0) * tt + w * 0.02,
-					y0 + ch + wave.call(tt) * 1.15 + h * 0.035))
-		draw_colored_polygon(shadow_pts, Color(0, 0, 0, 0.20))
-		# --- cloth: 18 strips, fold shading follows the
-		# wave's slope with real contrast (never flat).
-		var strips := 18
-		var sw := (x1 - x0) / strips
+		var cx := w * 0.5
+		# --- cloth geometry: a hanging pennant banner —
+		# straight sides, then diagonals to a bottom point,
+		# top edge sagging slightly between its loops.
+		var hw := w * 0.335
+		var y_t := h * 0.155
+		var y_b := h * 0.985
+		var y_s := y_t + (y_b - y_t) * 0.70
+		var sag := h * 0.028
+		var centroid := Vector2(cx, y_t + (y_b - y_t) * 0.45)
+		var cloth_pts := PackedVector2Array([
+			Vector2(cx - hw, y_t), Vector2(cx, y_t + sag),
+			Vector2(cx + hw, y_t), Vector2(cx + hw, y_s),
+			Vector2(cx, y_b), Vector2(cx - hw, y_s)])
+		# --- gold trim: the same pennant pushed outward.
+		var trim := clampf(w * 0.05, 2.0, 6.0)
+		var trim_pts := PackedVector2Array()
+		for p in cloth_pts:
+			var d := p - centroid
+			trim_pts.append(p + d.normalized() * trim)
+		draw_colored_polygon(trim_pts, Color(0.80, 0.58, 0.16))
+		# --- cloth: vertical strips clipped to the pennant,
+		# shaded as soft folds, darkening toward the point.
+		var strips := 14
 		for i in strips:
 			var t0 := float(i) / strips
 			var t1 := float(i + 1) / strips
-			var dy0: float = wave.call(t0)
-			var dy1: float = wave.call(t1)
-			var slope := cos(phase + (t0 + t1) * 0.5 * 5.2)
-			var shade := clampf(0.80 + 0.26 * slope, 0.62, 1.10)
+			var xa := cx - hw + 2.0 * hw * t0
+			var xb := cx - hw + 2.0 * hw * t1
+			var top_a := y_t + sag * (1.0 - absf(t0 * 2.0 - 1.0))
+			var top_b := y_t + sag * (1.0 - absf(t1 * 2.0 - 1.0))
+			var bot_a := y_s + (y_b - y_s) * (1.0 - absf(t0 * 2.0 - 1.0))
+			var bot_b := y_s + (y_b - y_s) * (1.0 - absf(t1 * 2.0 - 1.0))
+			var shade := clampf(0.85 + 0.19 * cos(t0 * 5.5 + 0.6), 0.68, 1.06)
 			var col := Color(minf(base.r * shade, 1.0),
 					minf(base.g * shade, 1.0), minf(base.b * shade, 1.0))
 			draw_colored_polygon(PackedVector2Array([
-				Vector2(x0 + sw * i, y0 + dy0),
-				Vector2(x0 + sw * (i + 1), y0 + dy1),
-				Vector2(x0 + sw * (i + 1), y0 + ch + dy1 * 1.15),
-				Vector2(x0 + sw * i, y0 + ch + dy0 * 1.15)]), col)
-		# Sheen band across the upper cloth + a deep fold
-		# shadow in the lower third, both following the wave.
-		for i in strips:
-			var t0 := float(i) / strips
-			var t1 := float(i + 1) / strips
-			var dy0: float = wave.call(t0)
-			var dy1: float = wave.call(t1)
+				Vector2(xa, top_a), Vector2(xb, top_b),
+				Vector2(xb, bot_b), Vector2(xa, bot_a)]), col)
+		# Soft sheen across the upper cloth.
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(cx - hw, y_t + sag * 0.4),
+			Vector2(cx + hw * 0.2, y_t + sag),
+			Vector2(cx + hw * 0.2, y_t + (y_s - y_t) * 0.52),
+			Vector2(cx - hw, y_t + (y_s - y_t) * 0.34)]),
+				Color(1, 1, 1, 0.08))
+		# Light-gold inner line along the trim's inner edge.
+		var edge := cloth_pts
+		edge.append(cloth_pts[0])
+		draw_polyline(edge, Color(1.0, 0.86, 0.48, 0.8), 1.2)
+		# --- hanging loops over the bar.
+		var loop_w := hw * 0.30
+		var bar_y := h * 0.085
+		for sgn in [-1.0, 1.0]:
+			var lx: float = cx + sgn * hw * 0.82
+			var lcol := Color(base.r * 0.78, base.g * 0.78, base.b * 0.78)
+			draw_rect(Rect2(lx - loop_w * 0.5, bar_y - h * 0.012,
+					loop_w, y_t - bar_y + h * 0.03), lcol)
+			draw_line(Vector2(lx - loop_w * 0.5, y_t + h * 0.018),
+					Vector2(lx + loop_w * 0.5, y_t + h * 0.018),
+					Color(0, 0, 0, 0.25), 1.2)
+		# --- the gold crossbar + diamond finials.
+		var bar_h := clampf(h * 0.07, 3.0, 8.0)
+		var bar_x0 := w * 0.045
+		var bar_x1 := w * 0.955
+		draw_rect(Rect2(bar_x0, bar_y - bar_h * 0.5, bar_x1 - bar_x0, bar_h * 0.38),
+				Color(1.0, 0.87, 0.45))
+		draw_rect(Rect2(bar_x0, bar_y - bar_h * 0.12, bar_x1 - bar_x0, bar_h * 0.40),
+				Color(0.85, 0.62, 0.18))
+		draw_rect(Rect2(bar_x0, bar_y + bar_h * 0.28, bar_x1 - bar_x0, bar_h * 0.24),
+				Color(0.55, 0.38, 0.08))
+		for sgn in [-1.0, 1.0]:
+			var fx := bar_x0 if sgn < 0.0 else bar_x1
+			var fd := clampf(w * 0.085, 4.0, 11.0)
+			var dir: float = sgn
 			draw_colored_polygon(PackedVector2Array([
-				Vector2(x0 + sw * i, y0 + dy0 + ch * 0.10),
-				Vector2(x0 + sw * (i + 1), y0 + dy1 + ch * 0.10),
-				Vector2(x0 + sw * (i + 1), y0 + dy1 + ch * 0.30),
-				Vector2(x0 + sw * i, y0 + dy0 + ch * 0.30)]),
-					Color(1, 1, 1, 0.10))
+				Vector2(fx, bar_y - fd * 0.62),
+				Vector2(fx + dir * fd, bar_y),
+				Vector2(fx, bar_y + fd * 0.10)]), Color(1.0, 0.85, 0.42))
 			draw_colored_polygon(PackedVector2Array([
-				Vector2(x0 + sw * i, y0 + dy0 * 1.15 + ch * 0.78),
-				Vector2(x0 + sw * (i + 1), y0 + dy1 * 1.15 + ch * 0.78),
-				Vector2(x0 + sw * (i + 1), y0 + ch + dy1 * 1.15),
-				Vector2(x0 + sw * i, y0 + ch + dy0 * 1.15)]),
-					Color(0, 0, 0, 0.12))
-		# --- gold trim along the waving edges + fly end.
-		var trim := Color(0.98, 0.80, 0.35, 0.85)
-		var trim_w := clampf(h * 0.028, 1.2, 2.4)
-		var top_pts := PackedVector2Array()
-		var bot_pts := PackedVector2Array()
-		for i in 19:
-			var tt := float(i) / 18.0
-			top_pts.append(Vector2(x0 + (x1 - x0) * tt, y0 + wave.call(tt)))
-			bot_pts.append(Vector2(x0 + (x1 - x0) * tt, y0 + ch + wave.call(tt) * 1.15))
-		draw_polyline(top_pts, trim, trim_w)
-		draw_polyline(bot_pts, trim, trim_w)
-		draw_line(Vector2(x1, y0 + wave.call(1.0)),
-				Vector2(x1, y0 + ch + wave.call(1.0) * 1.15), trim, trim_w)
-		# --- pole over the hoist edge: two-tone wood, gold
-		# ball finial with a highlight, small foot.
-		var pole_x := w * 0.075
-		var pole_w := clampf(w * 0.05, 2.5, 5.5)
-		var pole_top := h * 0.10
-		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w, h * 0.88),
-				Color(0.28, 0.18, 0.09))
-		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w * 0.45, h * 0.88),
-				Color(0.45, 0.31, 0.16))
-		var ball_r := clampf(w * 0.055, 3.0, 6.5)
-		draw_circle(Vector2(pole_x, h * 0.075), ball_r, Color(0.98, 0.80, 0.35))
-		draw_circle(Vector2(pole_x - ball_r * 0.3, h * 0.075 - ball_r * 0.3),
-				ball_r * 0.38, Color(1.0, 0.93, 0.65))
-		draw_rect(Rect2(pole_x - w * 0.07, h * 0.965, w * 0.14, maxf(2.0, h * 0.03)),
-				Color(0.28, 0.18, 0.09))
-		# --- the icon printed on the cloth.
-		var share := 0.62 if h > 44.0 else 0.76
-		var ih := ch * share
-		var iw := ih
-		var cx := (x0 + x1) * 0.5
-		var cy: float = y0 + ch * 0.5 + float(wave.call(0.5))
-		var rect := Rect2(cx - iw * 0.5, cy - ih * 0.5, iw, ih)
+				Vector2(fx, bar_y + fd * 0.10),
+				Vector2(fx + dir * fd, bar_y),
+				Vector2(fx, bar_y + fd * 0.62)]), Color(0.62, 0.44, 0.10))
+		# --- the icon printed BLACK on the cloth (owner:
+		# the icons are black; the colour is the flag's).
+		var share := 0.60 if h > 44.0 else 0.70
+		var iw := 2.0 * hw * share
+		var icy := y_t + (y_s - y_t) * 0.44
+		var rect := Rect2(cx - iw * 0.5, icy - iw * 0.5, iw, iw)
 		var tex := AllyBadge.icon_texture(icon)
 		if tex != null:
-			draw_texture_rect(tex, Rect2(rect.position + Vector2(1.2, 1.4), rect.size),
-					false, Color(0, 0, 0, 0.30))
-			draw_texture_rect(tex, rect, false, Color.WHITE)
+			draw_texture_rect(tex, Rect2(rect.position + Vector2(0.8, 1.1), rect.size),
+					false, Color(1, 1, 1, 0.16))
+			draw_texture_rect(tex, rect, false, Color(0.05, 0.05, 0.07))

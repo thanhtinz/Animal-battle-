@@ -576,8 +576,15 @@ func _line_row(line: Dictionary, channel: String) -> Control:
 	var key := _line_key(line)
 	var open := key != "" and key == _open_key
 	var cell := PanelContainer.new()
-	cell.add_theme_stylebox_override("panel", _sb(
-		Color(1, 1, 1, 0.05) if open else Color(0, 0, 0, 0), 8))
+	var csb := _sb(Color(1, 1, 1, 0.05) if open else Color(0, 0, 0, 0), 8)
+	# Owner: message content must not hug the edges. The
+	# shared _sb leaves content margins unset (−1 → Godot
+	# falls back to border width ≈ 0), so set them here.
+	csb.content_margin_left = 12
+	csb.content_margin_right = 12
+	csb.content_margin_top = 7
+	csb.content_margin_bottom = 7
+	cell.add_theme_stylebox_override("panel", csb)
 	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var tap := Button.new()
 	tap.text = ""

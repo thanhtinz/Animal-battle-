@@ -45,7 +45,10 @@ var _ping_label: Label
 var _ping_icon: GlassIcon
 var _ping_icon_shadow: GlassIcon
 var _mail_badge: Dictionary = {}
-var _chat_badge: Dictionary = {} # 17e chat-hub entry (DM unread badge)
+var _chat_badge: Dictionary = {} # DM unread badge (on the chat ticker since 2026-11-12)
+var _ticker_name: Label
+var _ticker_text: RichTextLabel
+var _ticker_channel := "world"
 var _banner_idx: int = 0
 var _banner_title: Label
 var _banner_sub: Label
@@ -390,6 +393,18 @@ func setup(p_game) -> void:
 			_set_chat_badge(Net.dm_total_unread()))
 	Net.dm_thread_received.connect(func(_p, _rows) -> void:
 		_set_chat_badge(Net.dm_total_unread()))
+	# Chat ticker (owner, 2026-11-12): the latest world /
+	# alliance / DM line shows on the ticker bar.
+	Net.chat_received.connect(func(scope: String, _slot: int, sender: String, text: String, _tag: String, _bub: String) -> void:
+		if scope == "world" or scope == "alliance":
+			_ticker_show(scope, sender, text))
+	Net.dm_line_received.connect(func(peer: String, mine: bool) -> void:
+		if not mine:
+			var lines: Array = Net.dm_threads.get(peer, [])
+			if not lines.is_empty():
+				var l: Dictionary = lines[lines.size() - 1]
+				_ticker_show("dm", String(l.get("name", peer)),
+						String(l.get("text", ""))))
 	Net.friends_received.connect(func(_rows) -> void:
 		_rebuild_rail()
 		if _fr_root != null and _fr_root.visible:
@@ -460,6 +475,7 @@ func _build() -> void:
 	_build_chip()
 	_build_top_right()
 	_build_banner()
+	_build_chat_ticker()
 	_build_rail()
 	_build_bottom_band()
 	_build_popup()
@@ -651,27 +667,105 @@ func _set_chat_badge(n: int) -> void:
 		_set_badge(_chat_badge, n)
 
 
+func _build_chat_ticker() -> void:
+	# Owner order 2026-11-12 (his reference crop): chat is
+	# NOT opened from an icon — this slim bar under the
+	# season banner shows the LATEST chat message, one at a
+	# time; tapping the bar opens the chat panel at that
+	# message's channel.
+	var bar := PanelContainer.new()
+	bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	bar.position = Vector2(10, 224)
+	bar.custom_minimum_size = Vector2(436, 38)
+	bar.size = Vector2(436, 38)
+	var bsb := _sb(Color(0.02, 0.03, 0.07, 0.88), 8, Color(1, 0.85, 0.4, 0.55), 1)
+	bsb.content_margin_left = 10
+	bsb.content_margin_right = 10
+	bsb.content_margin_top = 4
+	bsb.content_margin_bottom = 4
+	bar.add_theme_stylebox_override("panel", bsb)
+	_root.add_child(bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(row)
+	var ic := GlassIcon.new()
+	ic.kind = "chat"
+	ic.custom_minimum_size = Vector2(22, 22)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(ic)
+	_ticker_name = _label("Chat", 13, Color(1, 0.85, 0.4))
+	_ticker_name.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_ticker_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_ticker_name)
+	var clip := Control.new()
+	clip.clip_contents = true
+	clip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	clip.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(clip)
+	_ticker_text = Emotes.make_rich("", 15, PAPER)
+	_ticker_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ticker_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	clip.add_child(_ticker_text)
+	# Unread-DM badge riding the bar's top-right corner
+	# (same dict shape _set_badge consumes).
+	var bp := PanelContainer.new()
+	bp.add_theme_stylebox_override("panel", _sb(Color(0.85, 0.2, 0.15), 9))
+	bp.custom_minimum_size = Vector2(19, 19)
+	bp.size = Vector2(19, 19)
+	bp.position = Vector2(10 + 436 - 13, 224 - 7)
+	bp.visible = false
+	bp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bl := _label("", 11, Color.WHITE)
+	bl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bp.add_child(bl)
+	_root.add_child(bp)
+	_chat_badge = {"badge": bp, "badge_label": bl}
+	_set_chat_badge(Net.dm_total_unread())
+	# Tap overlay (added last → on top of the row).
+	var tap := Button.new()
+	tap.flat = true
+	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tap.tooltip_text = "Chat"
+	bar.add_child(tap)
+	tap.pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_chat_hub"):
+			game.home_open_chat_hub(_ticker_channel))
+
+
+func _ticker_show(channel: String, sender: String, text: String) -> void:
+	if _ticker_name == null:
+		return
+	_ticker_channel = channel
+	var nm := sender
+	if nm.length() > 16:
+		nm = nm.left(16) + "…"
+	_ticker_name.text = nm + ":"
+	var clip := _ticker_text.get_parent()
+	_ticker_text.queue_free()
+	_ticker_text = Emotes.make_rich(text, 15, PAPER)
+	_ticker_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ticker_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	clip.add_child(_ticker_text)
+
+
 func _build_top_right() -> void:
 	# Tín (13l addendum): the friends icon left this row —
 	# Thư · Cài đặt · Ping remain. (The friends panel itself
 	# stays in code, dormant like the other removed entries.)
 	var row := HBoxContainer.new()
 	row.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	# 17e: the row gains the Chat button (the ONE entry to
-	# the chat hub) — widened by one glyph + one gap, same
-	# right edge, same optical line.
-	row.position = Vector2(-302, 12)
-	row.custom_minimum_size = Vector2(290, 48)
+	# Owner order 2026-11-12: NO chat icon button here any
+	# more — chat lives in the ticker bar under the season
+	# banner (latest message shows there; tap opens the hub).
+	row.position = Vector2(-244, 12)
+	row.custom_minimum_size = Vector2(232, 48)
 	row.add_theme_constant_override("separation", 10)
 	_root.add_child(row)
-
-	# 17e: Chat first — its badge counts unread DMs.
-	_chat_badge = _icon_button("chat", "Chat", 48.0, true)
-	_chat_badge["btn"].pressed.connect(func() -> void:
-		if game != null and game.has_method("home_open_chat_hub"):
-			game.home_open_chat_hub("world"))
-	row.add_child(_chat_badge["holder"])
-	_set_chat_badge(Net.dm_total_unread())
 
 	# Tín's frameless order ("thay thành icon css và bỏ
 	# khung"): mail + gear are BARE glyphs now — no glass

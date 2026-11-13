@@ -235,27 +235,42 @@ func _build_composer() -> void:
 	_draft_text.add_theme_color_override("font_placeholder_color", DIM)
 	_draft_text.add_theme_stylebox_override("normal",
 			_field_sb(FIELD_BG, PANEL_LINE, 1, true))
-	_draft_text.add_theme_stylebox_override("focus",
-			_field_sb(FIELD_BG, GOLD, 1, true))
-	_draft_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row1.add_child(_draft_text)
+	var focus_sb := _field_sb(FIELD_BG, GOLD, 1, true)
+	_draft_text.add_theme_stylebox_override("focus", focus_sb)
+	# Owner order 2026-11-12: the image icon sits INSIDE
+	# the input field, icon only, no caption. The field's
+	# right margin grows so text never runs under the icon.
+	for sbx in [_draft_text.get_theme_stylebox("normal"),
+			_draft_text.get_theme_stylebox("focus")]:
+		(sbx as StyleBoxFlat).content_margin_right = 46
+	_draft_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var field_wrap := Control.new()
+	field_wrap.custom_minimum_size = Vector2(0, 46)
+	field_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	field_wrap.add_child(_draft_text)
+	var pick := Button.new()
+	pick.focus_mode = Control.FOCUS_NONE
+	for sn in ["normal", "hover", "pressed", "focus"]:
+		pick.add_theme_stylebox_override(sn, _sb(Color(0, 0, 0, 0), 8))
+	_btn_icon(pick, FA_IMAGE, 16, GOLD)
+	pick.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	pick.anchor_left = 1.0
+	pick.anchor_right = 1.0
+	pick.offset_left = -40
+	pick.offset_right = -6
+	pick.offset_top = -17
+	pick.offset_bottom = 17
+	pick.pressed.connect(func() -> void:
+		_gallery.visible = not _gallery.visible)
+	field_wrap.add_child(pick)
+	row1.add_child(field_wrap)
 	var post_btn := _button("Đăng bài", true, 104)
 	post_btn.custom_minimum_size = Vector2(104, 46)
 	post_btn.pressed.connect(_on_post_pressed)
 	row1.add_child(post_btn)
 	vb.add_child(row1)
-	# Row 2 (slim): gallery toggle + hint + the attach chip.
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var pick := _button("", false, 34)
-	pick.custom_minimum_size = Vector2(34, 30)
-	_btn_icon(pick, FA_IMAGE, 15, GOLD)
-	pick.pressed.connect(func() -> void:
-		_gallery.visible = not _gallery.visible)
-	row.add_child(pick)
-	var hint := _label("Đính kèm ảnh từ thư viện của game", 11, DIM)
-	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(hint)
+	# The attach chip lives directly under row 1 and only
+	# takes space while an image is attached.
 	_attach_chip = HBoxContainer.new()
 	_attach_chip.add_theme_constant_override("separation", 6)
 	_attach_chip.visible = false
@@ -274,8 +289,7 @@ func _build_composer() -> void:
 	_btn_icon(unattach, FA_XMARK, 12, MUTED)
 	unattach.pressed.connect(func() -> void: _set_attach(""))
 	_attach_chip.add_child(unattach)
-	row.add_child(_attach_chip)
-	vb.add_child(row)
+	vb.add_child(_attach_chip)
 	# Gallery grid (hidden until toggled).
 	_gallery = GridContainer.new()
 	_gallery.columns = 7
