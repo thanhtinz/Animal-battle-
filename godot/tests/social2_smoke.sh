@@ -72,6 +72,7 @@ run_client z SocC z
 wait $CLIENT_PIDS
 
 chk "$WORK/x.log" "MPLOG social2 x comment ok" "A comments on its own post"
+chk "$WORK/x.log" "MPLOG social2 x image-comment ok" "A's image-only comment lands with its photo"
 chk "$WORK/x.log" "MPLOG social2 x share ok" "A shares its post to its wall"
 chk "$WORK/y.log" "MPLOG social2 y report ok" "B reports A's post (reported_by_me)"
 chk "$WORK/y.log" "MPLOG social2 y comment ok" "B comments on A's post"

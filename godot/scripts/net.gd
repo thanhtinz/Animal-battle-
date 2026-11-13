@@ -1313,13 +1313,37 @@ func _on_voice_msg(m: Dictionary, wav: PackedByteArray) -> void:
 
 
 # ------------------------------------------------------------------
-# 17e megaphone marquee: a top-of-screen scrolling strip on
-# its own layer (96 — above every panel), presentation only.
-# Entries queue (max 3); each scrolls once at ~110 px/s and
-# dismisses. Mid-scroll it never blocks input (strip is
+# 17e megaphone marquee: a scrolling announcement on its own
+# layer (96 — above every panel), presentation only. Entries
+# queue (max 3); each scrolls once at ~110 px/s and
+# dismisses. It never blocks input (strip is
 # mouse-transparent).
+# 17h (owner order): NOT a full-width black slab — ONE
+# CENTRED GLASS PILL at the top-centre of the screen and the
+# text runs through it.
 
 const MARQUEE_SPEED := 110.0
+const MARQUEE_H := 38.0
+
+
+## The pill's width: at most 800px, always 32px short of
+## the viewport so it never touches the screen edges.
+func _mq_pill_w() -> float:
+	return minf(800.0, get_viewport().get_visible_rect().size.x - 32.0)
+
+
+## (Re)applies the pill geometry — centred horizontally,
+## 10px from the top, MARQUEE_H tall.
+func _mq_fit() -> void:
+	var w := _mq_pill_w()
+	_mq_strip.anchor_left = 0.5
+	_mq_strip.anchor_right = 0.5
+	_mq_strip.anchor_top = 0.0
+	_mq_strip.anchor_bottom = 0.0
+	_mq_strip.offset_left = -w / 2.0
+	_mq_strip.offset_right = w / 2.0
+	_mq_strip.offset_top = 10
+	_mq_strip.offset_bottom = 10 + MARQUEE_H
 
 
 func _ensure_marquee() -> void:
@@ -1329,15 +1353,19 @@ func _ensure_marquee() -> void:
 	_mq_layer.layer = 96
 	add_child(_mq_layer)
 	_mq_strip = PanelContainer.new()
-	_mq_strip.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_mq_strip.offset_bottom = 34
 	_mq_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.03, 0.05, 0.12, 0.94)
-	sb.border_color = Color(0.85, 0.68, 0.25)
-	sb.set_border_width_all(0)
-	sb.border_width_bottom = 2
+	sb.bg_color = Color(0.13, 0.18, 0.30, 0.50)
+	sb.border_color = Color(1.0, 0.90, 0.55, 0.55)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(19)
+	sb.content_margin_left = 18
+	sb.content_margin_right = 18
+	sb.shadow_size = 6
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_offset = Vector2(0, 2)
 	_mq_strip.add_theme_stylebox_override("panel", sb)
+	_mq_fit()
 	_mq_clip = Control.new()
 	_mq_clip.clip_contents = true
 	_mq_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1363,11 +1391,15 @@ func _show_marquee(sender_name: String, text: String) -> void:
 
 func _mq_start(line: String) -> void:
 	_mq_label.text = line
-	var vp_w := get_viewport().get_visible_rect().size.x
+	_mq_fit() # viewport may have changed since the build
 	_mq_text_w = ThemeDB.fallback_font.get_string_size(line,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
-	_mq_x = vp_w
-	_mq_label.position = Vector2(_mq_x, 6)
+	# The text enters at the pill's CONTENT right edge (pill
+	# width minus the 18px side margins), vertically centred
+	# in the 38px pill.
+	_mq_x = _mq_pill_w() - 36.0
+	var ly := (MARQUEE_H - ThemeDB.fallback_font.get_height(17)) / 2.0
+	_mq_label.position = Vector2(_mq_x, ly)
 	_mq_strip.visible = true
 	_mq_active = true
 
@@ -1704,10 +1736,17 @@ func post_request_comments(post_id: String) -> void:
 
 ## Adds a comment (17g). parent_id "" = top level; a reply
 ## id is fine too — the server resolves it to its root and
-## prefixes the @mention.
-func post_comment(post_id: String, parent_id: String, text: String) -> void:
-	_send({"t": "post_comment", "post_id": post_id,
-			"parent_id": parent_id, "text": text})
+## prefixes the @mention. jpg (17h) is an optional attached
+## photo (the client's downscaled JPEG, same contract as
+## send_chat_image); with one attached the text may be
+## empty — an image-only comment.
+func post_comment(post_id: String, parent_id: String, text: String,
+		jpg: PackedByteArray = PackedByteArray()) -> void:
+	var m := {"t": "post_comment", "post_id": post_id,
+			"parent_id": parent_id, "text": text}
+	if not jpg.is_empty():
+		m["jpg"] = Marshalls.raw_to_base64(jpg)
+	_send(m)
 
 
 func post_comment_delete(comment_id: String) -> void:
@@ -4612,8 +4651,25 @@ func _auto_social2_process(_cs) -> bool:
 				2:
 					if _s2_thread_pid == _s2_post_id and _s2_thread.size() >= 1:
 						print("MPLOG social2 x comment ok")
-						post_share(_s2_post_id, "wall")
-						_s2_stage = 3
+						# 17h: an image-only comment next —
+						# fixture JPEG re-encoded from a
+						# bundled avatar, like the real
+						# composer's import pipeline makes.
+						var fbytes := FileAccess.get_file_as_bytes(
+								"res://assets/avatars/avatar_art_07.png")
+						var fimg := Image.new()
+						if fimg.load_png_from_buffer(fbytes) == OK:
+							post_comment(_s2_post_id, "", "",
+									fimg.save_jpg_to_buffer(0.85))
+						_s2_stage = 25
+				25:
+					if _s2_thread_pid == _s2_post_id:
+						for c in _s2_thread:
+							if String(c.get("image", "")) != "":
+								print("MPLOG social2 x image-comment ok")
+								post_share(_s2_post_id, "wall")
+								_s2_stage = 3
+								break
 				3:
 					if _s2_shared_ok:
 						print("MPLOG social2 x share ok")
@@ -4696,7 +4752,7 @@ func _auto_social_shot(cs) -> void:
 				_ssh_at = now
 				match mode:
 					"feed", "wall", "album", "greport", "gshare", \
-					"gcomments", "gchooser":
+					"gcomments", "gchooser", "gcommentimg":
 						post_request_feed()
 						post_request_wall()
 						_ssh_stage = 1
@@ -4785,13 +4841,13 @@ func _auto_social_shot(cs) -> void:
 		8: # profile open → select the MXH tab next tick.
 			if cs != null and cs.profile_screen != null:
 				var tab := mode
-				if mode in ["gcomments", "gchooser", "greport"]:
+				if mode in ["gcomments", "gcommentimg", "gchooser", "greport"]:
 					tab = "feed"
 				elif mode == "gshare":
 					tab = "wall"
 				cs.profile_screen.shot_show_mxh(tab)
 			_ssh_at = now
-			if mode in ["gcomments", "gchooser"]:
+			if mode in ["gcomments", "gcommentimg", "gchooser"]:
 				_ssh_stage = 10
 			elif mode == "gshare":
 				_ssh_stage = 12
@@ -4811,7 +4867,7 @@ func _auto_social_shot(cs) -> void:
 					if _ssh_pid == "":
 						_ssh_pid = panel.shot_first_post_id(false)
 					if _ssh_pid != "":
-						if mode == "gcomments":
+						if mode in ["gcomments", "gcommentimg"]:
 							panel.shot_open_comments(_ssh_pid)
 							_ssh_stage = 11
 						else:
@@ -4822,12 +4878,15 @@ func _auto_social_shot(cs) -> void:
 				_ssh_at = now
 				_ssh_stage = 9
 		11: # 17g comments: thread loaded → aim the reply
-			# chip at the first top-level comment.
+			# chip at the first top-level comment. 17h's
+			# gcommentimg skips the chip — the seeded image
+			# comment at the thread's end is the subject.
 			if cs != null and cs.profile_screen != null:
 				var panel = cs.profile_screen.shot_feed_panel()
 				if panel != null and _ssh_pid != "" \
 						and panel.shot_comments_loaded(_ssh_pid):
-					panel.shot_reply_first(_ssh_pid)
+					if mode == "gcomments":
+						panel.shot_reply_first(_ssh_pid)
 					_ssh_at = now
 					_ssh_stage = 12
 			if now - _ssh_at > 9000:
@@ -4839,7 +4898,9 @@ func _auto_social_shot(cs) -> void:
 				var panel2 = cs.profile_screen.shot_wall_panel() \
 						if mode == "gshare" else cs.profile_screen.shot_feed_panel()
 				if panel2 != null:
-					if mode == "gcomments":
+					if mode == "gcommentimg":
+						panel2.shot_show_comments(_ssh_pid)
+					elif mode == "gcomments":
 						panel2.shot_show_post_bottom(_ssh_pid)
 					else:
 						panel2.shot_scroll_bottom()

@@ -24,6 +24,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"sort"
@@ -54,15 +55,19 @@ var (
 // PostComment is one persisted comment on a social post.
 // ParentID is "" for a top-level comment, else the id of a
 // TOP-LEVEL comment of the same post (replies never nest
-// deeper — see the file header).
+// deeper — see the file header). Image (17h) is an optional
+// attached photo: base64 JPEG under the SAME contract as
+// chat photos (ValidateChatImage) — the store persists it
+// with the comment like any other field.
 type PostComment struct {
 	ID       string `json:"id"` // "c" prefix
 	PostID   string `json:"post_id"`
 	ParentID string `json:"parent_id,omitempty"`
 	Author   string `json:"author"` // username
 	Text     string `json:"text"`
-	At       int64  `json:"at"`  // unix seconds
-	Seq      int64  `json:"seq"` // service-monotonic ordering
+	Image    string `json:"image,omitempty"` // base64 JPEG (17h)
+	At       int64  `json:"at"`              // unix seconds
+	Seq      int64  `json:"seq"`             // service-monotonic ordering
 }
 
 // ------------------------------------------------------------ reports
@@ -141,14 +146,26 @@ func (ps *Posts) CommentCount(postID string) int {
 // "" (top level), a top-level comment id, or a REPLY id — a
 // reply parent resolves to its top-level root and the text
 // gains the "@<display name> " mention prefix (unless it is
-// already there).
-func (ps *Posts) AddComment(p *Post, author, parentID, text string) (*PostComment, error) {
+// already there). image (17h) is an optional base64 JPEG
+// validated by the chat-photo gate (ValidateChatImage);
+// an IMAGE-ONLY comment (empty text + valid image) is
+// accepted, exactly like a chat photo line.
+func (ps *Posts) AddComment(p *Post, author, parentID, text, image string) (*PostComment, error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && image == "" {
 		return nil, ErrCommentEmpty
 	}
 	if utf8.RuneCountInString(text) > CommentTextMax {
 		return nil, ErrCommentTooLong
+	}
+	if image != "" {
+		raw, err := base64.StdEncoding.DecodeString(image)
+		if err != nil {
+			return nil, ErrBadChatImage
+		}
+		if err := ValidateChatImage(raw); err != nil {
+			return nil, err
+		}
 	}
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -185,6 +202,7 @@ func (ps *Posts) AddComment(p *Post, author, parentID, text string) (*PostCommen
 		ParentID: rootID,
 		Author:   author,
 		Text:     text,
+		Image:    image,
 		At:       ps.now().Unix(),
 		Seq:      ps.seq,
 	}
@@ -257,13 +275,17 @@ func (ps *Posts) WireComment(c *PostComment, viewer string, canDelete bool) map[
 			tag = ps.acc.AllyTagOf(c.Author)
 		}
 	}
-	return map[string]any{
+	w := map[string]any{
 		"id": c.ID, "post_id": c.PostID, "parent_id": c.ParentID,
 		"author": c.Author, "author_name": name,
 		"avatar_id": avatar, "frame_id": frame, "ally_tag": tag,
 		"text": c.Text, "at": c.At,
 		"mine": c.Author == viewer, "can_delete": canDelete,
 	}
+	if c.Image != "" {
+		w["image"] = c.Image
+	}
+	return w
 }
 
 // WireComments renders a post's whole thread for a viewer.
@@ -423,7 +445,7 @@ func (s *session) handlePostSocial(m clientMsg) {
 			s.sendErr(ErrCommentRate)
 			return
 		}
-		if _, err := ps.AddComment(p, s.user, m.ParentID, m.Text); err != nil {
+		if _, err := ps.AddComment(p, s.user, m.ParentID, m.Text, m.Jpg); err != nil {
 			s.sendErr(err)
 			return
 		}

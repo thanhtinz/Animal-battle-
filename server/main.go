@@ -174,7 +174,9 @@ type clientMsg struct {
 	PostID string `json:"post_id"`
 	Image  string `json:"image"`
 	// Post interactions (17g): post_comment carries the
-	// parent comment in ParentID and the text in Text;
+	// parent comment in ParentID and the text in Text
+	// (17h: plus an optional attached photo in Jpg — the
+	// same field chat_image uses);
 	// post_comment_delete carries the comment in CommentID;
 	// post_share carries the destination in Target
 	// ("wall" | "alliance").

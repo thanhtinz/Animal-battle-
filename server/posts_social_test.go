@@ -8,6 +8,11 @@ package main
 // share of a share).
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"strings"
 	"testing"
 )
@@ -55,19 +60,19 @@ func TestCommentThreadingAndReplyResolution(t *testing.T) {
 		regUser(t, acc, u)
 	}
 	p, _ := ps.Create("CmA", "", "bài có bình luận", "")
-	top, err := ps.AddComment(p, "CmB", "", "Bình luận đầu tiên")
+	top, err := ps.AddComment(p, "CmB", "", "Bình luận đầu tiên", "")
 	if err != nil || top.ParentID != "" || !strings.HasPrefix(top.ID, "c") {
 		t.Fatalf("top comment: %v %+v", err, top)
 	}
 	// A reply to the top-level comment attaches to it,
 	// with NO mention prefix (direct parent).
-	rep, err := ps.AddComment(p, "CmA", top.ID, "Cảm ơn bạn")
+	rep, err := ps.AddComment(p, "CmA", top.ID, "Cảm ơn bạn", "")
 	if err != nil || rep.ParentID != top.ID || rep.Text != "Cảm ơn bạn" {
 		t.Fatalf("reply: %v %+v", err, rep)
 	}
 	// A reply to a REPLY resolves to the same root and the
 	// stored text gains the "@<display name> " prefix.
-	rep2, err := ps.AddComment(p, "CmC", rep.ID, "Mình cũng vậy")
+	rep2, err := ps.AddComment(p, "CmC", rep.ID, "Mình cũng vậy", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,21 +112,21 @@ func TestCommentValidation(t *testing.T) {
 	regUser(t, acc, "ValB")
 	p, _ := ps.Create("ValA", "", "bài kiểm tra", "")
 	other, _ := ps.Create("ValA", "", "bài khác", "")
-	if _, err := ps.AddComment(p, "ValB", "", "   "); err != ErrCommentEmpty {
+	if _, err := ps.AddComment(p, "ValB", "", "   ", ""); err != ErrCommentEmpty {
 		t.Fatalf("empty comment: %v", err)
 	}
-	if _, err := ps.AddComment(p, "ValB", "", strings.Repeat("x", CommentTextMax+1)); err != ErrCommentTooLong {
+	if _, err := ps.AddComment(p, "ValB", "", strings.Repeat("x", CommentTextMax+1), ""); err != ErrCommentTooLong {
 		t.Fatalf("long comment: %v", err)
 	}
-	if _, err := ps.AddComment(p, "ValB", "", strings.Repeat("y", CommentTextMax)); err != nil {
+	if _, err := ps.AddComment(p, "ValB", "", strings.Repeat("y", CommentTextMax), ""); err != nil {
 		t.Fatalf("at-cap comment: %v", err)
 	}
-	if _, err := ps.AddComment(p, "ValB", "c-khong-co", "chào"); err != ErrCommentBadParent {
+	if _, err := ps.AddComment(p, "ValB", "c-khong-co", "chào", ""); err != ErrCommentBadParent {
 		t.Fatalf("unknown parent: %v", err)
 	}
 	// A parent from ANOTHER post is refused.
-	oc, _ := ps.AddComment(other, "ValB", "", "bình luận bài khác")
-	if _, err := ps.AddComment(p, "ValB", oc.ID, "nhầm bài"); err != ErrCommentBadParent {
+	oc, _ := ps.AddComment(other, "ValB", "", "bình luận bài khác", "")
+	if _, err := ps.AddComment(p, "ValB", oc.ID, "nhầm bài", ""); err != ErrCommentBadParent {
 		t.Fatalf("cross-post parent: %v", err)
 	}
 }
@@ -131,11 +136,11 @@ func TestCommentCap(t *testing.T) {
 	regUser(t, acc, "CapA")
 	p, _ := ps.Create("CapA", "", "bài đông khách", "")
 	for i := 0; i < PostCommentCap; i++ {
-		if _, err := ps.AddComment(p, "CapA", "", "c"); err != nil {
+		if _, err := ps.AddComment(p, "CapA", "", "c", ""); err != nil {
 			t.Fatalf("comment %d: %v", i, err)
 		}
 	}
-	if _, err := ps.AddComment(p, "CapA", "", "quá tải"); err != ErrCommentFull {
+	if _, err := ps.AddComment(p, "CapA", "", "quá tải", ""); err != ErrCommentFull {
 		t.Fatalf("past-cap comment: %v", err)
 	}
 	// Deleting the post purges its comments.
@@ -167,7 +172,7 @@ func TestCommentDeletePermissions(t *testing.T) {
 	// Personal post: a stranger may NOT delete a comment;
 	// the comment author and the post author may.
 	p, _ := ps.Create("CdMem", "", "tường nhà", "")
-	cm, _ := ps.AddComment(p, "CdLead", "", "ghé thăm")
+	cm, _ := ps.AddComment(p, "CdLead", "", "ghé thăm", "")
 	if _, err := ps.DeleteComment(cm.ID, "CdStranger", false); err != ErrPostForbidden {
 		t.Fatalf("stranger comment delete: %v", err)
 	}
@@ -176,8 +181,8 @@ func TestCommentDeletePermissions(t *testing.T) {
 	}
 	// Alliance post: a deputy moderates comments.
 	ap, _ := ps.Create("CdMem", al.ID, "bài trong hội", "")
-	ac1, _ := ps.AddComment(ap, "CdLead", "", "lãnh đạo nói")
-	ac2, _ := ps.AddComment(ap, "CdMem", ac1.ID, "thành viên đáp")
+	ac1, _ := ps.AddComment(ap, "CdLead", "", "lãnh đạo nói", "")
+	ac2, _ := ps.AddComment(ap, "CdMem", ac1.ID, "thành viên đáp", "")
 	if _, err := ps.DeleteComment(ac1.ID, "CdDep", true); err != nil {
 		t.Fatalf("deputy comment delete: %v", err)
 	}
@@ -358,5 +363,125 @@ func TestPostSocialWireVisibility(t *testing.T) {
 	c.send(t, map[string]any{"t": "post_comments", "post_id": allyPostID})
 	if e := c.recvUntil(t, "error"); !strings.Contains(e["msg"].(string), "quyền") {
 		t.Fatalf("stranger alliance thread: %v", e)
+	}
+}
+
+// ------------------------------------------------------------ 17h: comment images + emotes
+
+// testCommentJPEG renders a small valid JPEG and returns
+// it base64-encoded (the wire form) plus the raw bytes.
+func testCommentJPEG(t *testing.T, w, h int) (string, []byte) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{uint8(x * 9 % 256), uint8(y * 9 % 256), 128, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), buf.Bytes()
+}
+
+func TestCommentImageRoundTrip(t *testing.T) {
+	ps, acc, _, _ := postsSetup(t)
+	regUser(t, acc, "ImgA")
+	regUser(t, acc, "ImgB")
+	p, _ := ps.Create("ImgA", "", "bài có ảnh bình luận", "")
+	b64, _ := testCommentJPEG(t, 24, 16)
+	c, err := ps.AddComment(p, "ImgB", "", "kèm ảnh nè", b64)
+	if err != nil {
+		t.Fatalf("image comment: %v", err)
+	}
+	if c.Image != b64 {
+		t.Fatalf("stored image = %q..., want the payload", c.Image[:min(16, len(c.Image))])
+	}
+	// The wire row carries the image; a plain comment's
+	// row carries no "image" key at all.
+	rows := ps.WireComments(p, "ImgA", false)
+	if len(rows) != 1 || rows[0]["image"] != b64 {
+		t.Fatalf("wire image: %v", rows)
+	}
+	if _, err := ps.AddComment(p, "ImgA", "", "không ảnh", ""); err != nil {
+		t.Fatal(err)
+	}
+	rows = ps.WireComments(p, "ImgA", false)
+	if _, has := rows[1]["image"]; has {
+		t.Fatalf("plain comment wire leaked an image key: %v", rows[1])
+	}
+	// The image survives a service reload on the same
+	// store (the Posts store persists comments as JSON).
+	ps2 := NewPosts(ps.store, acc)
+	got, ok := ps2.GetComment(c.ID)
+	if !ok || got.Image != b64 {
+		t.Fatalf("persisted image: ok=%v img=%q", ok, got.Image)
+	}
+	if rows2 := ps2.WireComments(p, "ImgA", false); len(rows2) != 2 || rows2[0]["image"] != b64 {
+		t.Fatalf("wire image after reload: %v", rows2)
+	}
+}
+
+func TestCommentImageValidation(t *testing.T) {
+	ps, acc, _, _ := postsSetup(t)
+	regUser(t, acc, "ValImgA")
+	p, _ := ps.Create("ValImgA", "", "bài kiểm ảnh", "")
+	// Not base64 at all.
+	if _, err := ps.AddComment(p, "ValImgA", "", "x", "!!!not-base64!!!"); err != ErrBadChatImage {
+		t.Fatalf("bad base64: %v", err)
+	}
+	// Base64 of non-JPEG bytes.
+	notJPEG := base64.StdEncoding.EncodeToString([]byte("this is not a jpeg"))
+	if _, err := ps.AddComment(p, "ValImgA", "", "x", notJPEG); err != ErrBadChatImage {
+		t.Fatalf("non-jpeg: %v", err)
+	}
+	// A real JPEG past the dimension cap.
+	bigDims, _ := testCommentJPEG(t, ChatImageMaxDim+76, 8)
+	if _, err := ps.AddComment(p, "ValImgA", "", "x", bigDims); err != ErrChatImageDims {
+		t.Fatalf("oversize dims: %v", err)
+	}
+	// A real JPEG padded past the byte cap (the size
+	// check fires before decoding).
+	_, raw := testCommentJPEG(t, 8, 8)
+	padded := make([]byte, 0, ChatImageMaxBytes+1024)
+	padded = append(padded, raw...)
+	padded = append(padded, make([]byte, ChatImageMaxBytes+1024-len(raw))...)
+	bigBytes := base64.StdEncoding.EncodeToString(padded)
+	if _, err := ps.AddComment(p, "ValImgA", "", "x", bigBytes); err != ErrChatImageBig {
+		t.Fatalf("oversize bytes: %v", err)
+	}
+	// None of the rejected attempts stored anything.
+	if got := ps.CommentCount(p.ID); got != 0 {
+		t.Fatalf("rejected comments stored: %d", got)
+	}
+}
+
+func TestCommentImageOnlyAndEmoteSanitize(t *testing.T) {
+	ps, acc, _, _ := postsSetup(t)
+	regUser(t, acc, "OnlyA")
+	p, _ := ps.Create("OnlyA", "", "bài chỉ ảnh", "")
+	b64, _ := testCommentJPEG(t, 16, 16)
+	// Image-only: empty text is fine when a valid image
+	// rides along (chat photo-line semantics).
+	c, err := ps.AddComment(p, "OnlyA", "", "", b64)
+	if err != nil {
+		t.Fatalf("image-only comment: %v", err)
+	}
+	if c.Text != "" || c.Image != b64 {
+		t.Fatalf("image-only stored: %+v", c)
+	}
+	// Empty text with NO image is still refused.
+	if _, err := ps.AddComment(p, "OnlyA", "", "   ", ""); err != ErrCommentEmpty {
+		t.Fatalf("empty both: %v", err)
+	}
+	// Emote tokens run through the chat sanitizer: a
+	// known token survives, an unknown one is stripped.
+	c2, err := ps.AddComment(p, "OnlyA", "", "hay [e:vui] nè [e:khongco]", b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c2.Text, "[e:vui]") || strings.Contains(c2.Text, "khongco") {
+		t.Fatalf("sanitized text = %q", c2.Text)
 	}
 }

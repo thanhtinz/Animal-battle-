@@ -56,6 +56,13 @@ var _cmt_open := {}
 var _cmt_rows := {}
 var _cmt_reply := {} # post_id -> {id, name}
 var _cmt_drafts := {} # post_id -> String
+# 17h: per-post comment-composer extras — a pending photo
+# attachment (JPEG bytes) and the emoticon picker's open
+# state, plus the decoded-texture cache for comment photos
+# (rows rebuild on every render; textures must not).
+var _cmt_attach := {} # post_id -> PackedByteArray
+var _cmt_picker := {} # post_id -> bool
+var _cmt_img_cache := {} # comment id -> Texture2D
 var _share_layer: CanvasLayer = null
 var _share_root: Control = null
 
@@ -668,9 +675,50 @@ func _comment_section(row: Dictionary) -> VBoxContainer:
 			_render())
 		chip.add_child(x)
 		sec.add_child(chip)
+	# Attach chip (17h): a photo is pending for this post's
+	# composer — same chip language as the reply chip, X
+	# clears the attachment.
+	if _cmt_attach.has(pid):
+		var achip := HBoxContainer.new()
+		achip.add_theme_constant_override("separation", 6)
+		var alb := _label("Ảnh đính kèm", 12, Color(0.55, 0.75, 1.0))
+		alb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		achip.add_child(alb)
+		var ax := Button.new()
+		ax.flat = true
+		ax.focus_mode = Control.FOCUS_NONE
+		ax.custom_minimum_size = Vector2(24, 24)
+		_btn_icon(ax, FA_XMARK, 11, Color(1.0, 0.62, 0.55))
+		ax.pressed.connect(func() -> void:
+			_cmt_attach.erase(pid)
+			_render())
+		achip.add_child(ax)
+		sec.add_child(achip)
 	# Composer: one per post, draft kept across rebuilds.
+	# 17h adds the chat composer's two side buttons — the
+	# emoticon picker toggle and the photo attach — in the
+	# same shells the chat hub uses.
 	var comp := HBoxContainer.new()
 	comp.add_theme_constant_override("separation", 8)
+	var pick := TextureButton.new()
+	pick.texture_normal = Emotes.texture("vui")
+	pick.ignore_texture_size = true
+	pick.custom_minimum_size = Vector2(38, 38)
+	pick.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	pick.tooltip_text = "Biểu cảm"
+	pick.pressed.connect(func() -> void:
+		_cmt_picker[pid] = not bool(_cmt_picker.get(pid, false))
+		_render())
+	comp.add_child(pick)
+	var img_btn := _button("", false, 48)
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	img_btn.add_theme_font_override("font", _fa_font)
+	img_btn.add_theme_font_size_override("font_size", 16)
+	img_btn.text = String.chr(FA_IMAGE)
+	img_btn.tooltip_text = "Đính kèm ảnh"
+	img_btn.pressed.connect(func() -> void: _pick_comment_image(pid))
+	comp.add_child(img_btn)
 	var le := LineEdit.new()
 	le.placeholder_text = "Viết bình luận…"
 	le.text = String(_cmt_drafts.get(pid, ""))
@@ -688,17 +736,95 @@ func _comment_section(row: Dictionary) -> VBoxContainer:
 	send.pressed.connect(func() -> void: _send_comment(pid))
 	comp.add_child(send)
 	sec.add_child(comp)
+	# Emoticon picker (17h): the chat hub's grid — tapping
+	# an emote inserts its token at the field's caret.
+	if bool(_cmt_picker.get(pid, false)):
+		var grid := GridContainer.new()
+		grid.columns = 8
+		grid.add_theme_constant_override("h_separation", 6)
+		grid.add_theme_constant_override("v_separation", 6)
+		for eid0 in Emotes.IDS:
+			var tb := TextureButton.new()
+			tb.texture_normal = Emotes.texture(eid0)
+			tb.custom_minimum_size = Vector2(40, 40)
+			tb.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+			tb.tooltip_text = eid0
+			var eid := String(eid0)
+			tb.pressed.connect(func() -> void:
+				le.insert_text_at_caret(Emotes.token_of(eid) + " ")
+				_cmt_drafts[pid] = le.text
+				_cmt_picker[pid] = false
+				_render())
+			grid.add_child(tb)
+		sec.add_child(grid)
 	return sec
 
 
 func _send_comment(pid: String) -> void:
 	var text := String(_cmt_drafts.get(pid, "")).strip_edges()
-	if text == "":
+	var jpg: PackedByteArray = _cmt_attach.get(pid, PackedByteArray())
+	if text == "" and jpg.is_empty():
 		return
 	var parent := String((_cmt_reply.get(pid, {}) as Dictionary).get("id", ""))
 	_cmt_drafts[pid] = ""
 	_cmt_reply.erase(pid)
-	Net.post_comment(pid, parent, text)
+	_cmt_attach.erase(pid)
+	_cmt_picker.erase(pid)
+	Net.post_comment(pid, parent, text, jpg)
+	_render()
+
+
+## Photo attach, picker half (17h): the platform dialog;
+## the import half is _import_comment_image (also the
+## capture fixture entry — the OS picker cannot be driven
+## in the sandbox).
+func _pick_comment_image(pid: String) -> void:
+	var cb := Callable(func(ok: bool, paths: PackedStringArray, _idx: int) -> void:
+		if ok and paths.size() > 0:
+			_import_comment_image(pid, paths[0]))
+	DisplayServer.file_dialog_show("Chọn ảnh đính kèm", "", "", false,
+		DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
+		PackedStringArray(["*.png, *.jpg, *.jpeg ; Ảnh"]), cb)
+
+
+## Imports one photo file as post pid's pending comment
+## attachment: the chat composer's pipeline verbatim —
+## load png/jpg, downscale to a max side of 1024
+## (bilinear), JPEG quality 0.82, one retry at 3/4 size
+## quality 0.78 when over 400KB, honest error past that.
+func _import_comment_image(pid: String, path: String) -> void:
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		_toast("Không đọc được ảnh đã chọn.", true)
+		return
+	var img := Image.new()
+	var err := OK
+	match path.get_extension().to_lower():
+		"png":
+			err = img.load_png_from_buffer(bytes)
+		"jpg", "jpeg":
+			err = img.load_jpg_from_buffer(bytes)
+		_:
+			err = img.load_png_from_buffer(bytes)
+			if err != OK:
+				err = img.load_jpg_from_buffer(bytes)
+	if err != OK or img.is_empty():
+		_toast("Ảnh không hợp lệ.", true)
+		return
+	var mx := maxi(img.get_width(), img.get_height())
+	if mx > 1024:
+		var s := 1024.0 / float(mx)
+		img.resize(int(img.get_width() * s), int(img.get_height() * s),
+			Image.INTERPOLATE_BILINEAR)
+	var jpg := img.save_jpg_to_buffer(0.82)
+	if jpg.size() > 400 * 1024:
+		img.resize(img.get_width() * 3 / 4, img.get_height() * 3 / 4,
+			Image.INTERPOLATE_BILINEAR)
+		jpg = img.save_jpg_to_buffer(0.78)
+	if jpg.size() > 400 * 1024:
+		_toast("Ảnh quá lớn sau khi nén — hãy chọn ảnh nhỏ hơn.", true)
+		return
+	_cmt_attach[pid] = jpg
 	_render()
 
 
@@ -738,7 +864,14 @@ func _comment_item(pid: String, c: Dictionary, is_reply: bool) -> HBoxContainer:
 			12, Color.WHITE))
 	head.add_child(_label(_ago(int(c.get("at", 0))), 11, DIM))
 	col.add_child(head)
-	col.add_child(Emotes.make_rich(String(c.get("text", "")), 13, PAPER))
+	var ctext := String(c.get("text", ""))
+	if ctext != "":
+		col.add_child(Emotes.make_rich(ctext, 13, PAPER))
+	# Attached photo (17h) under the text — the chat line's
+	# image cell at comment scale.
+	var cimg := String(c.get("image", ""))
+	if cimg != "":
+		col.add_child(_comment_image(String(c.get("id", "")), cimg))
 	var acts := HBoxContainer.new()
 	acts.add_theme_constant_override("separation", 12)
 	var cid := String(c.get("id", ""))
@@ -765,6 +898,33 @@ func _comment_item(pid: String, c: Dictionary, is_reply: bool) -> HBoxContainer:
 	col.add_child(acts)
 	hb.add_child(col)
 	return hb
+
+
+## One comment's attached photo (17h): decoded textures
+## are cached by comment id — the rows are rebuilt on
+## every render, the textures must not be. Max 240 wide,
+## height capped at 300, aspect preserved.
+func _comment_image(cid: String, b64: String) -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(10, 10)
+	if not _cmt_img_cache.has(cid):
+		var raw := Marshalls.base64_to_raw(b64)
+		var img := Image.new()
+		if img.load_jpg_from_buffer(raw) == OK:
+			_cmt_img_cache[cid] = ImageTexture.create_from_image(img)
+	if _cmt_img_cache.has(cid):
+		var tex: Texture2D = _cmt_img_cache[cid]
+		var w := 240.0
+		var h := w * float(tex.get_height()) / float(maxi(1, tex.get_width()))
+		h = minf(h, 300.0)
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.custom_minimum_size = Vector2(w, h)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder = tr
+	return holder
 
 
 # ------------------------------------------------------------ share chooser (17g)
@@ -871,6 +1031,31 @@ func shot_reply_first(pid: String) -> void:
 
 func shot_open_share(pid: String) -> void:
 	_open_share_chooser(pid)
+
+
+## Capture seam (17h): attach a fixture photo to a post's
+## comment composer through the REAL import pipeline.
+func shot_attach_comment_image(pid: String, path: String) -> void:
+	_import_comment_image(pid, path)
+
+
+## Capture seam (17h): scrolls so one post's whole
+## COMMENT SECTION is in frame — shot_show_post_bottom's
+## card math shifted up by 60px, so the first comments
+## stay in view instead of sliding above the fold.
+func shot_show_comments(pid: String) -> void:
+	if _scroll == null or _list_box == null:
+		return
+	var rows := _rows()
+	for i in rows.size():
+		if String(rows[i].get("id", "")) == pid:
+			var card := _list_box.get_child(i) as Control
+			if card == null:
+				return
+			var target := int(card.position.y + card.size.y \
+					- _scroll.size.y + 16) - 60
+			_scroll.scroll_vertical = maxi(0, target)
+			return
 
 
 ## Scrolls the post list to the very bottom (captures: an

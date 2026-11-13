@@ -13,6 +13,10 @@
 #                                        its embedded original
 #   empire_age_social17g_chooser_v1.png  the share chooser
 #                                        (no alliance → disabled)
+#   empire_age_social17g_commentimg_v1.png (17h) the thread
+#                                        with an emoticon
+#                                        comment + a comment
+#                                        carrying a photo
 set -u
 GODOT="${GODOT:-$HOME/workspace/tools/godot/Godot_v4.4.1-stable_linux.x86_64}"
 GO="${GO:-$HOME/workspace/tools/goroot/bin/go}"
@@ -29,8 +33,14 @@ trap cleanup EXIT
 
 (cd "$SRV" && "$GO" build -o "$WORK/relay" .) || { echo "FAIL: server build"; exit 1; }
 
-python3 - "$WORK/store.json" <<'EOF'
-import hashlib, json, sys, time
+python3 - "$WORK/store.json" "$ROOT/assets/avatars/avatar_art_07.png" <<'EOF'
+import base64, hashlib, io, json, sys, time
+from PIL import Image
+# 17h: the seeded photo comment's JPEG — a real photo
+# payload (480x270, q85) made from a bundled avatar.
+_buf = io.BytesIO()
+Image.open(sys.argv[2]).convert("RGB").resize((480, 270)).save(_buf, "JPEG", quality=85)
+photo_b64 = base64.b64encode(_buf.getvalue()).decode()
 def pw(password, salt_hex):
     return hashlib.pbkdf2_hmac("sha256", password.encode(),
                                bytes.fromhex(salt_hex), 120000).hex()
@@ -63,6 +73,9 @@ comments = {
     "cseed2": {"id": "cseed2", "post_id": "pseedb1", "parent_id": "cseed1",
      "author": "SocB", "text": "Tối nay 8 giờ mình mở phòng, bạn vào nhé",
      "at": now - 2400, "seq": 11},
+    "cseed3": {"id": "cseed3", "post_id": "pseedb1",
+     "author": "SocB", "text": "Chiến lợi phẩm nè, khoe ảnh luôn [e:vui]",
+     "image": photo_b64, "at": now - 1800, "seq": 12},
 }
 json.dump({"accounts": {
     "SocA": acct("SocA", ["SocB"], 12),
@@ -92,5 +105,6 @@ shot greport   empire_age_social17g_report_v1.png
 shot gcomments empire_age_social17g_comments_v1.png
 shot gshare    empire_age_social17g_share_v1.png
 shot gchooser  empire_age_social17g_chooser_v1.png
+shot gcommentimg empire_age_social17g_commentimg_v1.png
 
 ls -la "$ROOT/shots/"empire_age_social17g_*_v1.png
