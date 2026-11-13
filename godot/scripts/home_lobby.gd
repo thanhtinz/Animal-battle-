@@ -112,17 +112,20 @@ var _hist_page: int = 0
 var _hist_detail: PanelContainer
 var _hist_detail_body: VBoxContainer
 
-# Right rail (13m + follow-ups): a SHORT compact group on
-# the home's right edge — glyph chips row, close-friend
-# portraits, and a "<" arrow chip at the column's bottom
-# (the old "+" chip's slot; the separate mid-height
-# floating arrow was removed on Tín's word) — hugging its
-# content in the upper-right (the banner moved left).
-var _rail_box: VBoxContainer
-var _rail_bg: PanelContainer
-var _rail_close_box: VBoxContainer
-var _rail_arrow: Control
-var _rail_friends_dot: Control
+# Right rail (13m + follow-ups; REFERENCE design since
+# the owner's own reference screenshot — see the rail
+# section comment): a floating two-tab header (Bạn bè /
+# Xếp hạng) over a stack of large square framed
+# portraits with diamond badges, a trophy glyph under
+# the stack and a ghost chevron tab on the right edge.
+# No backing strip, no card. The tabs switch the stack.
+var _rail_tab := "friends" # friends | rank
+var _rail_box: VBoxContainer # cluster root (tabs + stack + trophy)
+var _rail_stack: VBoxContainer # portrait stack, rebuilt per tab
+var _rail_tab_ui: Dictionary = {} # tab -> {btn, glyph, glow, core}
+var _rail_chev: Control # ghost chevron tab on the right edge
+var _rail_lb_rows: Array = [] # cached top-5 "ranked" rows
+var _rail_lb_loaded := false
 
 # Friends panel (17i golden-screen redesign): two cards on
 # the shared PageShell page — a 300px menu card (view rows
@@ -422,6 +425,16 @@ func setup(p_game) -> void:
 			_refill_friends_panel()
 		elif _popup_kind == "friends":
 			_refill_popup())
+	# Rail (reference design): the Xếp hạng tab's stack is
+	# fed by the same "ranked" leaderboard rows the
+	# leaderboard page renders — cache the top 5 here and
+	# re-render the stack while that tab is active.
+	Net.leaderboard_received.connect(func(rows: Array, mode: String, _me: Dictionary) -> void:
+		if mode == "ranked":
+			_rail_lb_rows = rows.slice(0, 5)
+			_rail_lb_loaded = true
+			if _rail_tab == "rank":
+				_rail_render_stack())
 	Net.friend_error.connect(func(msg) -> void:
 		if _fr_root != null and _fr_root.visible and _fr_status != null:
 			_fr_status.text = msg
@@ -622,41 +635,61 @@ class _Disc:
 		draw_arc(c, r - 1.0, 0, TAU, 48, Color(1, 0.85, 0.4, 0.4), 1.0, true)
 
 
-## Rail medallion disc (17i home polish): the seam-free
-## glass disc for the right-rail buttons — slate glass fill
-## in the 17i card colour and a gold ring, drawn with
-## draw_circle/draw_arc like _Disc (a StyleBoxFlat disc
-## shows a centre seam). The dashed variant rings the "+"
-## add chip so it reads as "add" against the solid discs.
-class _RailDisc:
+## Rail diamond badge (reference design): a square
+## rotated 45° — dark slate fill, gold hairline — pinned
+## at a portrait frame's bottom centre. It carries the
+## friend's rank emblem texture (friends tab) or, via a
+## Label child added by the builder, the leaderboard
+## number (rank tab).
+class _RailDiamond:
 	extends Control
-	var dashed := false
+	var tex: Texture2D
 	func _draw() -> void:
-		var c := size * 0.5
-		var r := minf(size.x, size.y) * 0.5
-		draw_circle(c, r - 0.5, Color(0.05, 0.07, 0.13, 0.78))
-		if dashed:
-			var n := 14
-			for i in range(n):
-				draw_arc(c, r - 1.0, TAU * float(i) / n + 0.05,
-						TAU * (float(i) + 0.55) / n, 6,
-						Color(1, 0.85, 0.45, 0.65), 1.5, true)
-		else:
-			draw_arc(c, r - 1.0, 0, TAU, 48,
-					Color(1, 0.85, 0.45, 0.6), 1.5, true)
+		var cx := size.x * 0.5
+		var cy := size.y * 0.5
+		var pts := PackedVector2Array([
+				Vector2(cx, 1.5), Vector2(size.x - 1.5, cy),
+				Vector2(cx, size.y - 1.5), Vector2(1.5, cy)])
+		draw_colored_polygon(pts, Color(0.05, 0.07, 0.13, 0.97))
+		var loop := PackedVector2Array(pts)
+		loop.append(pts[0])
+		draw_polyline(loop, Color(1.0, 0.85, 0.45, 0.85), 1.2, true)
+		if tex != null:
+			var h := 13.0
+			var w := h * RankBadge.EMBLEM_ASPECT
+			draw_texture_rect(tex, Rect2(cx - w * 0.5, cy - h * 0.5, w, h),
+					false)
 
 
-## Presence dot: an 8px coloured core inside a dark
-## separation ring, so it reads on any avatar or sky
-## behind it.
-class _RailDot:
+## The rail's "+" tile frame: a dashed square outline in
+## gold (the GlassIcon plus glyph is a child, added by
+## the builder) — the reference's frame language, not a
+## disc.
+class _RailDashSquare:
 	extends Control
-	var col := Color(0.45, 0.47, 0.55)
 	func _draw() -> void:
-		var c := size * 0.5
-		draw_circle(c, minf(size.x, size.y) * 0.5 - 0.5,
-				Color(0.02, 0.03, 0.06, 0.9))
-		draw_circle(c, 4.0, col)
+		# A whisper of dark fill so the tile reads as a
+		# tile even over bright art (the first build's
+		# dashes alone washed out over the harbour water).
+		draw_rect(Rect2(1, 1, size.x - 2, size.y - 2),
+				Color(0.03, 0.04, 0.08, 0.28))
+		var col := Color(1.0, 0.85, 0.45, 0.85)
+		var inset := 1.0
+		var x0 := inset
+		var y0 := inset
+		var x1 := size.x - inset
+		var y1 := size.y - inset
+		_dash_line(Vector2(x0, y0), Vector2(x1, y0), col)
+		_dash_line(Vector2(x1, y0), Vector2(x1, y1), col)
+		_dash_line(Vector2(x1, y1), Vector2(x0, y1), col)
+		_dash_line(Vector2(x0, y1), Vector2(x0, y0), col)
+
+	func _dash_line(a: Vector2, b: Vector2, col: Color) -> void:
+		var n := 5
+		for i in range(n):
+			var t0 := (float(i) + 0.08) / n
+			var t1 := (float(i) + 0.72) / n
+			draw_line(a.lerp(b, t0), a.lerp(b, t1), col, 2.0, true)
 
 
 func _icon_button(icon_kind: String, tip: String, sz := 48.0, bare := false) -> Dictionary:
@@ -1039,199 +1072,276 @@ func _on_banner_tap() -> void:
 		game.home_open_rooms()
 
 
-## The right-edge RAIL (13m, per Tín's reference; follow-up
-## 2 restyle): a SHORT, COMPACT group hanging in the
-## upper-right where the season banner used to be — it hugs
-## its content and ends well above the rank pill / BẮT ĐẦU
-## (Tín: "chỉ hiện 1 đoạn thôi chứ sao kéo hẳn xuống chạm
-## nút bắt đầu rồi" — the v1 full-height strip and the "+"
-## pinned at the screen bottom were both wrong). Contents,
-## top to bottom: a row of two flat GLYPH icon chips — Bạn
-## bè (people) and BXH (chart), drawn glyphs on dark glass
-## like the rest of the home chrome (Tín: "icon css", not
-## painted art); the CLOSE-FRIENDS mini list ("bạn thân"
-## portraits in square gold frames, online first, max 4 —
-## the stack simply runs down the column); and one chip
-## at the column's bottom. Follow-up 3 (Tín: "cái mũi tên
-## phải đưa kế bên ô đó và là mũi tên trái rồi chỗ đó là
-## avatar mà"): the old in-column ">" chevron was removed —
-## its slot belongs to the portrait stack — and a
-## LEFT-pointing "<" arrow chip sat BESIDE the column,
-## attached to its left edge at mid-height, outside the
-## backing; tapping it opens the friends panel. LATEST
-## (Tín: "bỏ dấu cộng đưa dấu mũi tên vào đó đi"): the
-## bottom chip was a "+" (find-friend) — it is GONE, and
-## the "<" arrow moved INTO that bottom slot; the floating
-## beside-column arrow is removed, leaving exactly one
-## arrow, in the column, opening the friends panel.
-## Later in
-## follow-up 3 the follow-up 2 FEATURED CARD (the player's
-## own character under the chips) was REMOVED again on
-## Tín's word ("Cái lam bào kia là gì vậy xoá đi chỗ bạn
-## bè ấy") — the column is friends-only again.
-## The translucent backing wraps ONLY this group (5px pad).
-## Follow-up 5 (Tín: "Cột đó chiều ngang vẫn bự"): the
-## column is SLIM — it hugs ONE portrait: RAIL_W fits a
-## 56px portrait with 1px to spare, the two top chips
-## shrink to 27px each (27+4+27 = RAIL_W), the bottom
-## arrow chip matches them, and the backing totals RAIL_W + 10 = 68px.
-## 17i polish supersedes the sizes: the strip is a glass
-## card (slate 0.78, radius 16), every chip is a 40px
-## medallion (the top pair centred on the strip's top
-## corners, the "+" dashed), portraits are 40px
-## AvatarFrame chips — RAIL_W itself is unchanged.
-## Guests see the chips and an empty friends segment;
-## every friends tap routes them to the account flow
-## instead.
-const RAIL_W := 58.0
+## The right-edge RAIL — REFERENCE design (owner-sent
+## screenshot B95C2E35…, a vertical friends rail from
+## another game; it superseded both the 17i medallion
+## polish and the short-lived A/B/C variant switch).
+## Anatomy, top to bottom, floating DIRECTLY on the home
+## art — no backing strip, no card, no discs:
+##   * A two-TAB header: Bạn bè (people) and Xếp hạng
+##     (chart) glyphs side by side with a thin vertical
+##     divider between them, over a faint hairline. The
+##     ACTIVE tab's glyph is gold with a short glowing
+##     gold underline; the inactive glyph is flat grey.
+##   * A stack of LARGE SQUARE portraits (68px
+##     AvatarFrame — the friend's granted frame composed
+##     on their avatar, the friends-panel path), each
+##     with a small DIAMOND badge (dark slate + gold
+##     hairline) pinned at the frame's bottom centre,
+##     overlapping its edge.
+##   * A plain gold trophy glyph under the stack (the
+##     tournament entry; the reference has none, ours
+##     keeps the same bare-glyph treatment).
+##   * A ghost chevron tab flush with the screen's right
+##     edge at the stack's vertical middle (its tap keeps
+##     the old "<" behaviour: open the friends panel).
+## The tabs SWITCH the stack: Bạn bè shows the close-
+## friend portraits (max 4) + a square dashed-outline
+## "+" tile; Xếp hạng shows the server leaderboard's
+## TOP 5 (diamond = the rank number in gold), fed by the
+## same "ranked" rows the leaderboard page renders —
+## requested when the tab is selected and refreshed on
+## every rail rebuild while it is active. Tapping a rank
+## portrait (or the active Xếp hạng tab again) opens the
+## full leaderboard page. Default tab on home open: Bạn
+## bè (--mp-rail-tab=rank starts on Xếp hạng, for
+## captures). Guests see the tabs and an empty friends
+## stack; friends taps route them to the account flow.
 
-## One rail medallion button (17i home polish): a 40px
-## _RailDisc with the GlassIcon glyph centred on it. The
-## flat tap button overflows the holder by 2px on every
-## side, so the tap target is 44px while the visible disc
-## stays 40. The rail gets its OWN helper — the shared
-## _icon_button keeps its current rendering for the other
-## surfaces (mail/gear cluster, friends panel header).
-## tint multiplies the glyph: GOLD for the friends/plus
-## glyphs (drawn LIGHT in icons.gd), WHITE where the glyph
-## is already gold (chart, trophy).
-func _rail_disc_button(icon_kind: String, tip: String,
-		tint := Color.WHITE, dashed := false) -> Dictionary:
+## Capture hook: start on the Xếp hạng tab.
+func _rail_initial_tab() -> String:
+	for a in OS.get_cmdline_user_args():
+		if a == "--mp-rail-tab=rank":
+			return "rank"
+	return "friends"
+
+
+## Shared rail destinations.
+func _rail_on_chart() -> void:
+	if game != null:
+		game.home_open_leaderboard()
+
+
+func _rail_on_trophy() -> void:
+	if Net.account_name == "":
+		if game != null:
+			game.home_open_account()
+	elif game != null:
+		game.home_open_tournament()
+
+
+## A bare glyph button: a GlassIcon glyph centred in a
+## small holder with a flat tap button over it — no disc,
+## no backing (the trophy under the stack).
+func _rail_glyph_button(kind: String, tip: String, glyph_px: float,
+		tint := Color.WHITE) -> Dictionary:
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(40, 40)
-	holder.size = Vector2(40, 40)
+	var hp := glyph_px + 10.0
+	holder.custom_minimum_size = Vector2(hp, hp)
+	holder.size = Vector2(hp, hp)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var disc := _RailDisc.new()
-	disc.dashed = dashed
-	disc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	disc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(disc)
-	var isz := 22.5
 	var ic := GlassIcon.new()
-	ic.kind = icon_kind
-	ic.custom_minimum_size = Vector2(isz, isz)
-	ic.size = Vector2(isz, isz)
-	ic.position = Vector2((40.0 - isz) * 0.5, (40.0 - isz) * 0.5)
+	ic.kind = kind
+	ic.custom_minimum_size = Vector2(glyph_px, glyph_px)
+	ic.size = Vector2(glyph_px, glyph_px)
+	ic.position = Vector2((hp - glyph_px) * 0.5, (hp - glyph_px) * 0.5)
 	ic.modulate = tint
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(ic)
 	var btn := Button.new()
 	btn.flat = true
 	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
-	btn.offset_left = -2
-	btn.offset_top = -2
-	btn.offset_right = 2
-	btn.offset_bottom = 2
 	btn.tooltip_text = tip
 	holder.add_child(btn)
 	return {"holder": holder, "btn": btn}
 
-func _build_rail() -> void:
-	_rail_bg = PanelContainer.new()
-	_rail_bg.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_rail_bg.position = Vector2(-(RAIL_W + 10.0), 76)
-	_rail_bg.add_theme_stylebox_override("panel",
-			_sb(Color(0.05, 0.07, 0.13, 0.78), 16, Color(1.0, 0.85, 0.45, 0.28), 1))
-	_rail_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(_rail_bg)
 
-	var rail := VBoxContainer.new()
-	rail.name = "RightRail"
-	rail.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	rail.position = Vector2(-(RAIL_W + 5.0), 81)
-	rail.custom_minimum_size = Vector2(RAIL_W, 0)
-	rail.alignment = BoxContainer.ALIGNMENT_BEGIN
-	rail.add_theme_constant_override("separation", 8)
-	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(rail)
-	_rail_box = rail
+## One header tab: a 26px glyph over a glowing gold
+## underline (a wide faint bar + a bright core), the
+## underline lit only while the tab is active.
+func _rail_tab_button(kind: String, tip: String) -> Dictionary:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(38, 40)
+	holder.size = Vector2(38, 40)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := GlassIcon.new()
+	ic.kind = kind
+	ic.custom_minimum_size = Vector2(26, 26)
+	ic.size = Vector2(26, 26)
+	ic.position = Vector2(6, 3)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(ic)
+	var glow := ColorRect.new()
+	glow.color = Color(1.0, 0.78, 0.30, 0.35)
+	glow.position = Vector2(1, 35)
+	glow.size = Vector2(36, 3)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(glow)
+	var core := ColorRect.new()
+	core.color = Color(1.0, 0.82, 0.35)
+	core.position = Vector2(5, 35)
+	core.size = Vector2(28, 3)
+	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(core)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.tooltip_text = tip
+	holder.add_child(btn)
+	return {"holder": holder, "btn": btn, "glyph": ic,
+			"glow": glow, "core": core}
 
-	# The top pair (owner reference rail 2026-11-12, polish
-	# 17i): the pair sits OUTSIDE the vertical strip,
-	# straddling its top edge — since 17i each glyph rides
-	# in a 40px glass medallion centred on one of the
-	# strip's top corners (friends over the left corner,
-	# chart over the right), so the pair reads as anchored
-	# to the strip instead of floating bare on the sky.
-	# The row's right edge is flush with the screen edge,
-	# its y is the placement that cleared the ping row.
-	var top := HBoxContainer.new()
-	top.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	top.position = Vector2(-88.0, 58)
-	top.custom_minimum_size = Vector2(88, 40)
-	top.alignment = BoxContainer.ALIGNMENT_CENTER
-	top.add_theme_constant_override("separation", 8)
-	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(top)
-	var friends_btn := _rail_disc_button("friends", "Bạn bè",
-			Color(1.0, 0.8, 0.35))
-	friends_btn["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
-	top.add_child(friends_btn["holder"])
-	# Presence dot on the friends medallion: lit while any
-	# close friend is online (set in _rebuild_rail).
-	_rail_friends_dot = _RailDot.new()
-	_rail_friends_dot.col = Color(0.35, 0.9, 0.45)
-	_rail_friends_dot.size = Vector2(11, 11)
-	_rail_friends_dot.position = Vector2(30, 30)
-	_rail_friends_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_rail_friends_dot.visible = false
-	friends_btn["holder"].add_child(_rail_friends_dot)
-	var chart_btn := _rail_disc_button("chart", "Bảng xếp hạng")
-	chart_btn["btn"].pressed.connect(func() -> void:
-		if game != null:
-			game.home_open_leaderboard())
-	top.add_child(chart_btn["holder"])
-	# 15h: tournament entry — the trophy chip sits on its own
-	# row under the BXH / Bạn bè pair (the mode panel is
-	# full, and the rail is where the other meta screens
-	# live). Guests route to the account flow like the
-	# friends chip does.
-	var trophy_btn := _rail_disc_button("trophy", "Giải đấu")
-	trophy_btn["btn"].pressed.connect(func() -> void:
-		if Net.account_name == "":
-			if game != null:
-				game.home_open_account()
-		elif game != null:
-			game.home_open_tournament())
-	# Breathing room under the top pair: the pair's 40px
-	# medallions end at y=98 while the strip's content
-	# starts at y=81 — without this spacer the trophy
-	# medallion (also 40px) would overlap the pair's lower
-	# rims and swallow the friends presence dot.
-	var rail_spacer := Control.new()
-	rail_spacer.custom_minimum_size = Vector2(1, 10)
-	rail_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rail.add_child(rail_spacer)
-	rail.add_child(_rail_centered(trophy_btn["holder"]))
 
-	_rail_close_box = VBoxContainer.new()
-	_rail_close_box.add_theme_constant_override("separation", 8)
-	_rail_close_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rail.add_child(_rail_close_box)
+## Active tab = gold glyph + lit underline; inactive =
+## flat grey, no underline. (The friends glyph is drawn
+## light, so gold/grey are tints; the chart glyph is
+## drawn gold, so active = as-drawn and inactive = a
+## grey multiply.)
+func _rail_paint_tabs() -> void:
+	for tab in _rail_tab_ui:
+		var d: Dictionary = _rail_tab_ui[tab]
+		var active: bool = tab == _rail_tab
+		if tab == "friends":
+			d["glyph"].modulate = Color(1.0, 0.80, 0.35) if active \
+					else Color(0.78, 0.80, 0.86)
+		else:
+			d["glyph"].modulate = Color.WHITE if active \
+					else Color(0.55, 0.57, 0.64)
+		d["glow"].visible = active
+		d["core"].visible = active
 
-	# Tín's latest word on the column's bottom slot: the "+"
-	# chip is GONE — the "<" arrow lives there now (it used to
-	# float beside the column at mid-height; that separate
-	# chip is removed, so there is exactly ONE arrow, in the
-	# column, where "+" used to be). Same medallion family as
-	# the top pair (17i); tapping it opens the friends panel.
-	var arr := _rail_disc_button("chev_left", "Mở danh sách bạn bè")
-	arr["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
-	_rail_arrow = arr["holder"]
-	rail.add_child(_rail_centered(_rail_arrow))
+
+func _rail_set_tab(tab: String) -> void:
+	if tab == _rail_tab:
+		# A second tap on the active Xếp hạng tab opens
+		# the full leaderboard page.
+		if tab == "rank":
+			_rail_on_chart()
+		return
+	_rail_tab = tab
+	_rail_paint_tabs()
 	_rebuild_rail()
 
 
-## Shrink-wrap the rail group: the VBox and its backing hug
-## the content height exactly (no full-height strip), so
-## the group ends wherever its last element ends.
+func _build_rail() -> void:
+	_rail_tab = _rail_initial_tab()
+	var root := VBoxContainer.new()
+	root.name = "RightRail"
+	root.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	root.offset_left = -96
+	root.offset_right = -10
+	root.offset_top = 58
+	root.custom_minimum_size = Vector2(86, 0)
+	root.add_theme_constant_override("separation", 10)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(root)
+	_rail_box = root
+
+	# Header: the tab pair + divider inside a holder that
+	# also carries the faint hairline under the row.
+	var hdr := Control.new()
+	hdr.custom_minimum_size = Vector2(86, 41)
+	hdr.size = Vector2(86, 41)
+	hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(hdr)
+	var hrow := HBoxContainer.new()
+	hrow.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hrow.alignment = BoxContainer.ALIGNMENT_CENTER
+	hrow.add_theme_constant_override("separation", 4)
+	hrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr.add_child(hrow)
+	var fb := _rail_tab_button("friends", "Bạn bè")
+	fb["btn"].pressed.connect(func() -> void: _rail_set_tab("friends"))
+	_rail_tab_ui["friends"] = fb
+	hrow.add_child(fb["holder"])
+	var dv := ColorRect.new()
+	dv.color = Color(1, 1, 1, 0.30)
+	dv.custom_minimum_size = Vector2(1, 22)
+	dv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hrow.add_child(dv)
+	var cb := _rail_tab_button("chart", "Bảng xếp hạng")
+	cb["btn"].pressed.connect(func() -> void: _rail_set_tab("rank"))
+	_rail_tab_ui["rank"] = cb
+	hrow.add_child(cb["holder"])
+	var hair := ColorRect.new()
+	hair.color = Color(1, 1, 1, 0.12)
+	hair.position = Vector2(0, 40)
+	hair.size = Vector2(86, 1)
+	hair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr.add_child(hair)
+
+	_rail_stack = VBoxContainer.new()
+	_rail_stack.add_theme_constant_override("separation", 0)
+	_rail_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_rail_stack)
+
+	var tr := _rail_glyph_button("trophy", "Giải đấu", 20)
+	tr["btn"].pressed.connect(_rail_on_trophy)
+	root.add_child(_rail_centered(tr["holder"]))
+
+	_rail_chev = _rail_chev_tab()
+	_root.add_child(_rail_chev)
+	_rail_paint_tabs()
+	_rebuild_rail()
+
+
+## The ghost chevron tab on the screen's right edge
+## (the reference's white diamond-tab, in our ghost
+## treatment): a 14×40 slate tab, rounded on its left
+## side only, with a small chevron glyph. Its tap keeps
+## the old "<" behaviour — open the friends panel. Its
+## height is set by _fit_rail (the stack's middle).
+func _rail_chev_tab() -> Control:
+	var holder := Control.new()
+	holder.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	holder.offset_left = -14
+	holder.offset_right = 0
+	holder.offset_top = 300
+	holder.offset_bottom = 340
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := PanelContainer.new()
+	var sb := _sb(Color(0.05, 0.07, 0.13, 0.45), 8)
+	sb.corner_radius_top_right = 0
+	sb.corner_radius_bottom_right = 0
+	sb.content_margin_left = 0
+	sb.content_margin_right = 0
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 0
+	bg.add_theme_stylebox_override("panel", sb)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(bg)
+	var ic := GlassIcon.new()
+	ic.kind = "chev_left"
+	ic.custom_minimum_size = Vector2(10, 10)
+	ic.size = Vector2(10, 10)
+	ic.position = Vector2(2, 15)
+	ic.modulate = Color(0.90, 0.92, 0.96, 0.85)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(ic)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.tooltip_text = "Mở danh sách bạn bè"
+	btn.pressed.connect(func() -> void: _rail_open_friends("all"))
+	holder.add_child(btn)
+	return holder
+
+
+## Fit the cluster root to its content and centre the
+## chevron tab on the stack's vertical middle.
 func _fit_rail() -> void:
 	if _rail_box == null:
 		return
-	var h := _rail_box.get_combined_minimum_size().y
-	_rail_box.size = Vector2(RAIL_W, h)
-	if _rail_bg != null:
-		_rail_bg.size = Vector2(RAIL_W + 10.0, h + 10.0)
+	_rail_box.offset_bottom = _rail_box.offset_top \
+			+ _rail_box.get_combined_minimum_size().y
+	if _rail_chev != null and _rail_stack != null:
+		var stack_top := 58.0 + 41.0 + 10.0
+		var mid := stack_top \
+				+ _rail_stack.get_combined_minimum_size().y * 0.5
+		_rail_chev.offset_top = mid - 20.0
+		_rail_chev.offset_bottom = mid + 20.0
 
 
 func _rail_centered(child: Control) -> CenterContainer:
@@ -1252,82 +1362,183 @@ func _rail_open_friends(tab: String) -> void:
 	open_friends_panel(tab)
 
 
-## (Re)build the rail's close-friend portraits from the
-## cached friends rows: flagged "bạn thân" only, online
-## first (then most-recently-seen), at most 4. Portraits
-## are 40px AvatarFrame chips (avatar + granted frame,
-## as in the friends panel) with a presence dot at the
-## bottom-right (green online, grey offline); a tap opens
-## the friends panel on the Bạn bè tab.
-func _rebuild_rail() -> void:
-	if _rail_close_box == null:
-		return
-	for c in _rail_close_box.get_children():
-		_rail_close_box.remove_child(c)
-		c.queue_free()
-	if Net.account_name == "":
-		if _rail_friends_dot != null:
-			_rail_friends_dot.visible = false
-		_fit_rail()
-		return
-	var close_rows: Array = []
+## The close-friend rows behind the friends tab: flagged
+## "bạn thân" only, online first (then most-recently-
+## seen), uncapped — the stack slices what it shows.
+func _rail_close_all() -> Array:
+	var rows: Array = []
 	for r in Net.friends_rows:
 		if bool(r.get("close", false)):
-			close_rows.append(r)
-	close_rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			rows.append(r)
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var ao := bool(a.get("online", false))
 		var bo := bool(b.get("online", false))
 		if ao != bo:
 			return ao
 		return int(a.get("last_online", 0)) > int(b.get("last_online", 0)))
-	for i in range(mini(4, close_rows.size())):
-		var r: Dictionary = close_rows[i]
-		var cell := CenterContainer.new()
-		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell.add_child(_rail_portrait(r))
-		_rail_close_box.add_child(cell)
-	# Friends medallion presence dot: lit while any close
-	# friend is online.
-	if _rail_friends_dot != null:
-		_rail_friends_dot.visible = close_rows.any(
-				func(r: Dictionary) -> bool: return bool(r.get("online", false)))
-	# Owner order 2026-11-12 (his reference rail): while a
-	# friend slot is still free, the "+" add chip closes
-	# the friend column — with no close friends at all it
-	# is the only thing above the arrow. Since 17i the chip
-	# is a dashed-ring medallion so it reads as "add".
-	if close_rows.size() < 4:
-		var plus := _rail_disc_button("plus", "Thêm bạn",
-				Color(1.0, 0.8, 0.35), true)
-		plus["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
-		_rail_close_box.add_child(_rail_centered(plus["holder"]))
+	return rows
+
+
+## Rebuild entry (data refreshes, tab switches): while
+## the Xếp hạng tab is active every rebuild also refreshes
+## the leaderboard rows; the render itself is shared with
+## the leaderboard_received handler.
+func _rebuild_rail() -> void:
+	if _rail_stack == null:
+		return
+	if _rail_tab == "rank":
+		Net.request_leaderboard("ranked")
+	_rail_render_stack()
+
+
+func _rail_render_stack() -> void:
+	if _rail_stack == null:
+		return
+	for c in _rail_stack.get_children():
+		_rail_stack.remove_child(c)
+		c.queue_free()
+	if _rail_tab == "rank":
+		_rail_render_rank()
+	else:
+		_rail_render_friends()
 	_fit_rail()
 
 
-func _rail_portrait(r: Dictionary) -> Control:
+## Friends tab: close-friend portraits (max 4), then the
+## "+" tile while a close-friend slot is free.
+func _rail_render_friends() -> void:
+	if Net.account_name == "":
+		return
+	var all := _rail_close_all()
+	for i in range(mini(4, all.size())):
+		var r: Dictionary = all[i]
+		var p := _rail_big_portrait(
+				String(r.get("avatar_id", "")),
+				String(r.get("user", "")),
+				String(r.get("frame_id", "")),
+				int(r.get("rank_tier", 0)),
+				bool(r.get("emperor", false)), -1,
+				String(r.get("display_name", String(r.get("user", "")))))
+		p["btn"].pressed.connect(
+				func() -> void: _rail_open_friends("all"))
+		_rail_stack.add_child(_rail_centered(p["holder"]))
+	if all.size() < 4:
+		var plus := _rail_plus_tile()
+		plus["btn"].pressed.connect(
+				func() -> void: _rail_open_friends("all"))
+		_rail_stack.add_child(_rail_centered(plus["holder"]))
+
+
+## Rank tab: the leaderboard's top 5 — same framed
+## portraits, the diamond carrying the rank number.
+## While the first fetch is in flight, a single muted
+## "Đang tải…" tile stands in; a loaded-but-empty board
+## shows no tile at all.
+func _rail_render_rank() -> void:
+	if _rail_lb_rows.is_empty():
+		if not _rail_lb_loaded:
+			_rail_stack.add_child(_rail_centered(_rail_loading_tile()))
+		return
+	for i in range(mini(5, _rail_lb_rows.size())):
+		var r: Dictionary = _rail_lb_rows[i]
+		var p := _rail_big_portrait(
+				String(r.get("avatar_id", "")),
+				String(r.get("user", "")),
+				String(r.get("frame_id", "")),
+				0, false, i + 1,
+				String(r.get("display_name", String(r.get("user", "")))))
+		p["btn"].pressed.connect(_rail_on_chart)
+		_rail_stack.add_child(_rail_centered(p["holder"]))
+
+
+## One big square rail portrait: a 68px AvatarFrame (the
+## granted frame composed on the avatar, the friends-
+## panel path) with a 20px diamond badge pinned at the
+## frame's bottom centre — its centre sits exactly on
+## the frame's bottom edge. num >= 0 draws the rank
+## number in gold instead of the emblem.
+func _rail_big_portrait(avatar_id: String, user: String, frame_id: String,
+		tier: int, emperor: bool, num: int, tip: String) -> Dictionary:
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(40, 40)
-	holder.size = Vector2(40, 40)
+	holder.custom_minimum_size = Vector2(68, 78)
+	holder.size = Vector2(68, 78)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var av := AvatarFrame.new()
-	av.custom_minimum_size = Vector2(40, 40)
-	av.size = Vector2(40, 40)
-	av.set_content(Avatars.texture_for_user(String(r.get("avatar_id", "")),
-			String(r.get("user", ""))), String(r.get("frame_id", "")), false)
+	av.custom_minimum_size = Vector2(68, 68)
+	av.size = Vector2(68, 68)
+	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av.set_content(Avatars.texture_for_user(avatar_id, user),
+			frame_id, false)
 	holder.add_child(av)
-	var dot := _RailDot.new()
-	dot.col = Color(0.35, 0.9, 0.45) if bool(r.get("online", false)) \
-			else Color(0.45, 0.47, 0.55)
-	dot.size = Vector2(11, 11)
-	dot.position = Vector2(28, 28)
-	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(dot)
+	var dia := _RailDiamond.new()
+	if num < 0:
+		dia.tex = RankBadge.emblem_texture(tier, emperor)
+	dia.custom_minimum_size = Vector2(20, 20)
+	dia.size = Vector2(20, 20)
+	dia.position = Vector2(24, 58)
+	dia.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(dia)
+	if num >= 0:
+		var nl := _label(str(num), 11, Color(1.0, 0.85, 0.45))
+		nl.set_anchors_preset(Control.PRESET_FULL_RECT)
+		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dia.add_child(nl)
 	var tap := Button.new()
 	tap.flat = true
 	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
-	tap.tooltip_text = String(r.get("display_name", String(r.get("user", ""))))
-	tap.pressed.connect(func() -> void: _rail_open_friends("all"))
+	tap.tooltip_text = tip
 	holder.add_child(tap)
+	return {"holder": holder, "btn": tap}
+
+
+## The "+" entry at the friends stack's end: a square
+## dashed-outline tile with a gold plus, the portraits'
+## own size and frame language.
+func _rail_plus_tile() -> Dictionary:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(68, 68)
+	holder.size = Vector2(68, 68)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sq := _RailDashSquare.new()
+	sq.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sq.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(sq)
+	var ic := GlassIcon.new()
+	ic.kind = "plus"
+	ic.custom_minimum_size = Vector2(22, 22)
+	ic.size = Vector2(22, 22)
+	ic.position = Vector2(23, 23)
+	ic.modulate = Color(1.0, 0.8, 0.35)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(ic)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.tooltip_text = "Thêm bạn"
+	holder.add_child(btn)
+	return {"holder": holder, "btn": btn}
+
+
+## The rank tab's loading stand-in: one muted slate tile.
+func _rail_loading_tile() -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(68, 68)
+	holder.size = Vector2(68, 68)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := PanelContainer.new()
+	bg.add_theme_stylebox_override("panel",
+			_sb(Color(0.05, 0.07, 0.13, 0.5), 10))
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(bg)
+	var l := _label("Đang tải…", 10, Color(0.62, 0.66, 0.75))
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(l)
 	return holder
 
 
