@@ -3312,6 +3312,12 @@ func home_open_war_board() -> void:
 	war_board_screen.open()
 
 
+## Capture-harness entry: home + the war board on top.
+func open_war_board_shot() -> void:
+	show_home()
+	home_open_war_board()
+
+
 ## Capture-harness entry: open the tournament screen on the
 ## list view or on the current detail (the driver's).
 func open_tournament_shot(mode: String) -> void:
