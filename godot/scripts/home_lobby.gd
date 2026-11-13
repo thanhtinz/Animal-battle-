@@ -123,25 +123,35 @@ var _rail_bg: PanelContainer
 var _rail_close_box: VBoxContainer
 var _rail_arrow: Control
 
-# Friends panel (13m redesign, full-screen like Lịch Sử):
-# left menu Bạn bè / Bạn thân / Tìm bạn, framed-avatar rows
-# with Lv badge, Online / last-seen status, heart (bạn thân)
-# and trash glyph actions.
+# Friends panel (17i golden-screen redesign): two cards on
+# the shared PageShell page — a 300px menu card (view rows
+# with FA icons + counts, an "Đang online" block, the
+# add-friend block at the bottom) and a list card (view
+# header, framed row cards with Nhắn tin / bạn thân / Xoá
+# actions, centred empty states). See _build_friends_panel.
 var _fr_root: Control
 var _fr_tab: String = "all" # all | close | find
 var _fr_list: VBoxContainer
 var _fr_scroll: ScrollContainer
-var _fr_find_box: VBoxContainer
+var _fr_find_box: Control
 var _fr_find_edit: LineEdit
 var _fr_status: Label
-var _fr_search_edit: LineEdit
-var _fr_menu: Dictionary = {} # tab -> Button
+var _fr_menu: Dictionary = {} # tab -> {btn, icon, text, count}
 var _fr_content: HBoxContainer
-var _fr_guest_box: VBoxContainer
+var _fr_guest_box: Control
 var _fr_confirm: Control
 var _fr_confirm_text: Label
 var _fr_pending_remove: String = ""
 var _fr_last_add: String = ""
+var _fr_online_box: VBoxContainer
+var _fr_add_block: VBoxContainer
+var _fr_add_edit: LineEdit
+var _fr_view_title: Label
+var _fr_view_count: Label
+var _fr_hdr_find: HBoxContainer
+var _fr_empty_box: Control
+var _fr_empty_inner: VBoxContainer
+var _fr_fa_font: Font
 
 const HIST_BIOMES := {"grassland": "Đồng cỏ", "desert": "Sa mạc", "snow": "Tuyết"}
 const HIST_LAYOUTS := {"plains": "Đồng bằng", "hills": "Đồi núi", "lakes": "Sông hồ",
@@ -2086,23 +2096,214 @@ func open_history_for_shot() -> void:
 	_open_history_panel()
 
 
-# ------------------------------------------------------------ friends panel (13m)
-## The redesigned Bạn bè screen (Tín's Liên Quân reference):
-## the shared info-page shell (PageShell, 13q — same solid
-## navy background and back-pill + title header as Hồ sơ /
-## Bảng xếp hạng), a Tìm bạn box at the header's right end, a left
-## menu (Bạn bè / Bạn thân / Tìm bạn) and rows with a gold-
-## framed avatar portrait, an Lv badge, the name, an Online /
-## last-seen status line and two flat glyph actions — heart
-## (bạn thân toggle) and trash (remove, with confirm). All
-## chrome icons are the game's drawn glyph set (Tín: "icon
-## css"), never painted art. Deliberately NO chat icon: the
-## mail system is server-to-player only, so there is no
-## player-to-player channel to open. No gift/coin icons
-## either — those systems do not exist.
+# ------------------------------------------------------------ friends panel (17i)
+## The Bạn bè screen, golden-screen redesign (17i — the
+## direction the Bảng xếp hạng redo follows once Tín
+## approves this screen): the shared info-page shell
+## (PageShell, 13q — solid navy board, back pill + title
+## header, and NOTHING hung off the header any more) over
+## TWO cards in the alliance-screen dialect (dark slate,
+## 1px line, radius 12):
+##   LEFT (300px): the three view rows (FA icon + label +
+##   count; the active row is gold with dark text), an
+##   "ĐANG ONLINE" block (up to 5 compact presence rows),
+##   and — pinned at the bottom — the add-friend block
+##   (account-name field + gold Thêm bạn + the status line
+##   every friend op reports into).
+##   RIGHT (expand): a view header (gold title + muted
+##   count; on Tìm bạn it also carries the search field +
+##   Tìm button the page header used to hold), then one
+##   body surface: framed ROW CARDS (avatar frame, rank
+##   emblem, name + [TAG] + Lv pill, rank line; presence
+##   and Nhắn tin / bạn thân / Xoá actions at the right),
+##   or a CENTRED empty state (big muted FA icon + one
+##   line + a "Tìm bạn ngay" button on the Bạn bè view),
+##   or the guest prompt, centred.
+## All wiring is the 13m behaviour preserved: the rail
+## entry points, Net.friends_rows refills, add / remove /
+## close ops, the remove confirm, a successful find-tab
+## add landing on the list. Icons are Font Awesome
+## glyphs from the vendored font; no emoji anywhere.
 
 const FR_ONLINE := Color(0.45, 0.95, 0.55)
 const FR_MUTED := Color(0.62, 0.66, 0.75)
+# The alliance-screen card dialect (alliance_screen.gd's
+# CARD_BG / PANEL_LINE / FIELD_BG / BTN_BG), copied so
+# the two screens read as one family.
+const FR_CARD_BG := Color(0.05, 0.07, 0.13)
+const FR_CARD_LINE := Color(0.30, 0.34, 0.46)
+const FR_FIELD_BG := Color(0.04, 0.05, 0.10)
+const FR_BTN_BG := Color(0.13, 0.16, 0.24)
+const FR_RED := Color(0.98, 0.5, 0.45)
+const FR_FA_PATH := "res://assets/fonts/fa-solid-900.ttf"
+const FR_FA_GROUP := 0xF0C0 # user-group
+const FR_FA_HEART := 0xF004 # heart
+const FR_FA_FIND := 0xF002 # magnifying-glass
+
+
+## One Font Awesome glyph as a label (the chat hub /
+## alliance pattern: vendored fa-solid font + chr()).
+func _fr_fa(cp: int, px: int, col: Color) -> Label:
+	if _fr_fa_font == null:
+		_fr_fa_font = load(FR_FA_PATH)
+	var l := Label.new()
+	l.text = String.chr(cp)
+	l.add_theme_font_override("font", _fr_fa_font)
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## Button stylebox, 17c calibration: EXPLICIT content
+## margins (L/R 10, T 0, B 2) — a code-built StyleBoxFlat
+## otherwise falls back to its border width as the
+## margin, so bordered and borderless states lay text
+## out in different boxes; and the font's ink rides
+## ~1px low in its line box, hence 0/2 instead of 1/1.
+func _fr_btn_sb(bg: Color, radius: int, border: Color = Color(0, 0, 0, 0), bw: int = 0) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_corner_radius_all(radius)
+	if bw > 0:
+		s.border_color = border
+		s.set_border_width_all(bw)
+	s.content_margin_left = 10
+	s.content_margin_right = 10
+	s.content_margin_top = 0
+	s.content_margin_bottom = 2
+	return s
+
+
+## A text button in the alliance dialect: gold primary,
+## slate plain, slate-with-red danger.
+func _fr_button(text: String, kind: String, min_w: float, h: float, fsize: int = 14) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(min_w, h)
+	b.add_theme_font_size_override("font_size", fsize)
+	match kind:
+		"gold":
+			b.add_theme_stylebox_override("normal", _fr_btn_sb(GOLD, 8))
+			b.add_theme_stylebox_override("hover", _fr_btn_sb(Color(1.0, 0.86, 0.45), 8))
+			b.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(0.88, 0.7, 0.28), 8))
+			b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
+			b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
+			b.add_theme_color_override("font_pressed_color", Color(0.1, 0.08, 0.02))
+		"danger":
+			b.add_theme_stylebox_override("normal", _fr_btn_sb(FR_BTN_BG, 8, Color(0.98, 0.5, 0.45, 0.55), 1))
+			b.add_theme_stylebox_override("hover", _fr_btn_sb(Color(0.2, 0.2, 0.3), 8, Color(0.98, 0.5, 0.45, 0.8), 1))
+			b.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(0.1, 0.12, 0.2), 8, Color(0.98, 0.5, 0.45, 0.55), 1))
+			b.add_theme_color_override("font_color", FR_RED)
+			b.add_theme_color_override("font_hover_color", FR_RED)
+			b.add_theme_color_override("font_pressed_color", FR_RED)
+		_:
+			b.add_theme_stylebox_override("normal", _fr_btn_sb(FR_BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+			b.add_theme_stylebox_override("hover", _fr_btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
+			b.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
+			b.add_theme_color_override("font_color", PAPER)
+			b.add_theme_color_override("font_hover_color", PAPER)
+			b.add_theme_color_override("font_pressed_color", PAPER)
+	return b
+
+
+## A card in the alliance dialect: slate fill, 1px line,
+## radius 12, a uniform 14px content padding.
+func _fr_card() -> PanelContainer:
+	var p := PanelContainer.new()
+	var s := StyleBoxFlat.new()
+	s.bg_color = FR_CARD_BG
+	s.set_corner_radius_all(12)
+	s.border_color = FR_CARD_LINE
+	s.set_border_width_all(1)
+	s.content_margin_left = 14
+	s.content_margin_right = 14
+	s.content_margin_top = 14
+	s.content_margin_bottom = 14
+	p.add_theme_stylebox_override("panel", s)
+	return p
+
+
+## Field styling with REAL text padding (L/R 12 — with
+## content margins unset, Godot falls back to the border
+## width and text renders flush against the frame).
+func _fr_field(edit: LineEdit, min_h: float) -> void:
+	edit.custom_minimum_size = Vector2(0, min_h)
+	edit.add_theme_font_size_override("font_size", 16)
+	for st in ["normal", "focus"]:
+		var s := StyleBoxFlat.new()
+		s.bg_color = FR_FIELD_BG
+		s.set_corner_radius_all(8)
+		s.border_color = Color(1, 0.85, 0.4, 0.55) if st == "focus" else Color(1, 1, 1, 0.14)
+		s.set_border_width_all(1)
+		s.content_margin_left = 12
+		s.content_margin_right = 12
+		s.content_margin_top = 6
+		s.content_margin_bottom = 6
+		edit.add_theme_stylebox_override(st, s)
+	edit.add_theme_color_override("font_color", PAPER)
+	edit.add_theme_color_override("font_placeholder_color", Color(0.55, 0.58, 0.68))
+
+
+## A hairline divider between card blocks.
+func _fr_divider() -> PanelContainer:
+	var d := PanelContainer.new()
+	d.custom_minimum_size = Vector2(0, 1)
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(1, 1, 1, 0.10)
+	d.add_theme_stylebox_override("panel", s)
+	d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return d
+
+
+## A true 8×8 presence dot (hand-built stylebox: the
+## shared _sb pads content margins 10/6, which would
+## inflate the dot's minimum size well past 8px).
+func _fr_dot(col: Color) -> PanelContainer:
+	var d := PanelContainer.new()
+	d.custom_minimum_size = Vector2(8, 8)
+	d.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var s := StyleBoxFlat.new()
+	s.bg_color = col
+	s.set_corner_radius_all(4)
+	d.add_theme_stylebox_override("panel", s)
+	d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return d
+
+
+## One left-card view row: FA icon + label + count on a
+## full-width 46px button (the alliance _icon_btn
+## pattern: the HBox child is mouse-transparent and
+## anchored full — a Button never measures its children,
+## so the height is the button's explicit minimum and
+## the row's inner padding is the HBox's own offsets).
+## Active / inactive colours land in _refill_friends_panel.
+func _fr_menu_row(tab: String, cp: int, text: String) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 46)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 10)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hb.offset_left = 12
+	hb.offset_right = -12
+	var icon := _fr_fa(cp, 17, GOLD_LIGHT)
+	icon.custom_minimum_size = Vector2(30, 0)
+	hb.add_child(icon)
+	var tl := _label(text, 16, PAPER)
+	tl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(tl)
+	var cnt := _label("", 14, FR_MUTED)
+	cnt.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hb.add_child(cnt)
+	b.add_child(hb)
+	b.pressed.connect(func() -> void: _fr_set_tab(tab))
+	_fr_menu[tab] = {"btn": b, "icon": icon, "text": tl, "count": cnt}
+	return b
 
 
 func _build_friends_panel() -> void:
@@ -2124,8 +2325,8 @@ func _build_friends_panel() -> void:
 	_fr_root.add_child(dim)
 	var board := PanelContainer.new()
 	board.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Full-bleed (Tín, 13m follow-up): the board covers the
-	# ENTIRE viewport edge-to-edge — opaque navy, square
+	# Full-bleed (13m): the board covers the ENTIRE
+	# viewport edge-to-edge — opaque navy, square
 	# corners, no home art margin around it. The bg/dim
 	# layers above stay only as a backdrop while it fades in.
 	board.add_theme_stylebox_override("panel",
@@ -2140,121 +2341,153 @@ func _build_friends_panel() -> void:
 	margin.add_theme_constant_override("margin_bottom", 14)
 	board.add_child(margin)
 	var root_box := VBoxContainer.new()
-	root_box.add_theme_constant_override("separation", 10)
 	margin.add_child(root_box)
 
-	# -- Header: the shared page header (PageShell, 13q) —
-	# identical back pill + title to Hồ sơ / Bảng xếp
-	# hạng, overlaid on the board. The Tìm bạn box hangs
-	# off the header's right end; it never touches the
-	# shared back+title block.
+	# -- Header: the shared page header (PageShell, 13q)
+	# and NOTHING else — the search field that used to
+	# hang off its right end lives in the right card now
+	# (Tìm bạn view), per the 17i redesign.
 	var hdr := PageShell.header("Bạn bè",
 			func() -> void: _close_friends_panel())
 	_fr_root.add_child(hdr)
-	_fr_search_edit = LineEdit.new()
-	_fr_search_edit.placeholder_text = "Tìm bạn — nhập tên tài khoản…"
-	_fr_search_edit.custom_minimum_size = Vector2(330, 44)
-	_fr_search_edit.add_theme_font_size_override("font_size", 16)
-	_fr_search_edit.anchor_left = 1.0
-	_fr_search_edit.anchor_right = 1.0
-	_fr_search_edit.offset_left = -408
-	_fr_search_edit.offset_right = -78
-	_fr_search_edit.offset_top = 11
-	_fr_search_edit.offset_bottom = 55
-	_fr_search_edit.text_submitted.connect(func(_t: String) -> void: _fr_submit_add(_fr_search_edit))
-	hdr.add_child(_fr_search_edit)
-	var search := _icon_button("search", "Tìm bạn")
-	search["btn"].pressed.connect(func() -> void: _fr_submit_add(_fr_search_edit))
-	var sholder: Control = search["holder"]
-	sholder.anchor_left = 1.0
-	sholder.anchor_right = 1.0
-	sholder.offset_left = -59
-	sholder.offset_right = -11
-	sholder.offset_top = 9
-	sholder.offset_bottom = 57
-	hdr.add_child(sholder)
 
-	_fr_status = _label("", 15, GOLD_LIGHT)
-	root_box.add_child(_fr_status)
-
-	# -- Guest state: a login prompt instead of the lists.
-	_fr_guest_box = VBoxContainer.new()
-	_fr_guest_box.add_theme_constant_override("separation", 12)
-	_fr_guest_box.visible = false
-	root_box.add_child(_fr_guest_box)
-	var gl := _label("Đăng nhập để dùng Bạn bè — thêm bạn, ghim bạn thân lên sảnh và xem ai đang online.", 16, PAPER)
-	gl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_fr_guest_box.add_child(gl)
-	var gbtn := Button.new()
-	gbtn.text = "Đăng nhập / Đăng ký"
-	gbtn.custom_minimum_size = Vector2(220, 44)
-	gbtn.add_theme_font_size_override("font_size", 16)
-	gbtn.add_theme_stylebox_override("normal", _sb(Color(0.85, 0.6, 0.16), 8))
-	gbtn.add_theme_stylebox_override("hover", _sb(Color(0.95, 0.7, 0.22), 8))
-	gbtn.add_theme_color_override("font_color", Color(0.08, 0.06, 0.02))
-	gbtn.pressed.connect(func() -> void:
-		_close_friends_panel()
-		if game != null:
-			game.home_open_account())
-	_fr_guest_box.add_child(gbtn)
-
-	# -- Content: left menu + side (list or find form).
+	# -- The two cards (16px gap).
 	_fr_content = HBoxContainer.new()
-	_fr_content.add_theme_constant_override("separation", 12)
+	_fr_content.add_theme_constant_override("separation", 16)
 	_fr_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root_box.add_child(_fr_content)
-	var menu := VBoxContainer.new()
-	menu.custom_minimum_size = Vector2(176, 0)
-	menu.add_theme_constant_override("separation", 8)
-	_fr_content.add_child(menu)
-	for tab_def in [["all", "Bạn bè"], ["close", "Bạn thân"], ["find", "Tìm bạn"]]:
-		var b := Button.new()
-		b.text = String(tab_def[1])
-		b.custom_minimum_size = Vector2(176, 46)
-		b.add_theme_font_size_override("font_size", 17)
-		b.pressed.connect(func() -> void: _fr_set_tab(String(tab_def[0])))
-		menu.add_child(b)
-		_fr_menu[String(tab_def[0])] = b
-	var side := VBoxContainer.new()
-	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side.add_theme_constant_override("separation", 8)
-	_fr_content.add_child(side)
+
+	# LEFT card (300px): view rows, the online block, and
+	# the add-friend block pinned to the bottom.
+	var left := _fr_card()
+	left.custom_minimum_size = Vector2(300, 0)
+	_fr_content.add_child(left)
+	var lbox := VBoxContainer.new()
+	lbox.add_theme_constant_override("separation", 10)
+	left.add_child(lbox)
+	lbox.add_child(_fr_menu_row("all", FR_FA_GROUP, "Bạn bè"))
+	lbox.add_child(_fr_menu_row("close", FR_FA_HEART, "Bạn thân"))
+	lbox.add_child(_fr_menu_row("find", FR_FA_FIND, "Tìm bạn"))
+	lbox.add_child(_fr_divider())
+	lbox.add_child(_label("ĐANG ONLINE", 12, GOLD_LIGHT))
+	_fr_online_box = VBoxContainer.new()
+	_fr_online_box.add_theme_constant_override("separation", 6)
+	lbox.add_child(_fr_online_box)
+	var lspacer := Control.new()
+	lspacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lbox.add_child(lspacer)
+	_fr_add_block = VBoxContainer.new()
+	_fr_add_block.add_theme_constant_override("separation", 8)
+	lbox.add_child(_fr_add_block)
+	_fr_add_block.add_child(_fr_divider())
+	_fr_add_block.add_child(_label("Thêm bạn bằng tên tài khoản", 15, GOLD_LIGHT))
+	_fr_add_edit = LineEdit.new()
+	_fr_add_edit.placeholder_text = "Tên tài khoản…"
+	_fr_field(_fr_add_edit, 42)
+	_fr_add_edit.text_submitted.connect(func(_t: String) -> void: _fr_submit_add(_fr_add_edit))
+	_fr_add_block.add_child(_fr_add_edit)
+	var add_btn := _fr_button("Thêm bạn", "gold", 0, 42, 15)
+	add_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_btn.pressed.connect(func() -> void: _fr_submit_add(_fr_add_edit))
+	_fr_add_block.add_child(add_btn)
+	_fr_status = _label("", 13, GOLD_LIGHT)
+	_fr_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_fr_add_block.add_child(_fr_status)
+
+	# RIGHT card (expand): view header + one body surface.
+	var right := _fr_card()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_fr_content.add_child(right)
+	var rbox := VBoxContainer.new()
+	rbox.add_theme_constant_override("separation", 10)
+	right.add_child(rbox)
+	var vhdr := HBoxContainer.new()
+	vhdr.add_theme_constant_override("separation", 8)
+	rbox.add_child(vhdr)
+	_fr_view_title = _label("Bạn bè", 17, GOLD_LIGHT)
+	_fr_view_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	vhdr.add_child(_fr_view_title)
+	_fr_view_count = _label("", 14, FR_MUTED)
+	_fr_view_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	vhdr.add_child(_fr_view_count)
+	var vspacer := Control.new()
+	vspacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vhdr.add_child(vspacer)
+	# The find view's search, in the header row (17i —
+	# moved from the page header): same add-friend submit
+	# as the left card's block.
+	_fr_hdr_find = HBoxContainer.new()
+	_fr_hdr_find.add_theme_constant_override("separation", 8)
+	_fr_hdr_find.visible = false
+	vhdr.add_child(_fr_hdr_find)
+	_fr_find_edit = LineEdit.new()
+	_fr_find_edit.placeholder_text = "Nhập tên tài khoản…"
+	_fr_field(_fr_find_edit, 40)
+	# _fr_field resets the minimum size to (0, h) — the
+	# header search's 250px width is set after it.
+	_fr_find_edit.custom_minimum_size = Vector2(250, 40)
+	_fr_find_edit.text_submitted.connect(func(_t: String) -> void: _fr_submit_add(_fr_find_edit))
+	_fr_hdr_find.add_child(_fr_find_edit)
+	var find_btn := _fr_button("Tìm", "gold", 84, 40, 15)
+	find_btn.pressed.connect(func() -> void: _fr_submit_add(_fr_find_edit))
+	_fr_hdr_find.add_child(find_btn)
+	rbox.add_child(_fr_divider())
+
+	# Body: the list (all / close views).
 	_fr_scroll = ScrollContainer.new()
 	_fr_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_fr_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side.add_child(_fr_scroll)
+	rbox.add_child(_fr_scroll)
 	_fr_list = VBoxContainer.new()
 	_fr_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_fr_list.add_theme_constant_override("separation", 8)
 	_fr_scroll.add_child(_fr_list)
-	_fr_find_box = VBoxContainer.new()
-	_fr_find_box.add_theme_constant_override("separation", 10)
+	# Body: the centred empty state (contents per view,
+	# filled by _fill_fr_empty).
+	_fr_empty_box = CenterContainer.new()
+	_fr_empty_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_fr_empty_box.visible = false
+	rbox.add_child(_fr_empty_box)
+	_fr_empty_inner = VBoxContainer.new()
+	_fr_empty_inner.add_theme_constant_override("separation", 10)
+	_fr_empty_box.add_child(_fr_empty_inner)
+	# Body: the find view's centred hint.
+	_fr_find_box = CenterContainer.new()
+	_fr_find_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_fr_find_box.visible = false
-	side.add_child(_fr_find_box)
-	var fh := _label("Thêm bạn bằng tên tài khoản", 19, GOLD_LIGHT)
-	_fr_find_box.add_child(fh)
-	var fdesc := _label("Nhập đúng tên tài khoản của người chơi — họ sẽ xuất hiện trong danh sách Bạn bè ngay khi thêm thành công.", 14, FR_MUTED)
-	fdesc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_fr_find_box.add_child(fdesc)
-	var frow := HBoxContainer.new()
-	frow.add_theme_constant_override("separation", 8)
-	_fr_find_box.add_child(frow)
-	_fr_find_edit = LineEdit.new()
-	_fr_find_edit.placeholder_text = "Tên tài khoản…"
-	_fr_find_edit.custom_minimum_size = Vector2(0, 46)
-	_fr_find_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_fr_find_edit.add_theme_font_size_override("font_size", 16)
-	_fr_find_edit.text_submitted.connect(func(_t: String) -> void: _fr_submit_add(_fr_find_edit))
-	frow.add_child(_fr_find_edit)
-	var add_btn := Button.new()
-	add_btn.text = "Thêm bạn"
-	add_btn.custom_minimum_size = Vector2(130, 46)
-	add_btn.add_theme_font_size_override("font_size", 16)
-	add_btn.add_theme_stylebox_override("normal", _sb(Color(0.85, 0.6, 0.16), 8))
-	add_btn.add_theme_stylebox_override("hover", _sb(Color(0.95, 0.7, 0.22), 8))
-	add_btn.add_theme_color_override("font_color", Color(0.08, 0.06, 0.02))
-	add_btn.pressed.connect(func() -> void: _fr_submit_add(_fr_find_edit))
-	frow.add_child(add_btn)
+	rbox.add_child(_fr_find_box)
+	var fvb := VBoxContainer.new()
+	fvb.add_theme_constant_override("separation", 10)
+	_fr_find_box.add_child(fvb)
+	fvb.add_child(_fr_fa(FR_FA_FIND, 40, Color(0.45, 0.48, 0.58)))
+	var fhint := _label("Nhập đúng tên tài khoản của người chơi — họ sẽ xuất hiện trong danh sách Bạn bè ngay khi thêm thành công.", 15, FR_MUTED)
+	fhint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fhint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fhint.custom_minimum_size = Vector2(430, 0)
+	fvb.add_child(fhint)
+	# Body: the guest prompt, centred (the 13m guest
+	# behaviour — text + login button — in its new home).
+	_fr_guest_box = CenterContainer.new()
+	_fr_guest_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_fr_guest_box.visible = false
+	rbox.add_child(_fr_guest_box)
+	var gvb := VBoxContainer.new()
+	gvb.add_theme_constant_override("separation", 12)
+	_fr_guest_box.add_child(gvb)
+	var gl := _label("Đăng nhập để dùng Bạn bè — thêm bạn, ghim bạn thân lên sảnh và xem ai đang online.", 16, PAPER)
+	gl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	gl.custom_minimum_size = Vector2(430, 0)
+	gvb.add_child(gl)
+	var grow := HBoxContainer.new()
+	grow.alignment = BoxContainer.ALIGNMENT_CENTER
+	gvb.add_child(grow)
+	var gbtn := _fr_button("Đăng nhập / Đăng ký", "gold", 220, 44, 16)
+	gbtn.pressed.connect(func() -> void:
+		_close_friends_panel()
+		if game != null:
+			game.home_open_account())
+	grow.add_child(gbtn)
 
 	# -- Remove-friend confirm (dim + centred card).
 	_fr_confirm = Control.new()
@@ -2347,9 +2580,10 @@ func _fr_set_tab(tab: String) -> void:
 		_fr_find_edit.grab_focus()
 
 
-## Add-by-username, shared by the header Tìm bạn box and the
-## Tìm bạn tab form: the server answers with a fresh list (or
-## a friend_error, surfaced in the status line verbatim).
+## Add-by-username, shared by the left card's add block
+## and the Tìm bạn header search: the server answers with
+## a fresh list (or a friend_error, surfaced in the status
+## line verbatim).
 func _fr_submit_add(edit: LineEdit) -> void:
 	var name := edit.text.strip_edges()
 	if name == "":
@@ -2378,8 +2612,8 @@ func _fr_sorted_rows() -> Array:
 func _refill_friends_panel() -> void:
 	if _fr_root == null or _fr_list == null:
 		return
-	# A successful add while standing on Tìm bạn: land on the
-	# list so the new friend is visible.
+	# A successful add while standing on Tìm bạn: land on
+	# the list so the new friend is visible.
 	if _fr_tab == "find" and _fr_last_add != "":
 		for r in Net.friends_rows:
 			if String(r.get("user", "")) == _fr_last_add:
@@ -2388,140 +2622,252 @@ func _refill_friends_panel() -> void:
 				break
 		_fr_last_add = ""
 	var guest := Net.account_name == ""
+	var rows := _fr_sorted_rows()
+	var close_rows: Array = rows.filter(func(r: Dictionary) -> bool: return bool(r.get("close", false)))
+	var online_rows: Array = rows.filter(func(r: Dictionary) -> bool: return bool(r.get("online", false)))
+	# -- Menu rows: state colours + counts.
+	for key in _fr_menu:
+		var parts: Dictionary = _fr_menu[key]
+		var b: Button = parts["btn"]
+		if key == _fr_tab:
+			b.add_theme_stylebox_override("normal", _fr_btn_sb(GOLD, 9))
+			b.add_theme_stylebox_override("hover", _fr_btn_sb(Color(1.0, 0.86, 0.45), 9))
+			b.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(0.88, 0.7, 0.28), 9))
+			(parts["icon"] as Label).add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
+			(parts["text"] as Label).add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
+			(parts["count"] as Label).add_theme_color_override("font_color", Color(0.35, 0.28, 0.1))
+		else:
+			b.add_theme_stylebox_override("normal", _fr_btn_sb(Color(1, 1, 1, 0.04), 9))
+			b.add_theme_stylebox_override("hover", _fr_btn_sb(Color(1, 1, 1, 0.09), 9))
+			b.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(1, 1, 1, 0.07), 9))
+			(parts["icon"] as Label).add_theme_color_override("font_color", GOLD_LIGHT)
+			(parts["text"] as Label).add_theme_color_override("font_color", PAPER)
+			(parts["count"] as Label).add_theme_color_override("font_color", FR_MUTED)
+		match key:
+			"all":
+				(parts["count"] as Label).text = str(rows.size())
+			"close":
+				(parts["count"] as Label).text = str(close_rows.size())
+			_:
+				(parts["count"] as Label).text = ""
+	# -- Online block (up to 5 compact presence rows).
+	for c in _fr_online_box.get_children():
+		_fr_online_box.remove_child(c)
+		c.queue_free()
+	if online_rows.is_empty():
+		_fr_online_box.add_child(_label("Chưa có ai online", 13, FR_MUTED))
+	else:
+		for i in mini(5, online_rows.size()):
+			_fr_online_box.add_child(_fr_online_row(online_rows[i]))
+	# -- The add block is account-only; guests get the
+	# centred prompt in the right card instead.
+	_fr_add_block.visible = not guest
+	# -- Right card header.
+	match _fr_tab:
+		"close":
+			_fr_view_title.text = "Bạn thân"
+			_fr_view_count.text = "(%d bạn thân)" % close_rows.size()
+		"find":
+			_fr_view_title.text = "Tìm bạn"
+			_fr_view_count.text = ""
+		_:
+			_fr_view_title.text = "Bạn bè"
+			_fr_view_count.text = "(%d bạn)" % rows.size()
+	_fr_hdr_find.visible = _fr_tab == "find" and not guest
+	# -- Right card body: exactly one surface visible.
 	_fr_guest_box.visible = guest
-	_fr_content.visible = not guest
+	_fr_scroll.visible = false
+	_fr_empty_box.visible = false
+	_fr_find_box.visible = false
 	if guest:
 		return
-	for key in _fr_menu:
-		var b: Button = _fr_menu[key]
-		if key == _fr_tab:
-			b.add_theme_stylebox_override("normal", _sb(Color(0.55, 0.38, 0.1, 0.95), 8))
-			b.add_theme_color_override("font_color", GOLD_LIGHT)
-		else:
-			b.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.06), 8))
-			b.add_theme_color_override("font_color", PAPER)
-	_fr_scroll.visible = _fr_tab != "find"
-	_fr_find_box.visible = _fr_tab == "find"
 	if _fr_tab == "find":
+		_fr_find_box.visible = true
 		return
+	var view_rows := rows if _fr_tab == "all" else close_rows
+	if view_rows.is_empty():
+		_fill_fr_empty()
+		_fr_empty_box.visible = true
+		return
+	_fr_scroll.visible = true
 	for c in _fr_list.get_children():
 		_fr_list.remove_child(c)
 		c.queue_free()
-	var rows := _fr_sorted_rows()
-	if _fr_tab == "close":
-		rows = rows.filter(func(r: Dictionary) -> bool: return bool(r.get("close", false)))
-	if rows.is_empty():
-		var empty := _label(
-				"Chưa có bạn bè nào.\nMở tab Tìm bạn để thêm bạn bằng tên tài khoản."
-				if _fr_tab == "all" else
-				"Chưa có bạn thân nào.\nBấm biểu tượng trái tim ở một người bạn để ghim họ lên thanh bên phải ở sảnh.",
-				15, FR_MUTED)
-		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_fr_list.add_child(empty)
-		return
-	for r in rows:
+	for r in view_rows:
 		_fr_list.add_child(_friend_row(r))
 
 
+## One compact presence row in the left card's online
+## block: 8px green dot + display name.
+func _fr_online_row(f: Dictionary) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	h.add_child(_fr_dot(Color(0.35, 0.9, 0.45)))
+	h.add_child(_label(String(f.get("display_name", String(f.get("user", "")))), 14, PAPER))
+	return h
+
+
+## The centred empty state of the list views (17i): a
+## big muted FA icon, ONE short line, and — on the Bạn
+## bè view only — the gold jump to Tìm bạn.
+func _fill_fr_empty() -> void:
+	for c in _fr_empty_inner.get_children():
+		_fr_empty_inner.remove_child(c)
+		c.queue_free()
+	var cp := FR_FA_GROUP
+	var line := "Chưa có bạn bè nào."
+	if _fr_tab == "close":
+		cp = FR_FA_HEART
+		line = "Chưa có bạn thân nào."
+	_fr_empty_inner.add_child(_fr_fa(cp, 44, Color(0.45, 0.48, 0.58)))
+	var l := _label(line, 15, FR_MUTED)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fr_empty_inner.add_child(l)
+	if _fr_tab == "all":
+		var b := _fr_button("Tìm bạn ngay", "gold", 170, 42, 15)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		b.pressed.connect(func() -> void: _fr_set_tab("find"))
+		_fr_empty_inner.add_child(b)
+
+
+## "Nhắn tin" (17i): fetch the DM thread, close the
+## friends panel, and land in the chat hub on that very
+## thread — the same trio the hub's own conversation
+## rows run (Net.dm_open + home_open_chat_hub("dm") +
+## ChatHub.shot_open_thread, the hub's only public
+## open-at-a-thread seam).
+func _fr_message_friend(uname: String) -> void:
+	if uname == "":
+		return
+	Net.dm_open(uname)
+	_close_friends_panel()
+	if game != null and game.has_method("home_open_chat_hub"):
+		game.home_open_chat_hub("dm")
+		var hub = game.get("chat_hub")
+		if hub != null and hub.has_method("shot_open_thread"):
+			hub.shot_open_thread(uname)
+
+
+## One friend as a ROW CARD (17i): framed avatar, rank
+## emblem, name line (display name + [TAG] + Lv pill),
+## rank text under it; at the right, the presence line
+## over the action row (Nhắn tin · bạn thân heart · Xoá).
 func _friend_row(f: Dictionary) -> Control:
+	var uname := String(f.get("user", ""))
 	var row := PanelContainer.new()
-	row.add_theme_stylebox_override("panel",
-			_sb(Color(1, 1, 1, 0.05), 10, Color(1, 0.85, 0.4, 0.18), 1))
+	var rsb := StyleBoxFlat.new()
+	rsb.bg_color = Color(1, 1, 1, 0.045)
+	rsb.set_corner_radius_all(10)
+	rsb.border_color = Color(1, 1, 1, 0.08)
+	rsb.set_border_width_all(1)
+	rsb.content_margin_left = 12
+	rsb.content_margin_right = 12
+	rsb.content_margin_top = 9
+	rsb.content_margin_bottom = 9
+	row.add_theme_stylebox_override("panel", rsb)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	row.add_child(h)
-	h.add_child(_friend_avatar_block(f))
+	# Framed avatar, 48px (AvatarFrame composes the
+	# friend's granted frame around their avatar).
+	var av := AvatarFrame.new()
+	av.custom_minimum_size = Vector2(48, 48)
+	av.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	av.set_content(Avatars.texture_for_user(String(f.get("avatar_id", "")), uname),
+			String(f.get("frame_id", "")), false)
+	h.add_child(av)
+	# Rank emblem ~34px tall: the mini badge (emblem
+	# only — friend rows carry no star count, so no star
+	# row) scaled into a 30×34 slot.
+	var badge_hold := Control.new()
+	badge_hold.custom_minimum_size = Vector2(30, 34)
+	badge_hold.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge_hold.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var badge := RankBadge.new()
+	badge.setup(int(f.get("rank_tier", 0)), 0, 3, bool(f.get("emperor", false)), true)
+	badge.scale = Vector2(1.5, 1.5)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge_hold.add_child(badge)
+	h.add_child(badge_hold)
+	# Name line + rank text.
 	var mid := VBoxContainer.new()
 	mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mid.add_theme_constant_override("separation", 2)
 	h.add_child(mid)
-	var uname := String(f.get("user", ""))
-	var name_l := _label(Net.ally_disp(String(f.get("display_name", uname)),
-			String(f.get("ally_tag", ""))), 17, PAPER)
-	mid.add_child(name_l)
-	var status_l: Label
-	if bool(f.get("online", false)):
-		status_l = _label("Online", 14, FR_ONLINE)
-	else:
-		var lo := int(f.get("last_online", 0))
-		if lo > 0:
-			status_l = _label("Online gần đây · " + _rel_time(lo), 14, FR_MUTED)
-		else:
-			status_l = _label("Chưa rõ lần cuối online", 14, FR_MUTED)
-	mid.add_child(status_l)
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 6)
+	mid.add_child(name_row)
+	name_row.add_child(_label(String(f.get("display_name", uname)), 17, Color.WHITE))
+	var tag := String(f.get("ally_tag", ""))
+	if tag != "":
+		var tl := _label("[%s]" % tag, 13, FR_MUTED)
+		tl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		name_row.add_child(tl)
+	var lv := PanelContainer.new()
+	var lsb := StyleBoxFlat.new()
+	lsb.bg_color = Color(0.05, 0.05, 0.09, 0.95)
+	lsb.set_corner_radius_all(6)
+	lsb.border_color = Color(1, 0.85, 0.4, 0.5)
+	lsb.set_border_width_all(1)
+	lsb.content_margin_left = 8
+	lsb.content_margin_right = 8
+	lsb.content_margin_top = 0.5
+	lsb.content_margin_bottom = 3.5
+	lv.add_theme_stylebox_override("panel", lsb)
+	lv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var ll := _label("Lv.%d" % int(f.get("level", 1)), 11, GOLD_LIGHT)
+	ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lv.add_child(ll)
+	name_row.add_child(lv)
+	var is_close := bool(f.get("close", false))
 	var rank_text := String(f.get("rank_text", ""))
-	if bool(f.get("close", false)):
+	if is_close:
 		rank_text += "  ·  Bạn thân"
 	mid.add_child(_label(rank_text, 13, FR_MUTED))
-	# Glyph actions: heart toggles bạn thân (filled gold when
-	# set, outline when not); trash removes (with confirm).
-	var is_close := bool(f.get("close", false))
-	var heart := _icon_button("heart" if is_close else "heart_o",
-			"Bỏ bạn thân" if is_close else "Đánh dấu bạn thân")
-	var hic: GlassIcon = heart["holder"].get_child(1)
-	hic.modulate = Color(1.0, 0.78, 0.3) if is_close else Color(0.75, 0.78, 0.85)
-	heart["btn"].pressed.connect(func() -> void:
+	# Right block: presence over the action row.
+	var right := VBoxContainer.new()
+	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	right.add_theme_constant_override("separation", 6)
+	h.add_child(right)
+	var online := bool(f.get("online", false))
+	var srow := HBoxContainer.new()
+	srow.alignment = BoxContainer.ALIGNMENT_END
+	srow.add_theme_constant_override("separation", 6)
+	right.add_child(srow)
+	srow.add_child(_fr_dot(Color(0.35, 0.9, 0.45) if online else Color(0.45, 0.47, 0.55)))
+	var stext := "Đang online"
+	if not online:
+		var lo := int(f.get("last_online", 0))
+		stext = "Ngoại tuyến · " + _rel_time(lo) if lo > 0 else "Ngoại tuyến"
+	srow.add_child(_label(stext, 13, FR_ONLINE if online else FR_MUTED))
+	var arow := HBoxContainer.new()
+	arow.alignment = BoxContainer.ALIGNMENT_END
+	arow.add_theme_constant_override("separation", 6)
+	right.add_child(arow)
+	var msg := _fr_button("Nhắn tin", "plain", 86, 32, 13)
+	msg.pressed.connect(func() -> void: _fr_message_friend(uname))
+	arow.add_child(msg)
+	var heart := Button.new()
+	heart.custom_minimum_size = Vector2(38, 32)
+	heart.tooltip_text = "Bỏ bạn thân" if is_close else "Đánh dấu bạn thân"
+	heart.add_theme_stylebox_override("normal", _fr_btn_sb(FR_BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	heart.add_theme_stylebox_override("hover", _fr_btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
+	heart.add_theme_stylebox_override("pressed", _fr_btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
+	var hic := _fr_fa(FR_FA_HEART, 14, Color(1.0, 0.78, 0.3) if is_close else Color(0.62, 0.66, 0.75))
+	hic.set_anchors_preset(Control.PRESET_FULL_RECT)
+	heart.add_child(hic)
+	heart.pressed.connect(func() -> void:
 		Net.set_close_friend(uname, not is_close))
-	heart["holder"].size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	h.add_child(heart["holder"])
-	var trash := _icon_button("trash", "Xoá bạn")
-	var tic: GlassIcon = trash["holder"].get_child(1)
-	tic.modulate = Color(1.0, 0.62, 0.55)
-	trash["btn"].pressed.connect(func() -> void:
+	arow.add_child(heart)
+	var del := _fr_button("Xoá", "danger", 52, 32, 13)
+	del.pressed.connect(func() -> void:
 		_fr_pending_remove = uname
 		_fr_confirm_text.text = "Xoá %s khỏi danh sách bạn bè?" % String(f.get("display_name", uname))
 		_fr_confirm.visible = true)
-	trash["holder"].size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	h.add_child(trash["holder"])
+	arow.add_child(del)
 	return row
 
-
-## Framed portrait + Lv badge (+ presence dot), like the
-## reference rows: the friend's chosen avatar art in a
-## square gold frame, "Lv.N" pill overlapping the frame's
-## bottom edge.
-func _friend_avatar_block(f: Dictionary) -> Control:
-	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(64, 68)
-	holder.size = Vector2(64, 68)
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var frame := PanelContainer.new()
-	frame.custom_minimum_size = Vector2(64, 64)
-	frame.size = Vector2(64, 64)
-	frame.add_theme_stylebox_override("panel",
-			_sb(Color(0.10, 0.08, 0.05), 4, GOLD, 2))
-	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(frame)
-	var av := AvatarFrame.new()
-	av.custom_minimum_size = Vector2(58, 58)
-	av.size = Vector2(58, 58)
-	av.position = Vector2(3, 3)
-	av.set_content(Avatars.texture_for_user(String(f.get("avatar_id", "")),
-			String(f.get("user", ""))), String(f.get("frame_id", "")), false)
-	holder.add_child(av)
-	if bool(f.get("online", false)):
-		var dot := PanelContainer.new()
-		dot.add_theme_stylebox_override("panel", _sb(Color(0.35, 0.9, 0.45), 6))
-		dot.custom_minimum_size = Vector2(12, 12)
-		dot.size = Vector2(12, 12)
-		dot.position = Vector2(50, 2)
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.add_child(dot)
-	var lv := PanelContainer.new()
-	lv.add_theme_stylebox_override("panel",
-			_sb(Color(0.05, 0.05, 0.09, 0.95), 6, Color(1, 0.85, 0.4, 0.5), 1))
-	lv.custom_minimum_size = Vector2(44, 17)
-	lv.size = Vector2(44, 17)
-	lv.position = Vector2(10, 51)
-	lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var ll := _label("Lv.%d" % int(f.get("level", 1)), 11, GOLD_LIGHT)
-	ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	ll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lv.add_child(ll)
-	holder.add_child(lv)
-	return holder
 
 
 func _hist_entries() -> Array:
