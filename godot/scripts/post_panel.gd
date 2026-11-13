@@ -91,8 +91,8 @@ func _field_sb(bg: Color, border: Color, bw: int, text_edit := false) -> StyleBo
 	s.content_margin_left = 12
 	s.content_margin_right = 12
 	if text_edit:
-		s.content_margin_top = 8
-		s.content_margin_bottom = 8
+		s.content_margin_top = 12
+		s.content_margin_bottom = 12
 	return s
 
 
@@ -141,6 +141,8 @@ func _button(text: String, primary := false, min_w := 0) -> Button:
 			Color(0.72, 0.52, 0.15) if primary else PANEL_LINE, 1)
 	sb.content_margin_left = 12
 	sb.content_margin_right = 12
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 2
 	b.add_theme_stylebox_override("normal", sb)
 	b.add_theme_stylebox_override("hover", sb)
 	b.add_theme_stylebox_override("pressed", sb)
@@ -209,12 +211,10 @@ func _rows() -> Array:
 # ------------------------------------------------------------ composer
 
 func _build_composer() -> void:
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel",
-			_sb(Color(1, 1, 1, 0.045), 10, PANEL_LINE, 1))
+	# Owner order 2026-11-12: NO outer frame around the
+	# composer — the bar sits directly on the panel.
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 6)
-	card.add_child(vb)
 	# Row 1: my avatar + writing field + Đăng bài at one
 	# height — one tidy bar instead of a big empty box
 	# (owner: "khung đăng bài viết xấu").
@@ -309,7 +309,7 @@ func _build_composer() -> void:
 			_gallery.visible = false)
 		_gallery.add_child(cell)
 	vb.add_child(_gallery)
-	add_child(card)
+	add_child(vb)
 
 
 func _set_attach(id: String) -> void:

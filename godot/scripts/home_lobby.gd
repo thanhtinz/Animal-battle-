@@ -669,13 +669,15 @@ func _set_chat_badge(n: int) -> void:
 
 func _build_chat_ticker() -> void:
 	# Owner order 2026-11-12 (his reference crop): chat is
-	# NOT opened from an icon — this slim bar under the
-	# season banner shows the LATEST chat message, one at a
+	# NOT opened from an icon — this slim bar in the
+	# bottom-left corner shows the LATEST chat message, one at a
 	# time; tapping the bar opens the chat panel at that
 	# message's channel.
 	var bar := PanelContainer.new()
-	bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	bar.position = Vector2(10, 224)
+	# Owner order 2026-11-12: the ticker moves to the
+	# BOTTOM-LEFT corner of the lobby.
+	bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	bar.position = Vector2(10, -48)
 	bar.custom_minimum_size = Vector2(436, 38)
 	bar.size = Vector2(436, 38)
 	var bsb := _sb(Color(0.02, 0.03, 0.07, 0.88), 8, Color(1, 0.85, 0.4, 0.55), 1)
@@ -715,7 +717,8 @@ func _build_chat_ticker() -> void:
 	bp.add_theme_stylebox_override("panel", _sb(Color(0.85, 0.2, 0.15), 9))
 	bp.custom_minimum_size = Vector2(19, 19)
 	bp.size = Vector2(19, 19)
-	bp.position = Vector2(10 + 436 - 13, 224 - 7)
+	bp.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	bp.position = Vector2(10 + 436 - 13, -48 - 7)
 	bp.visible = false
 	bp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bl := _label("", 11, Color.WHITE)
