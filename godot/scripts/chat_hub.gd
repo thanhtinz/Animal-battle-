@@ -432,6 +432,10 @@ func _line_row(line: Dictionary) -> Control:
 	var nl := _label(name + ":", 14, Color(st["text"]))
 	nl.custom_minimum_size = Vector2(150, 0)
 	nl.clip_text = true
+	# Owner order 2026-11-12 (even text): names RIGHT-align
+	# to a common edge so message text starts on one clean
+	# column regardless of name length.
+	nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	row.add_child(nl)
 	if bool(line.get("voice", false)):
 		row.add_child(_voice_cell(line))
@@ -468,10 +472,17 @@ func _build_lines(lines: Array, channel: String) -> void:
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 5)
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sc.add_child(vb)
 	card.add_child(sc)
 	if lines.is_empty():
-		vb.add_child(_label_wrap("Chưa có tin nhắn nào.", 14, MUTED))
+		# Owner order 2026-11-12: empty states sit CENTRED in
+		# the message area, not flush in the top-left corner.
+		var none := _label_wrap("Chưa có tin nhắn nào.", 14, MUTED)
+		none.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		none.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		none.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		vb.add_child(none)
 	for line in lines:
 		vb.add_child(_line_row(line))
 	_body.add_child(card)
@@ -529,8 +540,12 @@ func _build_system() -> void:
 		row.add_child(_label_wrap(txt, 14, PAPER if bool(l.get("read", false)) else Color(1, 1, 1)))
 		vb.add_child(row)
 	if not any:
-		vb.add_child(_label_wrap(
-			"Chưa có thông báo nào. Kết quả trận, thư và thông báo của máy chủ sẽ hiện ở đây.", 14, MUTED))
+		var snone := _label_wrap(
+			"Chưa có thông báo nào. Kết quả trận, thư và thông báo của máy chủ sẽ hiện ở đây.", 14, MUTED)
+		snone.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		snone.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		snone.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		vb.add_child(snone)
 	_scroll_to_bottom(sc)
 
 
@@ -593,8 +608,12 @@ func _build_dm_list() -> void:
 			vb.add_child(_label("Bạn bè — chạm để bắt đầu trò chuyện", 13, GOLD_TXT))
 		vb.add_child(_dm_row(user, String(f.get("name", user)), "", 0))
 	if vb.get_child_count() == 0:
-		vb.add_child(_label_wrap(
-			"Chưa có cuộc trò chuyện nào. Kết bạn ở trang Bạn bè rồi quay lại đây để nhắn riêng.", 14, MUTED))
+		var dnone := _label_wrap(
+			"Chưa có cuộc trò chuyện nào. Kết bạn ở trang Bạn bè rồi quay lại đây để nhắn riêng.", 14, MUTED)
+		dnone.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dnone.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		dnone.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		vb.add_child(dnone)
 
 
 func _dm_row(user: String, disp: String, last: String, unread: int) -> Control:

@@ -278,7 +278,9 @@ func _render_list() -> void:
 			"Đăng nhập tài khoản để xem và tham gia giải đấu.", 14, MUTED))
 		return
 	if Net.tourn_list_rows.is_empty():
-		_scroll_box.add_child(_label("Chưa có giải nào.", 14, MUTED))
+		var tnone := _label("Chưa có giải nào.", 14, MUTED)
+		tnone.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_scroll_box.add_child(tnone)
 	for row in Net.tourn_list_rows:
 		_scroll_box.add_child(_list_row(row))
 
@@ -378,7 +380,9 @@ func _render_detail() -> void:
 	var entries: Array = d.get("entries", [])
 	_scroll_box.add_child(_label("Đội tham gia (%d)" % entries.size(), 16, GOLD))
 	if entries.is_empty():
-		_scroll_box.add_child(_label("Chưa có đội nào đăng ký.", 13, MUTED))
+		var enone := _label("Chưa có đội nào đăng ký.", 13, MUTED)
+		enone.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_scroll_box.add_child(enone)
 	for e in entries:
 		var tag := " (đội của bạn)" if bool(e.get("is_mine", false)) else ""
 		_scroll_box.add_child(_label("#%d · %s%s" % [
