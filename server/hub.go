@@ -202,6 +202,19 @@ type Hub struct {
 	worldChatWin map[string][]time.Time
 	voiceWin     map[string][]time.Time
 	dms          *DMs
+	// Social posts (17f; set by main; nil-safe in tests): the
+	// posts service + its create rate window (userMu-guarded
+	// like the chat windows).
+	posts   *Posts
+	postWin map[string][]time.Time
+	// Line reactions (17f rider 4): session-scope reaction
+	// state for lines that are NOT persisted (world text +
+	// every voice line). sessionLines registers the ids this
+	// process issued; sessionReact holds their toggles.
+	// Persisted lines (alliance text, DMs) keep reactions in
+	// their history instead. Guarded by userMu.
+	sessionLines map[string]bool
+	sessionReact map[string]map[string][]string
 	admins       map[string]bool
 	marqueeSeq   int64
 	OnRoomClosed func(code string) // e.g. reap the room's referee process
@@ -229,6 +242,9 @@ func NewHub() *Hub {
 		allyChatWin:  make(map[string][]time.Time),
 		worldChatWin: make(map[string][]time.Time),
 		voiceWin:     make(map[string][]time.Time),
+		postWin:      make(map[string][]time.Time),
+		sessionLines: make(map[string]bool),
+		sessionReact: make(map[string]map[string][]string),
 		admins:       make(map[string]bool)}
 }
 
@@ -369,7 +385,15 @@ const AllianceChatFrom = -3
 // line back like in room chat. Pure lobby traffic: this never
 // touches any room or match sim.
 func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string, text string) {
+	h.RelayAllianceChatR(user, name, allyID, memberUsers, text, nil)
+}
+
+// allyChatGate spends one slot of the caller's alliance
+// chat budget (shared by text + image lines); false = over
+// budget, the line drops silently.
+func (h *Hub) allyChatGate(user string) bool {
 	h.userMu.Lock()
+	defer h.userMu.Unlock()
 	if h.allyChatWin == nil {
 		h.allyChatWin = make(map[string][]time.Time)
 	}
@@ -382,25 +406,42 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 	}
 	if len(win) >= ChatRateCount {
 		h.allyChatWin[user] = win
-		h.userMu.Unlock()
-		return // silently dropped
+		return false
 	}
 	h.allyChatWin[user] = append(win, now)
-	h.userMu.Unlock()
+	return true
+}
+
+// RelayAllianceChatR is RelayAllianceChat with a reply
+// reference (17f rider 3): relayed on the line AND stored
+// in the alliance history.
+func (h *Hub) RelayAllianceChatR(user, name, allyID string, memberUsers []string, text string, reply *ChatReplyTo) {
+	if !h.allyChatGate(user) {
+		return // silently dropped
+	}
 	if rs := []rune(text); len(rs) > ChatMaxLen {
 		text = string(rs[:ChatMaxLen])
 	}
 	text = SanitizeEmotes(text) // 17e: emoticon token validation
 	tag := ""
+	lineID := ""
 	if h.allis != nil {
 		tag = h.allis.TagOf(user)
 		// 17b: persist BEFORE fan-out — the history is
 		// exactly the lines that passed the rate limit.
-		h.allis.AddChatMsg(allyID, user, name, text)
+		if stored := h.allis.AddChatMsgR(allyID, user, name, text, reply); stored != nil {
+			lineID = stored.ID
+		}
 	}
 	msg := map[string]any{
 		"t": "chat", "scope": "alliance", "from": AllianceChatFrom,
 		"name": name, "text": text, "alliance": allyID,
+	}
+	if lineID != "" {
+		msg["id"] = lineID
+	}
+	if reply != nil {
+		msg["reply_to"] = reply
 	}
 	if tag != "" {
 		msg["ally_tag"] = tag
@@ -413,6 +454,43 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 			msg["war_champ"] = true
 		}
 	}
+	h.mergeIdentity(msg, user, time.Now().Unix())
+	h.SendToUsers(memberUsers, msg)
+}
+
+// RelayAllianceImage fans out one alliance PHOTO line (17f
+// rider 5): a normal chat line whose payload is the base64
+// JPEG in `image` (no text), stored in the alliance history
+// and gated by the same chat budget as text lines.
+func (h *Hub) RelayAllianceImage(user, name, allyID string, memberUsers []string, imageB64 string) {
+	if !h.allyChatGate(user) {
+		return // silently dropped
+	}
+	lineID := ""
+	tag := ""
+	if h.allis != nil {
+		tag = h.allis.TagOf(user)
+		if stored := h.allis.AddChatImage(allyID, user, name, imageB64); stored != nil {
+			lineID = stored.ID
+		}
+	}
+	msg := map[string]any{
+		"t": "chat", "scope": "alliance", "from": AllianceChatFrom,
+		"name": name, "image": imageB64, "alliance": allyID,
+	}
+	if lineID != "" {
+		msg["id"] = lineID
+	}
+	if tag != "" {
+		msg["ally_tag"] = tag
+	}
+	if h.acc != nil && user != "" {
+		msg["bubble"] = h.acc.EquippedBubbleOf(user)
+		if h.acc.warChampOf(user) {
+			msg["war_champ"] = true
+		}
+	}
+	h.mergeIdentity(msg, user, time.Now().Unix())
 	h.SendToUsers(memberUsers, msg)
 }
 

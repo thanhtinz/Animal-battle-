@@ -243,9 +243,9 @@ func newReplayID() string {
 
 // replayBuilder accumulates one in-progress match recording.
 type replayBuilder struct {
-	head  Replay
-	cmds  []ReplayCmd
-	done  bool
+	head Replay
+	cmds []ReplayCmd
+	done bool
 }
 
 // buildReplayEvents validates reporter-supplied elimination

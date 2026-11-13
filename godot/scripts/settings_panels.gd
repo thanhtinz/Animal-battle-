@@ -83,6 +83,35 @@ class BubblePreview:
 		ChatBubbles.paint(self, ThemeDB.fallback_font, size * 0.5, sample, style_id)
 
 
+class DashedCell:
+	extends Control
+	## The upload cell's dashed border (17f §5) — StyleBoxFlat
+	## has no dash, so the frame is drawn as segments.
+
+	var border_col := Color(0.98, 0.8, 0.35, 0.75)
+
+	func _draw() -> void:
+		var r := Rect2(Vector2(1, 1), size - Vector2(2, 2))
+		var dash := 7.0
+		var gap := 5.0
+		var edges := [
+			[r.position, Vector2(r.end.x, r.position.y)],
+			[Vector2(r.end.x, r.position.y), r.end],
+			[r.end, Vector2(r.position.x, r.end.y)],
+			[Vector2(r.position.x, r.end.y), r.position],
+		]
+		for e in edges:
+			var a: Vector2 = e[0]
+			var b: Vector2 = e[1]
+			var len := a.distance_to(b)
+			var dir := (b - a) / len
+			var t := 0.0
+			while t < len:
+				var t2: float = minf(t + dash, len)
+				draw_line(a + dir * t, a + dir * t2, border_col, 1.6)
+				t = t2 + gap
+
+
 func setup(p_game) -> void:
 	game = p_game
 	layer = 56 # above the profile (50), below the MP lobby (60)
@@ -484,8 +513,17 @@ func _render_rename() -> void:
 	_rename_edit.max_length = 16
 	_rename_edit.custom_minimum_size = Vector2(0, 40)
 	_rename_edit.add_theme_font_size_override("font_size", 16)
-	_rename_edit.add_theme_stylebox_override("normal", _sb(FIELD_BG, 8, PANEL_LINE, 1))
-	_rename_edit.add_theme_stylebox_override("focus", _sb(FIELD_BG, 8, GOLD_TXT, 1))
+	# Text padding L/R 12 (owner order 2026-11-12: fields
+	# without explicit content margins render their text
+	# flush against the frame).
+	var rns := _sb(FIELD_BG, 8, PANEL_LINE, 1)
+	rns.content_margin_left = 12
+	rns.content_margin_right = 12
+	var rfs := _sb(FIELD_BG, 8, GOLD_TXT, 1)
+	rfs.content_margin_left = 12
+	rfs.content_margin_right = 12
+	_rename_edit.add_theme_stylebox_override("normal", rns)
+	_rename_edit.add_theme_stylebox_override("focus", rfs)
 	_rename_edit.editable = not guest
 	col.add_child(_rename_edit)
 	col.add_child(_label_wrap("Quy định: 3–16 ký tự, gồm chữ cái, chữ số và dấu gạch dưới; tên không được trùng với người chơi khác. Mỗi tài khoản chỉ đổi tên 1 lần mỗi 30 ngày (lần đặt tên đầu tiên không tính).", 13, MUTED))
@@ -534,7 +572,7 @@ func _render_avatar() -> void:
 
 
 func _render_avatar_tab() -> void:
-	_body.add_child(_label_wrap("Chọn ảnh đại diện — cả 20 ảnh đều miễn phí cho mọi tài khoản.", 13, MUTED))
+	_body.add_child(_label_wrap("Chọn ảnh đại diện — cả 20 ảnh đều miễn phí cho mọi tài khoản, hoặc tải ảnh của chính bạn lên.", 13, MUTED))
 	var sc := _scroll()
 	var grid := GridContainer.new()
 	grid.columns = 4 # owner order 2026-11-12: rows of 4
@@ -543,9 +581,175 @@ func _render_avatar_tab() -> void:
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(grid)
 	var sel := Avatars.local_avatar()
+	# 17f §5: the upload cell leads the grid.
+	grid.add_child(_upload_cell(sel))
 	for id in Avatars.IDS:
 		grid.add_child(_avatar_cell(id, sel))
 	_body.add_child(sc)
+
+
+const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
+const FA_UPLOAD := 0xF093
+var _fa_font: Font = null
+
+
+func _fa(cp: int, px: int, col: Color) -> Label:
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	var l := Label.new()
+	l.text = String.chr(cp)
+	l.add_theme_font_override("font", _fa_font)
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## True when the account holds an uploaded photo — from the
+## server profile marker, or this device's local copy.
+func _has_custom_photo() -> bool:
+	if bool(Net.auth_profile.get("has_custom_avatar", false)):
+		return true
+	return Avatars.has_own_custom()
+
+
+## The "Tải ảnh lên" cell (17f §5): dashed frame + FA upload
+## glyph when no photo exists; the photo itself once
+## uploaded (gold ring while equipped). Tap: guests are
+## refused honestly; no photo → the platform file picker;
+## photo not equipped → equip; photo equipped → re-upload.
+func _upload_cell(sel: String) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	var holder := PanelContainer.new()
+	holder.custom_minimum_size = Vector2(136, 136)
+	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var guest := Net.account_name == ""
+	var has_photo := _has_custom_photo() and not guest
+	var is_sel := sel == Avatars.CUSTOM_ID and has_photo
+	holder.add_theme_stylebox_override("panel",
+			_sb(Color(0.08, 0.09, 0.14), 10, GOLD_TXT if is_sel else PANEL_LINE, 2 if is_sel else 1))
+	if has_photo:
+		var tr := TextureRect.new()
+		tr.texture = Avatars.texture_for(Avatars.CUSTOM_ID)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(tr)
+	else:
+		var dash := DashedCell.new()
+		dash.set_anchors_preset(Control.PRESET_FULL_RECT)
+		dash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(dash)
+		var cc := CenterContainer.new()
+		cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cc.add_child(_fa(FA_UPLOAD, 34, GOLD_TXT))
+		holder.add_child(cc)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.tooltip_text = "Tải ảnh của bạn lên"
+	btn.pressed.connect(func() -> void:
+		if guest:
+			_set_status("Đăng nhập để tải ảnh lên.", true)
+			return
+		if _has_custom_photo() and Avatars.local_avatar() != Avatars.CUSTOM_ID:
+			Net.set_avatar(Avatars.CUSTOM_ID)
+			_set_status("Đã dùng ảnh của bạn.", false)
+			_render()
+			return
+		_open_photo_picker())
+	holder.add_child(btn)
+	col.add_child(holder)
+	var caption := "Tải ảnh lên"
+	if is_sel:
+		caption = "Đang dùng ảnh của bạn"
+	elif has_photo:
+		caption = "Ảnh của bạn"
+	var nm := _label(caption, 12, GOLD_TXT if is_sel else MUTED)
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(nm)
+	if has_photo and not guest:
+		var again := Button.new()
+		again.flat = true
+		again.text = "Tải ảnh khác"
+		again.add_theme_font_size_override("font_size", 11)
+		again.add_theme_color_override("font_color", DIM)
+		again.add_theme_color_override("font_hover_color", PAPER)
+		again.pressed.connect(_open_photo_picker)
+		col.add_child(again)
+	return col
+
+
+## Opens the platform image picker (images only). On
+## desktop builds this is the OS dialog; the sandbox cannot
+## drive it — harnesses call import_custom_avatar directly.
+func _open_photo_picker() -> void:
+	DisplayServer.file_dialog_show("Chọn ảnh đại diện", "", "", false,
+			DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
+			PackedStringArray(["*.png,*.jpg,*.jpeg,*.webp ; Ảnh"]),
+			Callable(self, "_on_photo_picked"))
+
+
+func _on_photo_picked(status: bool, paths: PackedStringArray, _idx: int) -> void:
+	if not status or paths.is_empty():
+		return
+	import_custom_avatar(paths[0])
+
+
+## The import pipeline (17f §5): file → Image → centre-crop
+## square → resize 256×256 bilinear → JPEG q0.85 → upload.
+## Rejects non-images and sources over 8MB up front.
+func import_custom_avatar(path: String) -> void:
+	if Net.account_name == "":
+		_set_status("Đăng nhập để tải ảnh lên.", true)
+		return
+	var probe := FileAccess.open(path, FileAccess.READ)
+	if probe == null:
+		_set_status("Không mở được file ảnh.", true)
+		return
+	var src_bytes := int(probe.get_length())
+	probe.close()
+	if src_bytes > 8 * 1024 * 1024:
+		_set_status("Ảnh gốc quá lớn (tối đa 8MB).", true)
+		return
+	var img := Image.new()
+	if img.load(path) != OK:
+		_set_status("File không phải ảnh hợp lệ.", true)
+		return
+	img.convert(Image.FORMAT_RGB8)
+	var w := img.get_width()
+	var h := img.get_height()
+	var side := mini(w, h)
+	if side <= 0:
+		_set_status("File không phải ảnh hợp lệ.", true)
+		return
+	var square := Image.create(side, side, false, Image.FORMAT_RGB8)
+	square.blit_rect(img, Rect2i((w - side) / 2, (h - side) / 2, side, side),
+			Vector2i.ZERO)
+	square.resize(256, 256, Image.INTERPOLATE_BILINEAR)
+	var jpg := square.save_jpg_to_buffer(0.85)
+	if jpg.size() > 120 * 1024:
+		jpg = square.save_jpg_to_buffer(0.7)
+	if jpg.size() > 120 * 1024:
+		_set_status("Ảnh sau khi nén vẫn quá lớn — hãy chọn ảnh khác.", true)
+		return
+	# My own surfaces wear the photo at once; the server
+	# stores + equips it and echoes the pick back.
+	Avatars.set_custom_bytes(Net.account_name, jpg)
+	Net.upload_custom_avatar(jpg)
+	_set_status("Đã tải ảnh lên.", false)
+	_render()
+
+
+## Test-harness hook: drive the import pipeline with a
+## fixture file (the OS picker cannot run in the sandbox).
+func shot_import_custom(path: String) -> void:
+	open("avatar")
+	import_custom_avatar(path)
 
 
 func _avatar_cell(id: String, sel: String) -> Control:

@@ -466,3 +466,300 @@ func TestMegaphoneGrantPermissionWire(t *testing.T) {
 		t.Fatalf("count after use = %v", left)
 	}
 }
+
+// TestChatLineIdentityFields pins the 17f rider-2 payload:
+// every fanned-out chat line (world, DM) carries user /
+// avatar_id / frame_id / title / ts for the sender.
+func TestChatLineIdentityFields(t *testing.T) {
+	hub, acc, _ := hubChatSetup(t)
+	for _, u := range []string{"IdAn", "IdBinh"} {
+		if err := acc.Register(u, "secret1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Give the sender a distinctive avatar so the assertion
+	// proves the value is RESOLVED, not just present.
+	if _, err := acc.SetAvatar("IdAn", "art:09"); err != nil {
+		t.Fatal(err)
+	}
+	aFS, bFS := &fakeSender{}, &fakeSender{}
+	hub.RegisterUserConn("IdAn", aFS)
+	hub.RegisterUserConn("IdBinh", bFS)
+
+	check := func(m map[string]any, where string) {
+		t.Helper()
+		if m["user"] != "IdAn" {
+			t.Fatalf("%s user = %v", where, m["user"])
+		}
+		if m["avatar_id"] != "art:09" {
+			t.Fatalf("%s avatar_id = %v", where, m["avatar_id"])
+		}
+		if _, ok := m["frame_id"]; !ok {
+			t.Fatalf("%s frame_id missing: %v", where, m)
+		}
+		if _, ok := m["title"]; !ok {
+			t.Fatalf("%s title missing: %v", where, m)
+		}
+		// fakeSender JSON-round-trips: ts arrives as float64.
+		tsf, ok := m["ts"].(float64)
+		if !ok || tsf <= 0 {
+			t.Fatalf("%s ts = %v", where, m["ts"])
+		}
+	}
+
+	hub.RelayWorldChat("IdAn", "IdAn", "chào cả nhà")
+	w := bFS.ofType("chat")
+	if len(w) != 1 {
+		t.Fatalf("world lines: %v", w)
+	}
+	check(w[0], "world")
+
+	if err := hub.RelayDMText("IdAn", "IdAn", "IdBinh", "riêng nè"); err != nil {
+		t.Fatal(err)
+	}
+	d := bFS.ofType("chat")
+	if len(d) != 2 { // world line + dm line
+		t.Fatalf("dm lines: %v", d)
+	}
+	check(d[1], "dm")
+}
+
+// TestReplyToRelayAndHistory pins 17f rider 3: reply_to is
+// validated (malformed drops silently), relayed verbatim on
+// world/DM lines, and stored in DM + alliance history.
+func TestReplyToRelayAndHistory(t *testing.T) {
+	// sanitize: good passes, everything malformed drops.
+	good := sanitizeReplyTo([]byte(`{"user":"An","name":"Anh An"}`))
+	if good == nil || good.User != "An" || good.Name != "Anh An" {
+		t.Fatalf("good reply_to: %+v", good)
+	}
+	for _, raw := range []string{
+		`{"user":7,"name":"x"}`,  // user not a string
+		`{"user":"","name":"x"}`, // empty user
+		`{"user":"An"}`,          // name missing
+		`{"user":"An","name":"` + strings.Repeat("n", 33) + `"}`, // name > 32 runes
+		`"just a string"`, `not json`, ``,
+	} {
+		if got := sanitizeReplyTo([]byte(raw)); got != nil {
+			t.Fatalf("malformed reply_to %q survived: %+v", raw, got)
+		}
+	}
+
+	hub, acc, dms := hubChatSetup(t)
+	for _, u := range []string{"RepAn", "RepBinh"} {
+		if err := acc.Register(u, "secret1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aFS, bFS := &fakeSender{}, &fakeSender{}
+	hub.RegisterUserConn("RepAn", aFS)
+	hub.RegisterUserConn("RepBinh", bFS)
+	rp := &ChatReplyTo{User: "RepBinh", Name: "Bình"}
+
+	hub.RelayWorldChatR("RepAn", "RepAn", "trả lời nè", rp)
+	w := bFS.ofType("chat")
+	if len(w) != 1 {
+		t.Fatalf("world lines: %v", w)
+	}
+	// fakeSender JSON-round-trips: reply_to arrives as a map.
+	rt, ok := w[0]["reply_to"].(map[string]any)
+	if !ok || rt["user"] != "RepBinh" || rt["name"] != "Bình" {
+		t.Fatalf("world reply_to: %v", w[0]["reply_to"])
+	}
+	// No reply attached -> no field at all.
+	hub.RelayWorldChat("RepAn", "RepAn", "không trả lời ai")
+	if _, has := bFS.ofType("chat")[1]["reply_to"]; has {
+		t.Fatal("plain line must not carry reply_to")
+	}
+
+	if err := hub.RelayDMTextR("RepAn", "RepAn", "RepBinh", "riêng nè", rp); err != nil {
+		t.Fatal(err)
+	}
+	d := bFS.ofType("chat")
+	if rt2, ok := d[len(d)-1]["reply_to"].(map[string]any); !ok || rt2["user"] != "RepBinh" {
+		t.Fatalf("dm reply_to: %v", d[len(d)-1]["reply_to"])
+	}
+	hist := dms.History("RepAn", "RepBinh")
+	if len(hist) != 1 || hist[0].Reply == nil || hist[0].Reply.User != "RepBinh" {
+		t.Fatalf("dm history reply: %+v", hist)
+	}
+
+	// Alliance: relay stores the reply in the history.
+	al, err := hub.allis.Create("RepAn", "Hội Trả Lời", "REP", 1, 0, "open", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.allis.Apply(al.ID, "RepBinh", ""); err != nil {
+		t.Fatal(err)
+	}
+	members := hub.allis.MemberUsers(al.ID)
+	hub.RelayAllianceChatR("RepAn", "RepAn", al.ID, members, "chào hội", rp)
+	ah := hub.allis.ChatHistory(al.ID)
+	if len(ah) != 1 || ah[0].Reply == nil || ah[0].Reply.Name != "Bình" {
+		t.Fatalf("alliance history reply: %+v", ah)
+	}
+	aChats := aFS.ofType("chat")
+	found := false
+	for _, m := range aChats {
+		if m["scope"] == "alliance" {
+			if _, ok := m["reply_to"].(map[string]any); ok {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("alliance live line missing reply_to")
+	}
+}
+
+// TestLineReactions pins 17f rider 4: line ids, reaction
+// toggles fanning out the FULL state, persistence for
+// alliance + DM lines, and silent drops for unknown
+// ids/emotes.
+func TestLineReactions(t *testing.T) {
+	hub, acc, dms := hubChatSetup(t)
+	for _, u := range []string{"RxAn", "RxBinh"} {
+		if err := acc.Register(u, "secret1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aFS, bFS := &fakeSender{}, &fakeSender{}
+	hub.RegisterUserConn("RxAn", aFS)
+	hub.RegisterUserConn("RxBinh", bFS)
+
+	// World: the line carries an id; reactions are
+	// session-scope and fan out to everyone.
+	hub.RelayWorldChat("RxAn", "RxAn", "thả tim đi")
+	w := bFS.ofType("chat")
+	if len(w) != 1 {
+		t.Fatalf("world lines: %v", w)
+	}
+	lineID, _ := w[0]["id"].(string)
+	if lineID == "" {
+		t.Fatalf("world line has no id: %v", w[0])
+	}
+	hub.ReactToLine("RxBinh", "world", "", lineID, "tim")
+	hub.ReactToLine("RxAn", "world", "", lineID, "tim")
+	pushes := bFS.ofType("chat_react")
+	if len(pushes) != 2 {
+		t.Fatalf("react pushes: %v", pushes)
+	}
+	last := pushes[len(pushes)-1]["reactions"].(map[string]any)
+	tim := last["tim"].([]any)
+	if len(tim) != 2 {
+		t.Fatalf("tim reactors: %v", last)
+	}
+	// Toggling off removes the user; empty state fans out.
+	hub.ReactToLine("RxBinh", "world", "", lineID, "tim")
+	pushes = bFS.ofType("chat_react")
+	last = pushes[len(pushes)-1]["reactions"].(map[string]any)
+	if tim2 := last["tim"].([]any); len(tim2) != 1 || tim2[0] != "RxAn" {
+		t.Fatalf("after untoggle: %v", last)
+	}
+	// Unknown emote + unknown id drop silently (no push).
+	n := len(bFS.ofType("chat_react"))
+	hub.ReactToLine("RxAn", "world", "", lineID, "khongco")
+	hub.ReactToLine("RxAn", "world", "", "wdeadbeef", "tim")
+	if len(bFS.ofType("chat_react")) != n {
+		t.Fatal("invalid reacts must not fan out")
+	}
+
+	// DM: the reaction persists in the stored history.
+	if err := hub.RelayDMText("RxAn", "RxAn", "RxBinh", "tin riêng"); err != nil {
+		t.Fatal(err)
+	}
+	dmLines := bFS.ofType("chat")
+	dmID, _ := dmLines[len(dmLines)-1]["id"].(string)
+	if dmID == "" {
+		t.Fatal("dm line has no id")
+	}
+	hub.ReactToLine("RxBinh", "dm", "RxAn", dmID, "vui")
+	hist := dms.History("RxAn", "RxBinh")
+	if len(hist) != 1 || len(hist[0].Reactions["vui"]) != 1 ||
+		hist[0].Reactions["vui"][0] != "RxBinh" {
+		t.Fatalf("dm persisted reactions: %+v", hist)
+	}
+
+	// Alliance: persisted too, and visible in ChatHistory.
+	al, err := hub.allis.Create("RxAn", "Hội Reaction", "RXA", 1, 0, "open", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.allis.Apply(al.ID, "RxBinh", ""); err != nil {
+		t.Fatal(err)
+	}
+	hub.RelayAllianceChat("RxAn", "RxAn", al.ID, hub.allis.MemberUsers(al.ID), "chào hội")
+	ah := hub.allis.ChatHistory(al.ID)
+	if len(ah) != 1 || ah[0].ID == "" {
+		t.Fatalf("alliance history line: %+v", ah)
+	}
+	hub.ReactToLine("RxBinh", "alliance", "", ah[0].ID, "tim")
+	ah = hub.allis.ChatHistory(al.ID)
+	if len(ah[0].Reactions["tim"]) != 1 {
+		t.Fatalf("alliance persisted reactions: %+v", ah[0].Reactions)
+	}
+}
+
+// TestChatImages pins 17f rider 5: validation, alliance +
+// DM photo lines stored + fanned (image field, no text).
+func TestChatImages(t *testing.T) {
+	good := testJPEG(t, 320, 240)
+	if err := ValidateChatImage(good); err != nil {
+		t.Fatalf("good image: %v", err)
+	}
+	if err := ValidateChatImage([]byte("not a jpeg")); err != ErrBadChatImage {
+		t.Fatalf("bad format: %v", err)
+	}
+	if err := ValidateChatImage(make([]byte, ChatImageMaxBytes+1)); err != ErrChatImageBig {
+		t.Fatalf("oversize: %v", err)
+	}
+	if err := ValidateChatImage(testJPEG(t, 1200, 100)); err != ErrChatImageDims {
+		t.Fatalf("over dims: %v", err)
+	}
+
+	hub, acc, dms := hubChatSetup(t)
+	for _, u := range []string{"ImgAn", "ImgBinh"} {
+		if err := acc.Register(u, "secret1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aFS, bFS := &fakeSender{}, &fakeSender{}
+	hub.RegisterUserConn("ImgAn", aFS)
+	hub.RegisterUserConn("ImgBinh", bFS)
+	b64 := base64.StdEncoding.EncodeToString(good)
+
+	// DM photo line: fanned with image + id, no text, and
+	// stored in history.
+	if err := hub.RelayDMImage("ImgAn", "ImgAn", "ImgBinh", b64); err != nil {
+		t.Fatal(err)
+	}
+	lines := bFS.ofType("chat")
+	if len(lines) != 1 || lines[0]["image"] != b64 || lines[0]["id"] == "" {
+		t.Fatalf("dm image line: %v", lines)
+	}
+	if _, hasText := lines[0]["text"]; hasText {
+		t.Fatal("image line must not carry text")
+	}
+	hist := dms.History("ImgAn", "ImgBinh")
+	if len(hist) != 1 || hist[0].Image != b64 {
+		t.Fatalf("dm image history: %+v", hist)
+	}
+
+	// Alliance photo line: stored in the alliance history.
+	al, err := hub.allis.Create("ImgAn", "Hội Ảnh", "IMG", 1, 0, "open", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.allis.Apply(al.ID, "ImgBinh", ""); err != nil {
+		t.Fatal(err)
+	}
+	hub.RelayAllianceImage("ImgAn", "ImgAn", al.ID, hub.allis.MemberUsers(al.ID), b64)
+	ah := hub.allis.ChatHistory(al.ID)
+	if len(ah) != 1 || ah[0].Image != b64 || ah[0].ID == "" {
+		t.Fatalf("alliance image history: %+v", ah)
+	}
+	// A self-DM image is refused like a self-DM text.
+	if err := hub.RelayDMImage("ImgAn", "ImgAn", "ImgAn", b64); err != ErrDMSelf {
+		t.Fatalf("self dm image: %v", err)
+	}
+}

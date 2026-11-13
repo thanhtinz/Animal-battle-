@@ -39,8 +39,11 @@ package main
 // equippable item.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // JPEG decode for the custom-avatar check
 	"strings"
 	"time"
 )
@@ -331,6 +334,90 @@ func (ac *Accounts) titleOwned(a *Account, name string) bool {
 		return false
 	}
 	return grantedHas(a.GrantedTitles, name)
+}
+
+// ------------------------------------------------- custom avatar (17f §5)
+
+// AvatarCustomID is the avatar pick for a self-uploaded
+// photo (owner order 2026-11-12: "cho tự up ảnh bản thân lên
+// nữa"). The client contract: centre-crop square, resize to
+// CustomAvatarSize², JPEG q0.85, ≤ CustomAvatarMaxBytes on
+// the wire. The server validates the payload (a decodable
+// JPEG of exactly the contracted size, under the byte cap)
+// but does NOT re-encode: what the client sent is what other
+// clients fetch back via the avatar_custom op.
+const AvatarCustomID = "custom"
+
+const (
+	CustomAvatarSize     = 256
+	CustomAvatarMaxBytes = 120 * 1024
+)
+
+var (
+	ErrBadCustomAvatar = errors.New("Ảnh không hợp lệ — cần ảnh JPEG 256×256")
+	ErrCustomAvatarBig = errors.New("Ảnh tải lên quá lớn (tối đa 120KB)")
+)
+
+// UploadCustomAvatar validates and stores the account's own
+// photo, equipping it at once (AvatarID = "custom"). A later
+// catalogue pick keeps the bytes for re-equip.
+func (ac *Accounts) UploadCustomAvatar(user string, jpg []byte) (Profile, error) {
+	if len(jpg) > CustomAvatarMaxBytes {
+		return Profile{}, ErrCustomAvatarBig
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(jpg))
+	if err != nil || format != "jpeg" {
+		return Profile{}, ErrBadCustomAvatar
+	}
+	if cfg.Width != CustomAvatarSize || cfg.Height != CustomAvatarSize {
+		return Profile{}, ErrBadCustomAvatar
+	}
+	a, ok := ac.store.GetAccount(user)
+	if !ok {
+		return Profile{}, ErrBadCredentials
+	}
+	ac.touch(a)
+	a.CustomAvatar = append([]byte(nil), jpg...)
+	a.AvatarID = AvatarCustomID
+	if err := ac.store.PutAccount(a); err != nil {
+		return Profile{}, err
+	}
+	return ac.profileOf(a), nil
+}
+
+// CustomAvatarOf returns the account's stored photo bytes
+// (nil when the account never uploaded one). Callers serve
+// these to OTHER clients through the avatar_custom op —
+// avatars are public presentation data, like names.
+func (ac *Accounts) CustomAvatarOf(user string) []byte {
+	a, ok := ac.store.GetAccount(user)
+	if !ok || len(a.CustomAvatar) == 0 {
+		return nil
+	}
+	return append([]byte(nil), a.CustomAvatar...)
+}
+
+// HasCustomAvatar reports whether the account holds a photo
+// (profile payloads carry this as a lightweight marker next
+// to avatar_id "custom").
+func (ac *Accounts) HasCustomAvatar(user string) bool {
+	a, ok := ac.store.GetAccount(user)
+	return ok && len(a.CustomAvatar) > 0
+}
+
+// EquippedTitleOf returns the user's EFFECTIVE equipped
+// display title ("" = none): the stored pick, honoured only
+// while the account still owns it — the same rule profileOf
+// applies (17f rider: chat lines carry it as "title").
+func (ac *Accounts) EquippedTitleOf(user string) string {
+	a, ok := ac.store.GetAccount(user)
+	if !ok || a.DisplayTitle == "" {
+		return ""
+	}
+	if !ac.titleOwned(a, a.DisplayTitle) {
+		return ""
+	}
+	return a.DisplayTitle
 }
 
 // AvatarOf returns the user's effective (normalised) account

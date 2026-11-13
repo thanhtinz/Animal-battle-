@@ -88,8 +88,8 @@ func TestQueueStatusPush(t *testing.T) {
 
 func TestFFAPlacementsStarTableAndElo(t *testing.T) {
 	f := newMMFixture(t)
-	users := registerFFAField(t, f, 8, 0) // all MMR 1000
-	disc := map[string]bool{"Play8": true}   // last place disconnected
+	users := registerFFAField(t, f, 8, 0)  // all MMR 1000
+	disc := map[string]bool{"Play8": true} // last place disconnected
 	outcomes, err := f.acc.RecordRankedPlacements(
 		users, "grassland", "plains", 9000, "", disc)
 	if err != nil {
@@ -165,7 +165,7 @@ func TestFFAStreakAndDemotion(t *testing.T) {
 		t.Fatalf("seed P1: %v", err)
 	}
 	a8, _ := f.acc.store.GetAccount("Play8")
-	a8.Rank.Tier = 1    // Chiến Binh
+	a8.Rank.Tier = 1     // Chiến Binh
 	a8.Rank.Division = 1 // đoàn II (encoding: 0=III, 1=II, 2=I)
 	a8.Rank.Stars = 0
 	if err := f.acc.store.PutAccount(a8); err != nil {

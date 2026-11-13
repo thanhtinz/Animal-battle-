@@ -100,6 +100,17 @@ signal dm_list_received(rows: Array)
 signal dm_thread_received(peer: String, rows: Array)
 signal dm_line_received(peer: String, mine: bool)
 signal system_feed_changed
+# 17f social posts + custom avatars.
+signal post_feed_received(rows: Array)
+signal post_wall_received(rows: Array)
+signal post_alliance_received(rows: Array)
+signal post_created_received(post: Dictionary)
+signal post_patched(post: Dictionary) # a like landed: row replaced in the caches
+signal post_removed(post_id: String)
+signal custom_avatar_ready(user: String)
+# 17f rider 4: a chat line's reaction state changed (the
+# stored line dicts were mutated in place).
+signal chat_reactions_changed
 
 const DEFAULT_URL := "ws://127.0.0.1:8765/ws"
 ## Sim compatibility tag; must match the server's GameVersion.
@@ -197,6 +208,11 @@ var history_rows: Array = []
 var friends_rows: Array = []
 var mail_rows: Array = []
 var mail_unread: int = 0
+# 17f social caches (server rows, newest first).
+var post_feed_rows: Array = []
+var post_wall_rows: Array = []
+var post_ally_rows: Array = []
+var _custom_req: Dictionary = {} # user -> true once a photo fetch was sent (or answered empty)
 var ping_ms: int = -1 # -1 = not connected / no sample yet
 var _ping_accum: float = 0.0
 
@@ -303,6 +319,7 @@ func _ready() -> void:
 			or args.has("mp-alliance2") or args.has("mp-shot-alliance2") \
 			or args.has("mp-settings") or args.has("mp-shot-settings") \
 			or args.has("mp-chathub") or args.has("mp-shot-chathub") \
+			or args.has("mp-social") or args.has("mp-shot-social") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -638,6 +655,12 @@ func _handle_message(txt: String) -> void:
 			player_left.emit(int(m.get("slot", -1)))
 		"desync":
 			desync_notice.emit(int(m.get("tick", 0)))
+		"chat_react":
+			# 17f rider 4: a line's full reaction state —
+			# mutate the stored line dict in place.
+			_apply_reactions(String(m.get("scope", "")),
+					String(m.get("peer", "")), String(m.get("id", "")),
+					m.get("reactions", {}))
 		"chat":
 			var cscope := String(m.get("scope", "match"))
 			var cname := String(m.get("name", "?"))
@@ -652,13 +675,24 @@ func _handle_message(txt: String) -> void:
 			if cscope == "alliance":
 				# 17a: keep a session transcript for the alliance
 				# screen; the line still rides chat_received.
-				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp})
+				# 17f rider 2: the line-identity fields ride
+				# through into the transcript too.
+				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp,
+						"user": String(m.get("user", "")), "avatar_id": String(m.get("avatar_id", "")),
+						"frame_id": String(m.get("frame_id", "")), "title": String(m.get("title", "")),
+						"ts": int(m.get("ts", 0)), "reply_to": m.get("reply_to", {}),
+						"id": String(m.get("id", "")), "reactions": m.get("reactions", {}),
+						"image": String(m.get("image", ""))})
 				if alliance_chat_lines.size() > 100:
 					alliance_chat_lines.pop_front()
 				print("MPLOG alliance chat from=", cname, " text=", ctext)
 			elif cscope == "world":
 				# 17e: the world channel transcript.
-				world_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp})
+				world_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp,
+						"user": String(m.get("user", "")), "avatar_id": String(m.get("avatar_id", "")),
+						"frame_id": String(m.get("frame_id", "")), "title": String(m.get("title", "")),
+						"ts": int(m.get("ts", 0)), "reply_to": m.get("reply_to", {}),
+						"id": String(m.get("id", "")), "reactions": m.get("reactions", {})})
 				if world_chat_lines.size() > 200:
 					world_chat_lines.pop_front()
 				print("MPLOG world chat from=", cname, " text=", ctext)
@@ -718,7 +752,15 @@ func _handle_message(txt: String) -> void:
 				conv.append({"name": String(r.get("name", "")),
 					"text": String(r.get("text", "")),
 					"mine": String(r.get("from", "")) == account_name,
-					"tag": "", "bubble": "mac_dinh", "champ": false})
+					"tag": "", "bubble": "mac_dinh", "champ": false,
+					"user": String(r.get("user", r.get("from", ""))),
+					"avatar_id": String(r.get("avatar_id", "")),
+					"frame_id": String(r.get("frame_id", "")),
+					"title": String(r.get("title", "")),
+					"ts": int(r.get("ts", r.get("at", 0))),
+					"reply_to": r.get("reply_to", {}),
+					"id": String(r.get("id", "")), "reactions": r.get("reactions", {}),
+					"image": String(r.get("image", ""))})
 			dm_threads[dpeer] = conv
 			dm_unread.erase(dpeer)
 			dm_thread_received.emit(dpeer, drows)
@@ -743,6 +785,12 @@ func _handle_message(txt: String) -> void:
 			# cosmetic-skin ownership arrives with the profile too.
 			if auth_profile.has("avatar_id"):
 				Avatars.set_local_avatar(String(auth_profile.get("avatar_id", Avatars.DEFAULT_ID)))
+				# 17f §5: my equipped photo lives on the
+				# server — fetch it when this device has no
+				# local copy yet.
+				if String(auth_profile.get("avatar_id", "")) == Avatars.CUSTOM_ID \
+						and not Avatars.has_own_custom():
+					request_custom_avatar(account_name)
 			Characters.set_owned_skins(auth_profile.get("owned_skins", []))
 			auth_ok.emit(auth_token, auth_profile)
 		"avatar":
@@ -792,7 +840,42 @@ func _handle_message(txt: String) -> void:
 			history_received.emit(history_rows)
 		"friends":
 			friends_rows = m.get("rows", [])
+			_prefetch_customs(friends_rows, "user")
 			friends_received.emit(friends_rows)
+		"post_feed":
+			post_feed_rows = m.get("rows", [])
+			_prefetch_customs(post_feed_rows, "author")
+			post_feed_received.emit(post_feed_rows)
+		"post_wall":
+			post_wall_rows = m.get("rows", [])
+			_prefetch_customs(post_wall_rows, "author")
+			post_wall_received.emit(post_wall_rows)
+		"post_alliance":
+			post_ally_rows = m.get("rows", [])
+			_prefetch_customs(post_ally_rows, "author")
+			post_alliance_received.emit(post_ally_rows)
+		"post_created":
+			var npost: Dictionary = m.get("post", {})
+			post_created_received.emit(npost)
+		"post_like":
+			var lpost: Dictionary = m.get("post", {})
+			_patch_post_row(lpost)
+			post_patched.emit(lpost)
+		"post_deleted":
+			var del_id := String(m.get("post_id", ""))
+			_remove_post_row(del_id)
+			post_removed.emit(del_id)
+		"avatar_custom":
+			# 17f §5: a fetched photo ("" = the account has
+			# none — the request marker stays set so surfaces
+			# stop asking and keep the default avatar).
+			var cuser := String(m.get("user", ""))
+			var cjpg := String(m.get("jpg", ""))
+			_custom_req[cuser] = true
+			if cjpg != "" and cuser != "":
+				Avatars.set_custom_bytes(cuser,
+						Marshalls.base64_to_raw(cjpg))
+				custom_avatar_ready.emit(cuser)
 		"friend_error":
 			friend_error.emit(String(m.get("msg", "Lỗi bạn bè")))
 		"replay_data":
@@ -827,11 +910,21 @@ func _handle_message(txt: String) -> void:
 					alliance_chat_lines.append({
 						"name": String(cm.get("name", "?")),
 						"text": String(cm.get("text", "")),
-						"tag": mtag, "hist": true})
+						"tag": mtag, "hist": true,
+						"user": String(cm.get("user", "")),
+						"avatar_id": String(cm.get("avatar_id", "")),
+						"frame_id": String(cm.get("frame_id", "")),
+						"title": String(cm.get("title", "")),
+						"ts": int(cm.get("ts", cm.get("at", 0))),
+						"reply_to": cm.get("reply_to", {}),
+						"id": String(cm.get("id", "")), "reactions": cm.get("reactions", {}),
+						"image": String(cm.get("image", ""))})
 			print("MPLOG alliance home mine=", String(alliance_mine.get("name", "")),
 					" role=", String(alliance_mine.get("my_role", "")),
 					" members=", int(alliance_mine.get("members_count", 0)),
 					" invites=", alliance_invites.size())
+			if not alliance_mine.is_empty():
+				_prefetch_customs(alliance_mine.get("members", []), "user", "avatar")
 			alliance_home_received.emit(alliance_mine, alliance_invites)
 			var anotice := String(alliance_mine.get("notice", ""))
 			if anotice != "" and anotice != _last_ally_notice:
@@ -845,6 +938,7 @@ func _handle_message(txt: String) -> void:
 			leaderboard_mode = String(m.get("mode", "wl"))
 			var me_v = m.get("me", {})
 			leaderboard_me = me_v if me_v is Dictionary else {}
+			_prefetch_customs(m.get("rows", []), "user")
 			leaderboard_received.emit(m.get("rows", []), leaderboard_mode, leaderboard_me)
 		"resync":
 			resync_started.emit(int(m.get("tick", 0)), int(m.get("source", -1)))
@@ -995,15 +1089,40 @@ func alliance_disband(id: String) -> void:
 
 
 func alliance_chat(text: String) -> void:
-	_send({"t": "alliance_chat", "text": text})
+	_send(_with_reply({"t": "alliance_chat", "text": text}))
 
 # ------------------------------------------------------------------
 # 17e chat hub API: world channel, DM ops, voice relays, the
 # megaphone, and the admin grant. All lobby traffic — the
 # server validates login, rate limits, and permissions.
 
+# 17f rider 3: the pending reply reference. The chat hub
+# sets it when the player taps a line's reply button; the
+# next world / alliance / DM text send carries it as
+# `reply_to` and it clears. An @username appears ONLY on
+# lines that carry one of these — never as a standing part
+# of a chat line.
+var _pending_reply: Dictionary = {}
+
+
+## Stores (or, with an empty user, clears) the pending reply
+## {user, name} for the next chat send.
+func set_chat_reply(d: Dictionary) -> void:
+	var u := String(d.get("user", ""))
+	if u == "":
+		_pending_reply = {}
+		return
+	_pending_reply = {"user": u, "name": String(d.get("name", ""))}
+
+
+func _with_reply(msg: Dictionary) -> Dictionary:
+	if not _pending_reply.is_empty():
+		msg["reply_to"] = _pending_reply.duplicate()
+		_pending_reply = {}
+	return msg
+
 func world_chat(text: String) -> void:
-	_send({"t": "world_chat", "text": text})
+	_send(_with_reply({"t": "world_chat", "text": text}))
 
 
 func world_voice(wav: PackedByteArray, dur: float) -> void:
@@ -1024,7 +1143,44 @@ func dm_open(peer: String) -> void:
 
 
 func dm_send(peer: String, text: String) -> void:
-	_send({"t": "dm_send", "peer": peer, "text": text})
+	_send(_with_reply({"t": "dm_send", "peer": peer, "text": text}))
+
+
+## Line reactions (17f rider 4): toggles my reaction of
+## `emote` on the line `id` in a channel ("world" |
+## "alliance" | "dm"; peer only matters for "dm"). The
+## answer is a chat_react push with the line's full state.
+func react_to_line(channel: String, peer: String, id: String, emote: String) -> void:
+	_send({"t": "chat_react", "channel": channel, "peer": peer,
+			"line_id": id, "emote": emote})
+
+
+## Chat photo line (17f rider 5): alliance + DM channels
+## only. jpg is the client's downscaled JPEG (≤1024, q~0.8).
+func send_chat_image(channel: String, peer: String, jpg: PackedByteArray) -> void:
+	_send({"t": "chat_image", "channel": channel, "peer": peer,
+			"jpg": Marshalls.raw_to_base64(jpg)})
+
+
+## Applies a chat_react push: the stored line dict (in the
+## world / alliance transcript or the DM thread) is mutated
+## IN PLACE so fingerprint-driven views re-render.
+func _apply_reactions(scope: String, peer: String, line_id: String,
+		reactions: Dictionary) -> void:
+	var pools: Array = []
+	match scope:
+		"world":
+			pools = [world_chat_lines]
+		"alliance":
+			pools = [alliance_chat_lines]
+		"dm":
+			pools = [dm_threads.get(peer, [])]
+	for pool in pools:
+		for line in pool:
+			if line is Dictionary and String(line.get("id", "")) == line_id:
+				line["reactions"] = reactions
+				chat_reactions_changed.emit()
+				return
 
 
 func dm_voice(peer: String, wav: PackedByteArray, dur: float) -> void:
@@ -1086,7 +1242,14 @@ func _file_dm_line(m: Dictionary, cname: String, ctext: String,
 	var mine := String(m.get("from_user", "")) == account_name
 	var lines: Array = dm_threads.get(peer, [])
 	lines.append({"name": cname, "text": ctext, "tag": ctag,
-		"bubble": cbub, "champ": cchamp, "mine": mine})
+		"bubble": cbub, "champ": cchamp, "mine": mine,
+		"user": String(m.get("user", m.get("from_user", ""))),
+		"avatar_id": String(m.get("avatar_id", "")),
+		"frame_id": String(m.get("frame_id", "")),
+		"title": String(m.get("title", "")),
+		"ts": int(m.get("ts", 0)), "reply_to": m.get("reply_to", {}),
+		"id": String(m.get("id", "")), "reactions": m.get("reactions", {}),
+		"image": String(m.get("image", ""))})
 	if lines.size() > 200:
 		lines.pop_front()
 	dm_threads[peer] = lines
@@ -1102,7 +1265,11 @@ func _on_voice_msg(m: Dictionary, wav: PackedByteArray) -> void:
 		"tag": String(m.get("ally_tag", "")),
 		"bubble": String(m.get("bubble", "mac_dinh")),
 		"champ": bool(m.get("war_champ", false)),
-		"voice": true, "dur": float(m.get("dur", 0.0)), "data": wav}
+		"voice": true, "dur": float(m.get("dur", 0.0)), "data": wav,
+		"id": String(m.get("id", "")), "reactions": m.get("reactions", {}),
+		"user": String(m.get("user", "")), "avatar_id": String(m.get("avatar_id", "")),
+		"frame_id": String(m.get("frame_id", "")), "title": String(m.get("title", "")),
+		"ts": int(m.get("ts", 0))}
 	match scope:
 		"world":
 			world_chat_lines.append(entry)
@@ -1429,6 +1596,79 @@ func set_avatar(id: String) -> void:
 	Avatars.set_local_avatar(id)
 	if account_name != "":
 		_send({"t": "set_avatar", "avatar": Avatars.normalize_id(id)})
+
+
+# ------------------------------------------------------------ 17f social
+
+## Asks the server for one account's custom photo (at most
+## once per session per user; the answer lands in Avatars'
+## cache and custom_avatar_ready fires). Guests never fetch.
+func request_custom_avatar(user: String) -> void:
+	if user == "" or account_name == "" or _custom_req.has(user):
+		return
+	_custom_req[user] = true
+	_send({"t": "avatar_custom", "user": user})
+
+
+## Scans wire rows for "custom" avatars and fetches the
+## missing photos (friends / leaderboard / post / member rows).
+func _prefetch_customs(rows: Array, user_key: String, avatar_key := "avatar_id") -> void:
+	for r in rows:
+		if r is Dictionary and String(r.get(avatar_key, "")) == Avatars.CUSTOM_ID:
+			request_custom_avatar(String(r.get(user_key, "")))
+
+
+func _patch_post_row(post: Dictionary) -> void:
+	var pid := String(post.get("id", ""))
+	if pid == "":
+		return
+	for rows in [post_feed_rows, post_wall_rows, post_ally_rows]:
+		for i in rows.size():
+			if String(rows[i].get("id", "")) == pid:
+				rows[i] = post
+
+
+func _remove_post_row(pid: String) -> void:
+	if pid == "":
+		return
+	for rows in [post_feed_rows, post_wall_rows, post_ally_rows]:
+		for i in range(rows.size() - 1, -1, -1):
+			if String(rows[i].get("id", "")) == pid:
+				rows.remove_at(i)
+
+
+## Uploads my own photo (already a 256×256 JPEG from the
+## settings import pipeline). The answer is an "avatar"
+## message (id "custom") + a profile_update.
+func upload_custom_avatar(jpg: PackedByteArray) -> void:
+	_send({"t": "avatar_upload", "image": Marshalls.raw_to_base64(jpg)})
+
+
+func post_request_feed() -> void:
+	_send({"t": "post_feed"})
+
+
+func post_request_wall() -> void:
+	_send({"t": "post_wall"})
+
+
+func post_request_alliance() -> void:
+	_send({"t": "post_alliance"})
+
+
+## scope_alliance: false = my wall (the MXH tabs), true = my
+## alliance's Bài viết tab.
+func post_create(scope_alliance: bool, text: String, image: String) -> void:
+	_send({"t": "post_create", "scope": "alliance" if scope_alliance else "",
+			"text": text, "image": image})
+
+
+func post_like(post_id: String) -> void:
+	_send({"t": "post_like", "post_id": post_id})
+
+
+func post_delete(post_id: String) -> void:
+	_send({"t": "post_delete", "post_id": post_id})
 
 
 ## Display-name rename (17d): set_name's sibling WITH the
@@ -2006,6 +2246,9 @@ func _auto_process() -> void:
 	if auto.has("mp-shot-settings") and _auto_authed and not _auto_shot_done:
 		_auto_settings_shot(cs)
 		return
+	if auto.has("mp-shot-social") and _auto_authed and not _auto_shot_done:
+		_auto_social_shot(cs)
+		return
 	# 17e chat-hub smoke driver + captures.
 	if auto.has("mp-chathub") and _auto_authed:
 		if _auto_chathub_process(cs):
@@ -2013,6 +2256,10 @@ func _auto_process() -> void:
 	if auto.has("mp-shot-chathub") and _auto_authed and not _auto_shot_done:
 		_auto_chathub_shot(cs)
 		return
+	# 17f social smoke driver.
+	if auto.has("mp-social") and _auto_authed:
+		if _auto_social_process(cs):
+			return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
 	# shoot and quit.
@@ -4039,4 +4286,322 @@ func _auto_chathub_shot(cs) -> void:
 				_auto_shot_done = true
 				_save_shot(path)
 				print("MPLOG chathub shot saved mode=", mode)
+				get_tree().quit()
+
+
+# ------------------------------------------------------------------
+# 17f social smoke driver (--mp-social=<role>; tests/
+# social_smoke.sh). Roles:
+#   a   — posts on my wall (with a gallery image), creates
+#         the open alliance "Hội Xã Hội", posts in it, then
+#         uploads a custom avatar through the SAME settings
+#         import pipeline (fixture file — the sandbox
+#         cannot drive the OS picker).
+#   b   — friend of A: A's post lands in my feed, my like
+#         lands, I join the alliance from the browser and
+#         see its post, and A's custom avatar resolves in
+#         my friends rows.
+#   c   — stranger: my feed stays clean of A's posts and
+#         my alliance post list is empty.
+#   a2  — fresh process as A: the wall (album source)
+#         persisted server-side.
+
+var _soc_stage: int = 0
+var _soc_next_poll: int = 0
+var _soc_authed_at: int = 0
+var _soc_quit_at: int = 0
+var _soc_hooked: bool = false
+var _soc_created: Dictionary = {}
+var _soc_wall_rows: int = -1
+var _soc_ally_post_rows: int = -1
+var _soc_feed_has_a: bool = false
+var _soc_like_ok: bool = false
+var _soc_ally_id: String = ""
+var _soc_avatar_custom: bool = false
+var _soc_lb_me: bool = false
+
+
+func _soc_hook() -> void:
+	if _soc_hooked:
+		return
+	_soc_hooked = true
+	post_created_received.connect(func(p: Dictionary) -> void:
+		_soc_created = p)
+	post_wall_received.connect(func(rows: Array) -> void:
+		_soc_wall_rows = rows.size())
+	post_alliance_received.connect(func(rows: Array) -> void:
+		_soc_ally_post_rows = rows.size())
+	post_feed_received.connect(func(rows: Array) -> void:
+		for r in rows:
+			if String(r.get("author", "")) == "SocA":
+				_soc_feed_has_a = true)
+	post_patched.connect(func(p: Dictionary) -> void:
+		if bool(p.get("liked", false)) and int(p.get("likes", 0)) >= 1:
+			_soc_like_ok = true)
+	alliance_list_received.connect(func(rows: Array) -> void:
+		for r in rows:
+			if String(r.get("name", "")) == "Hội Xã Hội":
+				_soc_ally_id = String(r.get("id", "")))
+	avatar_changed.connect(func(a: String) -> void:
+		if a == Avatars.CUSTOM_ID:
+			_soc_avatar_custom = true)
+	leaderboard_received.connect(func(rows: Array, _mode: String, _me: Dictionary) -> void:
+		for r in rows:
+			if String(r.get("user", "")) == account_name:
+				_soc_lb_me = true)
+
+
+func _auto_social_process(cs) -> bool:
+	_soc_hook()
+	var now := Time.get_ticks_msec()
+	if _soc_authed_at == 0:
+		_soc_authed_at = now
+	if _soc_quit_at == 0 and now - _soc_authed_at > 150000:
+		print("MPLOG social TIMEOUT role=", String(auto.get("mp-social", "")),
+				" stage=", _soc_stage)
+		_soc_quit_at = now + 400
+	if _soc_quit_at > 0:
+		if now >= _soc_quit_at:
+			get_tree().quit()
+		return true
+	if now < _soc_next_poll:
+		return true
+	_soc_next_poll = now + 600
+	var role := String(auto.get("mp-social", ""))
+	match role:
+		"a":
+			match _soc_stage:
+				0:
+					post_create(false, "Bài mở màn của A [e:vui]", "art:05")
+					print("MPLOG social a post sent")
+					_soc_stage = 1
+				1:
+					if not _soc_created.is_empty():
+						post_request_wall()
+						_soc_stage = 2
+				2:
+					if _soc_wall_rows >= 1:
+						print("MPLOG social a wall ok rows=", _soc_wall_rows)
+						alliance_create("Hội Xã Hội", "SOC", 4, 1, "open", "Hội của dân xã hội")
+						_soc_stage = 3
+				3:
+					if not alliance_mine.is_empty():
+						post_create(true, "Chào hội xã hội", "hero:knight")
+						print("MPLOG social a ally post sent")
+						_soc_stage = 4
+				4:
+					if String(_soc_created.get("scope", "")) != "":
+						post_request_alliance()
+						_soc_stage = 5
+				5:
+					if _soc_ally_post_rows >= 1:
+						print("MPLOG social a ally wall ok rows=", _soc_ally_post_rows)
+						if cs != null and cs.has_method("shot_import_custom_avatar"):
+							cs.shot_import_custom_avatar(
+									"res://assets/avatars/avatar_art_07.png")
+						_soc_stage = 6
+				6:
+					if _soc_avatar_custom:
+						print("MPLOG social a avatar custom ok")
+						_soc_quit_at = now + 25000 # stay for B
+						_soc_stage = 7
+		"b":
+			match _soc_stage:
+				0:
+					post_request_feed()
+					if _soc_feed_has_a:
+						print("MPLOG social b feed ok")
+						for r in post_feed_rows:
+							if String(r.get("author", "")) == "SocA":
+								post_like(String(r.get("id", "")))
+						_soc_stage = 1
+				1:
+					if _soc_like_ok:
+						print("MPLOG social b like ok")
+						alliance_request_list("")
+						_soc_stage = 2
+				2:
+					# Re-request every poll: A may not have
+					# created the alliance yet when B first
+					# asked (the two clients race).
+					alliance_request_list("")
+					if _soc_ally_id != "":
+						alliance_apply(_soc_ally_id, "")
+						_soc_stage = 3
+				3:
+					if not alliance_mine.is_empty():
+						post_request_alliance()
+						_soc_stage = 4
+				4:
+					if _soc_ally_post_rows >= 1:
+						print("MPLOG social b ally ok rows=", _soc_ally_post_rows)
+						request_friends()
+						_soc_stage = 5
+				5:
+					request_friends()
+					for f in friends_rows:
+						if String(f.get("user", "")) == "SocA" \
+								and String(f.get("avatar_id", "")) == Avatars.CUSTOM_ID \
+								and Avatars._custom_cache.has("SocA"):
+							print("MPLOG social b sees custom avatar")
+							_soc_quit_at = now + 600
+							_soc_stage = 6
+		"c":
+			match _soc_stage:
+				0:
+					post_request_feed()
+					post_request_alliance()
+					_soc_stage = 1
+				1:
+					if _soc_ally_post_rows == 0 and not _soc_feed_has_a:
+						print("MPLOG social c feed clean")
+						print("MPLOG social c ally empty")
+						_soc_quit_at = now + 600
+						_soc_stage = 2
+					elif _soc_feed_has_a:
+						print("MPLOG social c FAIL feed leaked")
+						_soc_quit_at = now + 600
+						_soc_stage = 2
+		"a2":
+			match _soc_stage:
+				0:
+					post_request_wall()
+					_soc_stage = 1
+				1:
+					if _soc_wall_rows >= 1:
+						var has_img := false
+						for r in post_wall_rows:
+							if String(r.get("image", "")) != "":
+								has_img = true
+						if has_img:
+							print("MPLOG social a2 album source ok rows=", _soc_wall_rows)
+						_soc_quit_at = now + 600
+						_soc_stage = 2
+	return true
+
+
+# ------------------------------------------------------------------
+# 17f social captures (--mp-shot-social=<mode> + --mp-shot-file).
+# Modes: feed / wall / album (profile MXH tabs, posts seeded
+# in the store), allyposts (create + two posts, posts tab —
+# the left card shows the FLAG badge), allylb (leaderboard
+# rows with the flag chip), create (the v2 create form),
+# avatarup (settings avatar tab after a fixture import),
+# profilecustom (profile card wearing the custom photo +
+# the seeded granted frame_01).
+
+var _ssh_stage: int = 0
+var _ssh_at: int = 0
+var _ssh_posts_made: int = 0
+
+
+func _auto_social_shot(cs) -> void:
+	_soc_hook()
+	var now := Time.get_ticks_msec()
+	if _auto_home_at == 0:
+		_auto_home_at = now
+		return
+	var mode := String(auto.get("mp-shot-social", "feed"))
+	var path := String(auto.get("mp-shot-file", ""))
+	match _ssh_stage:
+		0:
+			if now - _auto_home_at > 900:
+				_ssh_at = now
+				match mode:
+					"feed", "wall", "album":
+						post_request_feed()
+						post_request_wall()
+						_ssh_stage = 1
+					"allyposts", "allylb":
+						if alliance_mine.is_empty():
+							alliance_create("Hội Ảnh 17F", "HA17", 2, 1,
+									"open", "Hội lập để chụp hình")
+						_ssh_stage = 2
+					"create":
+						if cs != null and cs.has_method("open_alliance_create_shot"):
+							cs.open_alliance_create_shot(2, 1)
+						_ssh_stage = 9
+					"avatarup":
+						if cs != null and cs.has_method("shot_import_custom_avatar"):
+							cs.shot_import_custom_avatar(
+									"res://assets/avatars/avatar_art_07.png")
+						_ssh_stage = 5
+					"profilecustom":
+						set_frame("frame_01")
+						if cs != null and cs.has_method("shot_import_custom_avatar"):
+							cs.shot_import_custom_avatar(
+									"res://assets/avatars/avatar_art_07.png")
+						_ssh_stage = 6
+		1: # MXH: wait for the seeded rows, then open the tab.
+			if post_feed_rows.size() >= 2 or now - _ssh_at > 9000:
+				if cs != null and cs.has_method("open_profile_shot"):
+					cs.open_profile_shot()
+				_ssh_at = now
+				_ssh_stage = 8
+		2: # alliance modes: joined → posts or leaderboard.
+			if not alliance_mine.is_empty():
+				if mode == "allyposts":
+					post_create(true, "Bài đầu tiên của hội nè", "art:12")
+					_ssh_posts_made = 1
+					_ssh_at = now
+					_ssh_stage = 3
+				else:
+					request_leaderboard()
+					_ssh_at = now
+					_ssh_stage = 4
+		3:
+			if String(_soc_created.get("scope", "")) != "" and _ssh_posts_made == 1:
+				post_create(true, "Kỵ sĩ của hội ra trận", "hero:knight")
+				_ssh_posts_made = 2
+				_soc_created = {}
+				_ssh_at = now
+			elif _ssh_posts_made == 2 and String(_soc_created.get("scope", "")) != "":
+				post_request_alliance()
+				_ssh_at = now
+				_ssh_stage = 7
+			elif now - _ssh_at > 12000:
+				_ssh_stage = 7
+		4: # leaderboard rows arrived → open the board.
+			if _soc_lb_me or now - _ssh_at > 9000:
+				if cs != null and cs.has_method("open_leaderboard_shot"):
+					cs.open_leaderboard_shot(true)
+				_ssh_at = now
+				_ssh_stage = 9
+		5: # avatar tab once the upload equipped "custom".
+			if String(auth_profile.get("avatar_id", "")) == Avatars.CUSTOM_ID \
+					or now - _ssh_at > 12000:
+				if cs != null and cs.has_method("open_settings_shot"):
+					cs.open_settings_shot("avatar")
+				_ssh_at = now
+				_ssh_stage = 9
+		6: # profile once the upload equipped "custom".
+			if String(auth_profile.get("avatar_id", "")) == Avatars.CUSTOM_ID \
+					or now - _ssh_at > 12000:
+				# The import hook leaves the settings panel
+				# open — close it so the profile card shows.
+				if cs != null and cs.settings_panels != null \
+						and cs.settings_panels.has_method("close"):
+					cs.settings_panels.close()
+				if cs != null and cs.has_method("open_profile_shot"):
+					cs.open_profile_shot()
+				_ssh_at = now
+				_ssh_stage = 9
+		7: # alliance posts loaded → open screen + posts tab.
+			if post_ally_rows.size() >= 2 or now - _ssh_at > 9000:
+				if cs != null and cs.has_method("open_alliance_shot"):
+					cs.open_alliance_shot()
+				if cs != null and cs.alliance_screen != null:
+					cs.alliance_screen.shot_set_tab("posts")
+				_ssh_at = now
+				_ssh_stage = 9
+		8: # profile open → select the MXH tab next tick.
+			if cs != null and cs.profile_screen != null:
+				cs.profile_screen.shot_show_mxh(mode)
+			_ssh_at = now
+			_ssh_stage = 9
+		9:
+			if now - _ssh_at > 1300:
+				_auto_shot_done = true
+				_save_shot(path)
+				print("MPLOG social shot saved mode=", mode)
 				get_tree().quit()

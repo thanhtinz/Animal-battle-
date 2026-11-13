@@ -40,6 +40,7 @@ const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
 const FA_MIC := 0xF130
 const FA_BULLHORN := 0xF0A1
 const FA_REPLY := 0xF3E5
+const FA_IMAGE := 0xF03E
 
 const TABS := ["system", "world", "alliance", "dm"]
 const TAB_NAMES := {
@@ -301,6 +302,74 @@ func _loa_chip() -> Control:
 	return holder
 
 
+func _image_btn(channel: String) -> Button:
+	var b := _button("", false, 48)
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	b.add_theme_font_override("font", _fa_font)
+	b.add_theme_font_size_override("font_size", 16)
+	b.text = String.chr(FA_IMAGE)
+	b.tooltip_text = "Gửi ảnh"
+	b.pressed.connect(func() -> void: _pick_image(channel))
+	return b
+
+
+func _pick_image(channel: String) -> void:
+	# Platform file picker; the processing+send half is
+	# _send_image_file (also the fixture entry for captures).
+	var cb := Callable(func(ok: bool, paths: PackedStringArray, _idx: int) -> void:
+		if ok and paths.size() > 0:
+			_send_image_file(channel, paths[0]))
+	DisplayServer.file_dialog_show("Chọn ảnh gửi", "", "", false,
+		DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
+		PackedStringArray(["*.png, *.jpg, *.jpeg ; Ảnh"]), cb)
+
+
+func _send_image_file(channel: String, path: String) -> void:
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		_set_status("Không đọc được ảnh đã chọn.", true)
+		return
+	_send_image_bytes(channel, bytes, path.get_extension().to_lower())
+
+
+func _send_image_bytes(channel: String, bytes: PackedByteArray, ext: String) -> void:
+	var img := Image.new()
+	var err := OK
+	match ext:
+		"png":
+			err = img.load_png_from_buffer(bytes)
+		"jpg", "jpeg":
+			err = img.load_jpg_from_buffer(bytes)
+		_:
+			err = img.load_png_from_buffer(bytes)
+			if err != OK:
+				err = img.load_jpg_from_buffer(bytes)
+	if err != OK or img.is_empty():
+		_set_status("Ảnh không hợp lệ.", true)
+		_render()
+		return
+	var mx := maxi(img.get_width(), img.get_height())
+	if mx > 1024:
+		var s := 1024.0 / float(mx)
+		img.resize(int(img.get_width() * s), int(img.get_height() * s),
+			Image.INTERPOLATE_BILINEAR)
+	var jpg := img.save_jpg_to_buffer(0.82)
+	if jpg.size() > 400 * 1024:
+		img.resize(img.get_width() * 3 / 4, img.get_height() * 3 / 4,
+			Image.INTERPOLATE_BILINEAR)
+		jpg = img.save_jpg_to_buffer(0.78)
+	if jpg.size() > 400 * 1024:
+		_set_status("Ảnh quá lớn sau khi nén — hãy chọn ảnh nhỏ hơn.", true)
+		_render()
+		return
+	if Net.has_method("send_chat_image"):
+		Net.send_chat_image(channel, _dm_peer, jpg)
+	else:
+		_set_status("Gửi ảnh chưa khả dụng.", true)
+	_render()
+
+
 func _button(text: String, primary := false, min_w := 0) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -379,7 +448,7 @@ func _render() -> void:
 		Net.system_feed.size(), Net.mail_rows.size(),
 		Net.megaphone_count, Net.account_name,
 		String(Net.alliance_mine.get("name", "")), Net.friends_rows.size(),
-		Net.dm_total_unread()])
+		Net.dm_total_unread(), _rx_fp()])
 	if sig == _sig:
 		return
 	_sig = sig
@@ -423,6 +492,33 @@ func _scroll_to_bottom(sc: ScrollContainer) -> void:
 		sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
 
 
+const QUICK_REACTS: Array[String] = ["like", "hun", "cuoi", "cuoi_khoc", "ngac_nhien", "buon"]
+
+
+func _rx_fp() -> String:
+	# Reaction fingerprint so a fanned-out reaction update
+	# re-renders the open conversation.
+	var parts: Array[String] = []
+	for lines in [Net.world_chat_lines, Net.alliance_chat_lines,
+			Net.dm_threads.get(_dm_peer, [])]:
+		for l in lines:
+			var rx: Dictionary = l.get("reactions", {}) if l.get("reactions") is Dictionary else {}
+			if not rx.is_empty():
+				parts.append(JSON.stringify(rx))
+	return "|".join(parts)
+
+var _open_key := ""
+var _img_tex_cache: Dictionary = {}
+
+
+func _line_key(line: Dictionary) -> String:
+	var id := String(line.get("id", ""))
+	if id != "":
+		return id
+	return "%s|%s|%s" % [String(line.get("name", "")),
+		String(line.get("text", "")), str(line.get("ts", line.get("_cts", 0)))]
+
+
 func _line_time(line: Dictionary) -> String:
 	var ts := int(line.get("ts", 0))
 	if ts <= 0:
@@ -435,21 +531,77 @@ func _line_time(line: Dictionary) -> String:
 	return "%02d:%02d" % [int(d.get("hour", 0)), int(d.get("minute", 0))]
 
 
-func _line_row(line: Dictionary) -> Control:
-	# Owner layout order 2026-11-12: each message is a block —
+func _reaction_chips(line: Dictionary) -> Control:
+	var chips := HBoxContainer.new()
+	chips.add_theme_constant_override("separation", 5)
+	var rx: Dictionary = line.get("reactions", {}) if line.get("reactions") is Dictionary else {}
+	var emotes_sorted: Array = rx.keys()
+	emotes_sorted.sort_custom(func(a: String, b: String) -> bool:
+		return (rx[a] as Array).size() > (rx[b] as Array).size())
+	for e in emotes_sorted:
+		var users: Array = rx[e]
+		if users.is_empty():
+			continue
+		var chip := PanelContainer.new()
+		var mine := users.has(Net.account_name)
+		chip.add_theme_stylebox_override("panel", _sb(
+			Color(0.85, 0.64, 0.25, 0.38) if mine else Color(1, 1, 1, 0.07), 8,
+			Color(0.85, 0.64, 0.25, 0.6) if mine else Color(1, 1, 1, 0.14), 1))
+		var hb := HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 4)
+		chip.add_child(hb)
+		var tr := TextureRect.new()
+		tr.texture = load(Emotes.path_of(String(e)))
+		tr.custom_minimum_size = Vector2(16, 16)
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hb.add_child(tr)
+		var cl := _label(str(users.size()), 12, GOLD_TXT if mine else PAPER)
+		cl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hb.add_child(cl)
+		chips.add_child(chip)
+	return chips
+
+
+func _line_row(line: Dictionary, channel: String) -> Control:
+	# Owner layout orders 2026-11-12: each message is a block —
 	# sender AVATAR at the left; a header line with the sender
-	# name, their title, <alliance tag> and @username; the
-	# TIME at the right end of the header; the message itself
-	# under the header.
+	# name, their title, <alliance tag> and (only on replies)
+	# @username of the player replied to; the TIME at the right
+	# end of the header; the message under the header. NO
+	# permanent action buttons: TAPPING the message reveals
+	# the reaction row + a Reply button.
 	var bubble := String(line.get("bubble", "mac_dinh"))
 	var st: Dictionary = ChatBubbles.STYLES.get(bubble, ChatBubbles.STYLES["mac_dinh"])
+	var key := _line_key(line)
+	var open := key != "" and key == _open_key
+	var cell := PanelContainer.new()
+	cell.add_theme_stylebox_override("panel", _sb(
+		Color(1, 1, 1, 0.05) if open else Color(0, 0, 0, 0), 8))
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tap := Button.new()
+	tap.text = ""
+	tap.focus_mode = Control.FOCUS_NONE
+	for sn in ["normal", "hover", "pressed", "focus"]:
+		tap.add_theme_stylebox_override(sn, _sb(Color(0, 0, 0, 0), 8))
+	tap.pressed.connect(func() -> void:
+		_open_key = "" if _open_key == key else key
+		_render())
+	cell.add_child(tap)
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 3)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(inner)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.add_child(row)
 	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(34, 34)
 	av.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	av.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	av.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	av.set_content(Avatars.texture_for_user(
 		String(line.get("avatar_id", "")), String(line.get("user", ""))),
 		String(line.get("frame_id", "")), false)
@@ -457,60 +609,135 @@ func _line_row(line: Dictionary) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 2)
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(col)
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 6)
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(head)
 	var nl := _label(String(line.get("name", "?")), 14, Color(st["text"]))
 	nl.clip_text = true
+	nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(nl)
 	var title := String(line.get("title", ""))
 	if title != "":
-		head.add_child(_label(title, 12, GOLD_TXT))
+		var tl := _label(title, 12, GOLD_TXT)
+		tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.add_child(tl)
 	if bool(line.get("champ", false)):
-		head.add_child(_label("<Liên minh vô địch>", 12, GOLD_TXT))
+		var cl2 := _label("<Liên minh vô địch>", 12, GOLD_TXT)
+		cl2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.add_child(cl2)
 	var tag := String(line.get("tag", ""))
 	if tag != "":
-		head.add_child(_label("<%s>" % tag, 12, MUTED))
-	# Owner rule 2026-11-12: the @username appears ONLY on a
-	# message that REPLIES to someone — it names the player
-	# being replied to. Ordinary lines show avatar, display
-	# name, title and <TAG> only.
+		var gl := _label("<%s>" % tag, 12, MUTED)
+		gl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.add_child(gl)
 	var rto: Dictionary = line.get("reply_to", {}) if line.get("reply_to") is Dictionary else {}
 	if not rto.is_empty() and String(rto.get("user", "")) != "":
-		head.add_child(_label("@%s" % String(rto.get("user", "")), 12, Color(0.55, 0.75, 1.0)))
+		var rl := _label("@%s" % String(rto.get("user", "")), 12, Color(0.55, 0.75, 1.0))
+		rl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.add_child(rl)
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(sp)
-	var uname := String(line.get("user", ""))
-	if uname != "":
-		var rb := Button.new()
-		rb.text = String.chr(FA_REPLY)
-		rb.add_theme_font_override("font", _fa_font)
-		rb.add_theme_font_size_override("font_size", 11)
-		rb.custom_minimum_size = Vector2(24, 20)
-		rb.add_theme_color_override("font_color", MUTED)
-		rb.add_theme_color_override("font_hover_color", GOLD_TXT)
-		rb.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 6))
-		rb.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.08), 6))
-		rb.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.12), 6))
-		rb.add_theme_stylebox_override("focus", _sb(Color(0, 0, 0, 0), 6))
-		rb.tooltip_text = "Trả lời"
-		var rname := String(line.get("name", ""))
-		rb.pressed.connect(func() -> void:
-			_reply_to = {"user": uname, "name": rname}
-			_render()
-			if _edit != null and is_instance_valid(_edit):
-				_edit.grab_focus())
-		head.add_child(rb)
-	head.add_child(_label(_line_time(line), 12, MUTED))
+	var tlab := _label(_line_time(line), 12, MUTED)
+	tlab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(tlab)
 	if bool(line.get("voice", false)):
 		col.add_child(_voice_cell(line))
+	elif String(line.get("image", "")) != "":
+		col.add_child(_image_cell(line))
 	else:
 		var body := Emotes.make_rich(String(line.get("text", "")), 14, PAPER)
 		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		col.add_child(body)
-	return row
+	var rx: Dictionary = line.get("reactions", {}) if line.get("reactions") is Dictionary else {}
+	if not rx.is_empty():
+		inner.add_child(_reaction_chips(line))
+	if open:
+		inner.add_child(_action_bar(line, channel))
+	return cell
+
+
+func _action_bar(line: Dictionary, channel: String) -> Control:
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 6)
+	var lid := String(line.get("id", ""))
+	for e in QUICK_REACTS:
+		var tb := TextureButton.new()
+		tb.texture_normal = load(Emotes.path_of(e))
+		tb.custom_minimum_size = Vector2(28, 28)
+		tb.ignore_texture_size = true
+		tb.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+		tb.tooltip_text = "Thả cảm xúc"
+		var em := e
+		tb.pressed.connect(func() -> void:
+			_react(line, channel, em))
+		bar.add_child(tb)
+	var rsp := Control.new()
+	rsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(rsp)
+	var uname := String(line.get("user", ""))
+	if uname != "":
+		var rb := _button("Trả lời", false, 84)
+		rb.custom_minimum_size = Vector2(84, 28)
+		var rname := String(line.get("name", ""))
+		rb.pressed.connect(func() -> void:
+			_reply_to = {"user": uname, "name": rname}
+			_open_key = ""
+			_render()
+			if _edit != null and is_instance_valid(_edit):
+				_edit.grab_focus())
+		bar.add_child(rb)
+	return bar
+
+
+func _react(line: Dictionary, channel: String, emote: String) -> void:
+	# Optimistic local toggle; the server's fanned-out state
+	# reconciles through Net's in-place line mutation.
+	var rx: Dictionary = line.get("reactions", {}) if line.get("reactions") is Dictionary else {}
+	var users: Array = rx.get(emote, [])
+	if users.has(Net.account_name):
+		users.erase(Net.account_name)
+	else:
+		users.append(Net.account_name)
+	if users.is_empty():
+		rx.erase(emote)
+	else:
+		rx[emote] = users
+	line["reactions"] = rx
+	if Net.has_method("react_to_line"):
+		Net.react_to_line(channel, _dm_peer, String(line.get("id", "")), emote)
+	_render()
+
+
+func _image_cell(line: Dictionary) -> Control:
+	# Decoded textures are cached (controls are rebuilt on
+	# every render, textures are not).
+	var key := _line_key(line)
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(10, 10)
+	if not _img_tex_cache.has(key):
+		var raw := Marshalls.base64_to_raw(String(line.get("image", "")))
+		var img := Image.new()
+		if img.load_jpg_from_buffer(raw) == OK:
+			_img_tex_cache[key] = ImageTexture.create_from_image(img)
+	if _img_tex_cache.has(key):
+		var tex: Texture2D = _img_tex_cache[key]
+		var w := 260.0
+		var h := w * float(tex.get_height()) / float(maxi(1, tex.get_width()))
+		h = minf(h, 320.0)
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.custom_minimum_size = Vector2(w, h)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder = tr
+	return holder
 
 
 func _voice_cell(line: Dictionary) -> Control:
@@ -551,7 +778,7 @@ func _build_lines(lines: Array, channel: String) -> void:
 		none.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		vb.add_child(none)
 	for line in lines:
-		vb.add_child(_line_row(line))
+		vb.add_child(_line_row(line, channel))
 	_body.add_child(card)
 	_scroll_to_bottom(sc)
 	if _picker_open:
@@ -732,8 +959,13 @@ func _input_bar(channel: String) -> Control:
 			_finish_recording())
 	row.add_child(mic)
 	_mic_btn = mic
-	# Megaphone toggle (owner order: icon + count chip).
-	row.add_child(_loa_chip())
+	# Owner order 2026-11-12: the megaphone lives ONLY in the
+	# World channel — in Alliance + DM chats that slot becomes
+	# an IMAGE button for sending a photo instead.
+	if channel == "world":
+		row.add_child(_loa_chip())
+	elif channel == "alliance" or channel == "dm":
+		row.add_child(_image_btn(channel))
 	# Emoticon picker toggle (the button IS one of the set).
 	var pick := TextureButton.new()
 	pick.texture_normal = Emotes.texture("vui")

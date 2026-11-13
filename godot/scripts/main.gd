@@ -3154,6 +3154,13 @@ func home_open_settings_panels(which: String = "hub") -> void:
 	settings_panels.open(which)
 
 
+## Test-harness passthrough (17f smoke): drive the custom
+## avatar import pipeline with a fixture file.
+func shot_import_custom_avatar(path: String) -> void:
+	_ensure_settings()
+	settings_panels.shot_import_custom(path)
+
+
 var chat_hub = null
 
 
@@ -3323,6 +3330,16 @@ func home_open_alliance() -> void:
 func open_alliance_shot() -> void:
 	show_home()
 	home_open_alliance()
+
+
+## Capture entry (17f): the leaderboard board — with
+## ally_tab, straight onto the Liên minh tab whose rows
+## carry the flag badge.
+func open_leaderboard_shot(ally_tab := false) -> void:
+	show_home()
+	home_open_leaderboard()
+	if ally_tab and lobby != null and lobby.has_method("_set_lb_mode"):
+		lobby._set_lb_mode("alliance")
 
 
 ## Badge capture variant: the join view with the CREATE form

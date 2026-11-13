@@ -1011,8 +1011,8 @@ func _rail_portrait(r: Dictionary) -> Control:
 	av.custom_minimum_size = Vector2(50, 50)
 	av.size = Vector2(50, 50)
 	av.position = Vector2(3, 3)
-	av.set_content(Avatars.texture_for(String(r.get("avatar_id", ""))),
-			String(r.get("frame_id", "")), false)
+	av.set_content(Avatars.texture_for_user(String(r.get("avatar_id", "")),
+			String(r.get("user", ""))), String(r.get("frame_id", "")), false)
 	holder.add_child(av)
 	if bool(r.get("online", false)):
 		var dot := PanelContainer.new()
@@ -2315,8 +2315,8 @@ func _friend_avatar_block(f: Dictionary) -> Control:
 	av.custom_minimum_size = Vector2(58, 58)
 	av.size = Vector2(58, 58)
 	av.position = Vector2(3, 3)
-	av.set_content(Avatars.texture_for(String(f.get("avatar_id", ""))),
-			String(f.get("frame_id", "")), false)
+	av.set_content(Avatars.texture_for_user(String(f.get("avatar_id", "")),
+			String(f.get("user", ""))), String(f.get("frame_id", "")), false)
 	holder.add_child(av)
 	if bool(f.get("online", false)):
 		var dot := PanelContainer.new()

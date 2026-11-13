@@ -283,10 +283,10 @@ func seedRank(t *testing.T, acc *Accounts, user string, r RankState, mmr int) {
 
 func TestSeasonResetTable(t *testing.T) {
 	cases := []struct {
-		name       string
-		from       RankState
-		wantTier   int
-		wantDiv    int
+		name     string
+		from     RankState
+		wantTier int
+		wantDiv  int
 	}{
 		{"Hoàng Đế (Công Tước)", rs(TierCongTuoc, 0, 40), TierBaTuoc, 0},
 		{"Hầu Tước", rs(TierHauTuoc, 2, 5), TierNamTuoc, 1},

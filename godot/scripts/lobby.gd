@@ -1341,8 +1341,8 @@ func _lb_card(pos: int, row: Dictionary, footer: bool = false) -> PanelContainer
 	hb.add_child(frame)
 	var av := AvatarFrame.new()
 	av.custom_minimum_size = Vector2(52, 52)
-	av.set_content(Avatars.texture_for(String(row.get("avatar_id", ""))),
-			String(row.get("frame_id", "")), false)
+	av.set_content(Avatars.texture_for_user(String(row.get("avatar_id", "")),
+			String(row.get("user", ""))), String(row.get("frame_id", "")), false)
 	frame.add_child(av)
 	av.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# Name + sub-line (rank text with star progress).

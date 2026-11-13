@@ -15,6 +15,12 @@ extends RefCounted
 ## catalogue (incl. every pre-17d hero id) fall back to it.
 
 const DEFAULT_ID := "art:01"
+## 17f §5: the self-uploaded photo's avatar id. It is NOT in
+## IDS (the catalogue stays the twenty anime) — it is a
+## per-account picture the server stores and other clients
+## fetch on demand (see texture_for_user).
+const CUSTOM_ID := "custom"
+const CUSTOM_PATH := "user://custom_avatar.jpg"
 const CFG_PATH := "user://avatar.cfg"
 const IDS: Array[String] = [
 	"art:01", "art:02", "art:03", "art:04", "art:05",
@@ -25,6 +31,8 @@ const IDS: Array[String] = [
 
 static var _local := ""
 static var _tex_cache := {}
+static var _custom_cache := {} # user -> Texture2D (17f §5)
+static var _own_tex: Texture2D = null
 
 
 static func is_avatar(id: String) -> bool:
@@ -32,17 +40,27 @@ static func is_avatar(id: String) -> bool:
 
 
 static func normalize_id(id: String) -> String:
-	return id if IDS.has(id) else DEFAULT_ID
+	if IDS.has(id) or id == CUSTOM_ID:
+		return id
+	return DEFAULT_ID
 
 
 static func display_name(id: String) -> String:
+	if id == CUSTOM_ID:
+		return "Ảnh của bạn"
 	return "Anime " + normalize_id(id).substr(4)
 
 
 ## The avatar's texture (rounded-square art; callers render
 ## it with STRETCH_KEEP_ASPECT_COVERED so it fills its box).
+## "custom" resolves to the LOCAL player's own photo (own
+## surfaces); other players' photos go through
+## texture_for_user so the fetch knows whose bytes to get.
 static func texture_for(id: String) -> Texture2D:
 	var nid := normalize_id(id)
+	if nid == CUSTOM_ID:
+		var own := own_custom_texture()
+		return own if own != null else texture_for(DEFAULT_ID)
 	if _tex_cache.has(nid):
 		return _tex_cache[nid]
 	var tex: Texture2D = null
@@ -51,6 +69,58 @@ static func texture_for(id: String) -> Texture2D:
 		tex = load(path)
 	_tex_cache[nid] = tex
 	return tex
+
+
+## Avatar texture in the context of a KNOWN account (rows,
+## posts, chat): a "custom" id returns that account's photo
+## — from the session cache when present, otherwise the
+## default avatar for now while Net fetches the photo (the
+## owning surface re-renders when Net.custom_avatar_ready
+## fires, or on its next refresh).
+static func texture_for_user(id: String, user: String) -> Texture2D:
+	if normalize_id(id) != CUSTOM_ID:
+		return texture_for(id)
+	if user != "" and user == Net.account_name:
+		return texture_for(CUSTOM_ID)
+	if _custom_cache.has(user):
+		return _custom_cache[user]
+	if user != "":
+		Net.request_custom_avatar(user)
+	return texture_for(DEFAULT_ID)
+
+
+## Stores fetched/uploaded photo bytes as a usable texture.
+## For the local player the bytes also persist to disk so
+## own surfaces work before any fetch (and offline).
+static func set_custom_bytes(user: String, jpg: PackedByteArray) -> void:
+	var img := Image.new()
+	if img.load_jpg_from_buffer(jpg) != OK:
+		return
+	var tex := ImageTexture.create_from_image(img)
+	_custom_cache[user] = tex
+	if user != "" and user == Net.account_name:
+		_own_tex = tex
+		var f := FileAccess.open(CUSTOM_PATH, FileAccess.WRITE)
+		if f != null:
+			f.store_buffer(jpg)
+
+
+## The local player's own uploaded photo (uploaded this
+## session or restored from the on-disk copy), or null.
+static func own_custom_texture() -> Texture2D:
+	if _own_tex != null:
+		return _own_tex
+	if FileAccess.file_exists(CUSTOM_PATH):
+		var img := Image.new()
+		if img.load(CUSTOM_PATH) == OK:
+			_own_tex = ImageTexture.create_from_image(img)
+	return _own_tex
+
+
+## True when the local player has an uploaded photo on this
+## device (the settings upload cell's state label).
+static func has_own_custom() -> bool:
+	return own_custom_texture() != null
 
 
 ## The local player's pick. The account's server-side value

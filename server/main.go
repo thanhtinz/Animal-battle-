@@ -44,11 +44,17 @@ package main
 //   {"t":"dm_voice","peer":U,"audio":B64,"dur":S}   17e: private chat
 //   {"t":"megaphone_use","text":T}                  17e: spend a Loa thông báo
 //   {"t":"admin_grant_megaphone","user":U,"count":N} 17e: EMPIRE_AGE_ADMINS only
+//   {"t":"post_create","scope":"alliance"?,"text":T,"image":I}  17f: social post
+//   {"t":"post_feed"} / {"t":"post_wall"} / {"t":"post_alliance"} -> post rows
+//   {"t":"post_like","post_id":ID} / {"t":"post_delete","post_id":ID}   17f
+//   {"t":"avatar_upload","image":B64}               17f §5: own 256×256 JPEG photo
+//   {"t":"avatar_custom","user":U}                  17f §5: fetch a photo -> {"t":"avatar_custom","user":U,"jpg":B64}
 // Protocol (server -> client): room / created / joined / match_start /
 // tick / cmd / player_left / desync / error / queue_joined / match_found
 // / referee_ok — see hub.go and README.md.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -159,6 +165,27 @@ type clientMsg struct {
 	// catalogue id in Item (the target rides User).
 	Kind string `json:"kind"`
 	Item string `json:"item"`
+	// Social posts (17f): post_create carries the attached
+	// gallery image id in Image ("art:NN" | "hero:<id>" | "")
+	// and the scope rides Scope ("alliance" = the caller's
+	// alliance, anything else = personal wall); post_like /
+	// post_delete carry the target in PostID. avatar_upload
+	// carries the 256×256 JPEG in Image too (base64).
+	PostID string `json:"post_id"`
+	Image  string `json:"image"`
+	// Reply reference (17f rider 3) on the chat send ops
+	// (world_chat / alliance_chat / dm_send): kept RAW so a
+	// malformed value can be dropped by sanitizeReplyTo
+	// without failing the whole message.
+	ReplyTo json.RawMessage `json:"reply_to"`
+	// Line reactions (17f rider 4) + chat images (rider 5):
+	// chat_react {channel, peer, line_id, emote} — the line
+	// id rides LineID because ID above is the int64 mail id;
+	// chat_image {channel, peer, jpg} — Jpg is base64.
+	Channel string `json:"channel"`
+	LineID  string `json:"line_id"`
+	Emote   string `json:"emote"`
+	Jpg     string `json:"jpg"`
 }
 
 type session struct {
@@ -256,12 +283,41 @@ func (s *session) sendDMList() {
 }
 
 // sendDMThread pushes one pair's stored history (17e).
+// 17f rider: each history row carries the same line-identity
+// fields as a live line (user / avatar_id / frame_id /
+// title / ts — resolved for the SENDER, ts = the stored At).
 func (s *session) sendDMThread(peer string) {
-	msgs := []DMMsg{}
+	rows := []map[string]any{}
 	if s.hub.dms != nil {
-		msgs = s.hub.dms.History(s.user, peer)
+		ident := map[string]map[string]any{}
+		for _, dm := range s.hub.dms.History(s.user, peer) {
+			idf, ok := ident[dm.From]
+			if !ok {
+				idf = s.hub.chatIdentity(dm.From, dm.At)
+				ident[dm.From] = idf
+			}
+			row := map[string]any{
+				"from": dm.From, "name": dm.Name, "text": dm.Text, "at": dm.At,
+			}
+			for k, v := range idf {
+				row[k] = v
+			}
+			if dm.Reply != nil {
+				row["reply_to"] = dm.Reply
+			}
+			if dm.ID != "" {
+				row["id"] = dm.ID
+			}
+			if len(dm.Reactions) > 0 {
+				row["reactions"] = dm.Reactions
+			}
+			if dm.Image != "" {
+				row["image"] = dm.Image
+			}
+			rows = append(rows, row)
+		}
 	}
-	s.sendJSON(map[string]any{"t": "dm_thread", "peer": peer, "rows": msgs})
+	s.sendJSON(map[string]any{"t": "dm_thread", "peer": peer, "rows": rows})
 }
 
 // onAuthed runs after a successful register/login: if the session
@@ -311,6 +367,114 @@ func leaderRowMap(r LeaderRow) map[string]any {
 		// 17d: account avatar + effective frame for BXH rows.
 		"avatar_id": r.AvatarID, "frame_id": r.FrameID,
 	}
+}
+
+// postScopeMember reports whether the caller currently
+// belongs to the alliance a post is scoped to (17f scope
+// isolation is re-checked on every post op).
+func (s *session) postScopeMember(allyID string) bool {
+	if s.hub.allis == nil {
+		return false
+	}
+	a := s.hub.allis.OfUser(s.user)
+	return a != nil && a.ID == allyID
+}
+
+// postScopeModerator reports whether the caller may moderate
+// (delete others' posts in) the alliance: leader or deputy.
+func (s *session) postScopeModerator(allyID string) bool {
+	if s.hub.allis == nil {
+		return false
+	}
+	a := s.hub.allis.OfUser(s.user)
+	if a == nil || a.ID != allyID {
+		return false
+	}
+	for _, mem := range a.Members {
+		if mem.User == s.user {
+			return mem.Role == AllianceRoleLeader || mem.Role == AllianceRoleDeputy
+		}
+	}
+	return false
+}
+
+// handlePost serves the 17f social-post ops (the dispatch
+// has already checked login + a live posts service).
+func (s *session) handlePost(m clientMsg) {
+	ps := s.hub.posts
+	switch m.T {
+	case "post_create":
+		scope := PostScopePersonal
+		if m.Scope == "alliance" {
+			if !s.postScopeMember(postAllianceID(s)) {
+				s.sendErr(ErrAllyNotMember)
+				return
+			}
+			scope = postAllianceID(s)
+		}
+		if !s.hub.GatePostCreate(s.user) {
+			s.sendErr(ErrPostRate)
+			return
+		}
+		p, err := ps.Create(s.user, scope, m.Text, m.Image)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "post_created", "post": ps.Wire(p, s.user)})
+	case "post_feed":
+		s.sendJSON(map[string]any{"t": "post_feed",
+			"rows": ps.WireList(ps.FeedFor(s.user), s.user)})
+	case "post_wall":
+		s.sendJSON(map[string]any{"t": "post_wall",
+			"rows": ps.WireList(ps.WallOf(s.user), s.user)})
+	case "post_alliance":
+		rows := []map[string]any{}
+		if id := postAllianceID(s); id != "" {
+			rows = ps.WireList(ps.AlliancePosts(id), s.user)
+		}
+		s.sendJSON(map[string]any{"t": "post_alliance", "rows": rows})
+	case "post_like":
+		p, ok := ps.Get(m.PostID)
+		if !ok {
+			s.sendErr(ErrPostNotFound)
+			return
+		}
+		if p.Scope != PostScopePersonal && !s.postScopeMember(p.Scope) {
+			s.sendErr(ErrPostForbidden)
+			return
+		}
+		up, err := ps.ToggleLike(m.PostID, s.user)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "post_like", "post": ps.Wire(up, s.user)})
+	case "post_delete":
+		p, ok := ps.Get(m.PostID)
+		if !ok {
+			s.sendErr(ErrPostNotFound)
+			return
+		}
+		mod := p.Scope != PostScopePersonal && s.postScopeModerator(p.Scope)
+		if err := ps.Delete(m.PostID, s.user, mod); err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "post_deleted", "post_id": m.PostID})
+	}
+}
+
+// postAllianceID is the caller's current alliance id (""
+// when they belong to none).
+func postAllianceID(s *session) string {
+	if s.hub.allis == nil {
+		return ""
+	}
+	if a := s.hub.allis.OfUser(s.user); a != nil {
+		return a.ID
+	}
+	return ""
 }
 
 // sendFriends pushes the caller's current friend list (with live
@@ -564,7 +728,111 @@ func (s *session) handle(raw []byte) {
 			s.sendAuthErr(err)
 			return
 		}
-		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": NormalizeAvatarID(m.Avatar)})
+		// 17f §5: echo the EFFECTIVE pick so "custom"
+		// (re-equipping the stored photo) round-trips too.
+		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": s.acc.AvatarOf(s.user)})
+	case "avatar_upload":
+		// Custom avatar (17f §5): the client sends its own
+		// 256×256 JPEG (base64 in Image). Validation lives in
+		// UploadCustomAvatar; on success the photo is stored
+		// AND equipped, and the fresh profile rides back.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		jpg, err := base64.StdEncoding.DecodeString(m.Image)
+		if err != nil {
+			s.sendErr(ErrBadCustomAvatar)
+			return
+		}
+		prof, err := s.acc.UploadCustomAvatar(s.user, jpg)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": AvatarCustomID})
+		s.sendJSON(map[string]any{"t": "profile_update", "profile": prof})
+	case "avatar_custom":
+		// Custom avatar fetch (17f §5): any logged-in client
+		// may fetch another account's photo bytes (avatars
+		// are public presentation data). Empty jpg = the
+		// account has no photo; clients fall back silently.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		target := m.User
+		if target == "" {
+			target = s.user
+		}
+		b64 := ""
+		if jpg := s.acc.CustomAvatarOf(target); len(jpg) > 0 {
+			b64 = base64.StdEncoding.EncodeToString(jpg)
+		}
+		s.sendJSON(map[string]any{"t": "avatar_custom", "user": target, "jpg": b64})
+	case "post_create", "post_feed", "post_wall", "post_alliance",
+		"post_like", "post_delete":
+		// Social posts (17f): MXH walls/feed + alliance
+		// posts. Account-only; presentation data, never in
+		// any room or the sim.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if s.hub.posts == nil {
+			s.sendErr(ErrPostNotFound)
+			return
+		}
+		s.handlePost(m)
+	case "chat_react":
+		// Line reactions (17f rider 4): toggle + fan-out of
+		// the line's full reaction state. Unknown ids/emotes
+		// drop silently inside ReactToLine.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		s.hub.ReactToLine(s.user, m.Channel, m.Peer, m.LineID, m.Emote)
+	case "chat_image":
+		// Chat photo lines (17f rider 5): alliance + DM
+		// channels ONLY (the world channel has no image
+		// lines). The line stores + relays like a text line,
+		// with `image` = the base64 JPEG and no text.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if m.Channel != "alliance" && m.Channel != "dm" {
+			return // not an image channel — drop silently
+		}
+		jpg, err := base64.StdEncoding.DecodeString(m.Jpg)
+		if err != nil {
+			s.sendErr(ErrBadChatImage)
+			return
+		}
+		if err := ValidateChatImage(jpg); err != nil {
+			s.sendErr(err)
+			return
+		}
+		if m.Channel == "dm" {
+			if err := s.hub.RelayDMImage(s.user, s.acc.DisplayNameOf(s.user),
+				m.Peer, m.Jpg); err != nil {
+				s.sendErr(err)
+			}
+			return
+		}
+		as := s.hub.allis
+		if as == nil {
+			s.sendErr(ErrAllyNotFound)
+			return
+		}
+		a := as.OfUser(s.user)
+		if a == nil {
+			s.sendErr(ErrAllyNotMember)
+			return
+		}
+		s.hub.RelayAllianceImage(s.user, s.acc.DisplayNameOf(s.user), a.ID,
+			as.MemberUsers(a.ID), m.Jpg)
 	case "world_chat":
 		// Chat hub (17e): the world channel. Account-only —
 		// guests are refused here exactly like every other
@@ -574,7 +842,8 @@ func (s *session) handle(raw []byte) {
 			return
 		}
 		if text := strings.TrimSpace(m.Text); text != "" {
-			s.hub.RelayWorldChat(s.user, s.acc.DisplayNameOf(s.user), text)
+			s.hub.RelayWorldChatR(s.user, s.acc.DisplayNameOf(s.user), text,
+				sanitizeReplyTo(m.ReplyTo))
 		}
 	case "world_voice":
 		if s.user == "" {
@@ -648,7 +917,8 @@ func (s *session) handle(raw []byte) {
 		if text == "" {
 			return
 		}
-		if err := s.hub.RelayDMText(s.user, s.acc.DisplayNameOf(s.user), m.Peer, text); err != nil {
+		if err := s.hub.RelayDMTextR(s.user, s.acc.DisplayNameOf(s.user), m.Peer, text,
+			sanitizeReplyTo(m.ReplyTo)); err != nil {
 			s.sendErr(err)
 		}
 	case "dm_voice":
@@ -1281,8 +1551,8 @@ func (s *session) handle(raw []byte) {
 			if text == "" {
 				return
 			}
-			s.hub.RelayAllianceChat(s.user, s.acc.DisplayNameOf(s.user), a.ID,
-				as.MemberUsers(a.ID), text)
+			s.hub.RelayAllianceChatR(s.user, s.acc.DisplayNameOf(s.user), a.ID,
+				as.MemberUsers(a.ID), text, sanitizeReplyTo(m.ReplyTo))
 		}
 	case "create":
 		if s.in || s.obs != nil {
@@ -1493,6 +1763,9 @@ func main() {
 	// Nobody else can grant megaphones; there is no other
 	// issuance path (no shop, no self-grant).
 	hub.dms = NewDMs(store)
+	// Social posts (17f): walls/feed/alliance posts over the
+	// same store; the feed reads the account friend lists.
+	hub.posts = NewPosts(store, acc)
 	if env := strings.TrimSpace(os.Getenv("EMPIRE_AGE_ADMINS")); env != "" {
 		for _, u := range strings.Split(env, ",") {
 			if u = strings.TrimSpace(u); u != "" {

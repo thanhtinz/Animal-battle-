@@ -233,7 +233,7 @@ func rankPeakWeight(tier, div int) int {
 // RankOutcome describes one player's ladder movement from a single
 // ranked result (it feeds the end-panel display payload).
 type RankOutcome struct {
-	StarDelta int // stars granted or removed (-1); 0 = floored loss
+	StarDelta int  // stars granted or removed (-1); 0 = floored loss
 	Bonus     bool // StarDelta includes the win-streak bonus star
 	// DailyBonus: StarDelta also includes the first-ranked-win-of-
 	// the-day bonus star (13i). Granted by the accounts layer —

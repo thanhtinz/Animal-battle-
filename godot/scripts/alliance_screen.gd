@@ -318,6 +318,17 @@ func _role_pill(role: String) -> PanelContainer:
 			return _pill("Thành viên", Color(1, 1, 1, 0.06), MUTED)
 
 
+## A field stylebox with REAL text padding (owner order
+## 2026-11-12: with content margins unset Godot falls back
+## to the border width and text renders flush against the
+## frame — every field in this screen pads L/R 12).
+func _field_sb(border: Color) -> StyleBoxFlat:
+	var s := _sb(FIELD_BG, 8, border, 1)
+	s.content_margin_left = 12
+	s.content_margin_right = 12
+	return s
+
+
 func _field(placeholder: String, text := "") -> LineEdit:
 	var e := LineEdit.new()
 	e.placeholder_text = placeholder
@@ -326,8 +337,8 @@ func _field(placeholder: String, text := "") -> LineEdit:
 	e.add_theme_font_size_override("font_size", 14)
 	e.add_theme_color_override("font_color", PAPER)
 	e.add_theme_color_override("font_placeholder_color", DIM)
-	e.add_theme_stylebox_override("normal", _sb(FIELD_BG, 8, PANEL_LINE, 1))
-	e.add_theme_stylebox_override("focus", _sb(FIELD_BG, 8, GOLD, 1))
+	e.add_theme_stylebox_override("normal", _field_sb(PANEL_LINE))
+	e.add_theme_stylebox_override("focus", _field_sb(GOLD))
 	return e
 
 
@@ -339,9 +350,16 @@ func _option(items: Array, selected: int) -> OptionButton:
 	o.custom_minimum_size = Vector2(0, 38)
 	o.add_theme_font_size_override("font_size", 14)
 	o.add_theme_color_override("font_color", PAPER)
-	o.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
-	o.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
-	o.add_theme_stylebox_override("pressed", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	# Same text-padding rule as the fields (L/R 12) — the
+	# dropdown label must not sit flush against the frame.
+	var mk := func(bg: Color, border: Color) -> StyleBoxFlat:
+		var s := _sb(bg, 8, border, 1)
+		s.content_margin_left = 12
+		s.content_margin_right = 12
+		return s
+	o.add_theme_stylebox_override("normal", mk.call(BTN_BG, Color(1, 0.85, 0.4, 0.35)))
+	o.add_theme_stylebox_override("hover", mk.call(Color(0.18, 0.22, 0.32), Color(1, 0.85, 0.4, 0.6)))
+	o.add_theme_stylebox_override("pressed", mk.call(BTN_BG, Color(1, 0.85, 0.4, 0.35)))
 	return o
 
 
@@ -354,9 +372,8 @@ func _section(text: String, extra := "") -> HBoxContainer:
 	return hb
 
 
-## The alliance badge of a wire row (icon texture tinted by
-## its slot colour).
-func _badge_of(row: Dictionary, px: int) -> TextureRect:
+## The alliance badge of a wire row: the FLAG (17f §1).
+func _badge_of(row: Dictionary, px: int) -> Control:
 	var tr := AllyBadge.make(int(row.get("badge_icon", 1)),
 			int(row.get("badge_color", 0)), px)
 	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -367,16 +384,17 @@ func _badge_of(row: Dictionary, px: int) -> TextureRect:
 ## settings). The choice lives in `state` ({"icon", "color"});
 ## taps repaint the preview, grid rings and swatch rings IN
 ## PLACE — no _render, so sibling form fields keep drafts.
+## 17f §2 tightening: grid cells are a FIXED 50px, swatches
+## a FIXED 32px (6px gaps — never expand-fill), and the
+## preview is the FLAG at preview_px height.
 func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 4)
-	var prev := TextureRect.new()
-	prev.custom_minimum_size = Vector2(preview_px, preview_px)
-	prev.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	prev.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	prev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var prev := AllyBadge.make(int(state.get("icon", 1)),
+			int(state.get("color", 0)), preview_px)
 	pv.add_child(prev)
 	var pname := _label("", 12, GOLD_TXT, true)
 	pname.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -384,19 +402,17 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 	box.add_child(pv)
 	var right := VBoxContainer.new()
 	right.add_theme_constant_override("separation", 5)
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	right.add_child(_label("Biểu tượng", 12, MUTED))
 	var grid := GridContainer.new()
 	grid.columns = 5
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 6)
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_child(grid)
 	var cells: Array = []
 	for i in range(1, 11):
 		var cell := PanelContainer.new()
-		cell.custom_minimum_size = Vector2(56, 56)
-		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.custom_minimum_size = Vector2(50, 50)
 		var tb := TextureButton.new()
 		tb.texture_normal = AllyBadge.icon_texture(i)
 		tb.ignore_texture_size = true
@@ -411,13 +427,12 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 		cells.append(cell)
 	right.add_child(_label("Màu huy hiệu", 12, MUTED))
 	var swrow := HBoxContainer.new()
-	swrow.add_theme_constant_override("separation", 8)
+	swrow.add_theme_constant_override("separation", 6)
 	right.add_child(swrow)
 	var swatches: Array = []
 	for c in 8:
 		var sw := Button.new()
-		sw.custom_minimum_size = Vector2(36, 36)
-		sw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sw.custom_minimum_size = Vector2(32, 32)
 		sw.focus_mode = Control.FOCUS_NONE
 		var ci := c
 		sw.pressed.connect(func() -> void:
@@ -428,8 +443,7 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 	var refresh := func() -> void:
 		var icon := AllyBadge.icon_id(int(state.get("icon", 1)))
 		var col := AllyBadge.color_of(int(state.get("color", 0)))
-		prev.texture = AllyBadge.icon_texture(icon)
-		prev.modulate = col
+		prev.set_badge(icon, int(state.get("color", 0)))
 		pname.text = AllyBadge.icon_name(icon)
 		for j in cells.size():
 			var cell2: PanelContainer = cells[j]
@@ -456,10 +470,13 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 	return box
 
 
-func _avatar(avatar_id: String, px: int) -> TextureRect:
+func _avatar(avatar_id: String, px: int, user := "") -> TextureRect:
 	var t := TextureRect.new()
 	# 17d: member rows carry ACCOUNT avatar ids (anime set).
-	t.texture = Avatars.texture_for(avatar_id)
+	# 17f §5: a "custom" id resolves through the owner-aware
+	# path when the row's account is known.
+	t.texture = Avatars.texture_for_user(avatar_id, user) \
+			if user != "" else Avatars.texture_for(avatar_id)
 	t.custom_minimum_size = Vector2(px, px)
 	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -653,6 +670,8 @@ func _build_joined() -> void:
 	right.add_child(tabs)
 	var req_count := int(mine.get("requests_count", 0))
 	tabs.add_child(_tab_btn("members", "Thành viên"))
+	# 17f §4: the Bài viết tab (alliance posts).
+	tabs.add_child(_tab_btn("posts", "Bài viết"))
 	var req_label := "Yêu cầu"
 	if req_count > 0:
 		req_label += " (%d)" % req_count
@@ -661,6 +680,18 @@ func _build_joined() -> void:
 	tabs.add_child(_tab_btn("activity", "Hoạt động"))
 	if _detail_user != "":
 		right.add_child(_member_detail_card(mine))
+	if _tab == "posts":
+		# The posts surface carries its own composer + scroll;
+		# it fills the tab area directly (no card wrapper).
+		# Moderation (delete others' posts) shows for the
+		# leader + deputies; the server enforces it too.
+		var pp := PostPanel.new()
+		pp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		right.add_child(pp)
+		pp.setup("alliance",
+				String(mine.get("my_role", "")) in ["leader", "deputy"])
+		pp.refresh()
+		return
 	var content := _card(14)
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(content)
@@ -903,7 +934,7 @@ func _invite_card(mine: Dictionary) -> PanelContainer:
 func _friend_pick_row(f: Dictionary, mine: Dictionary, ally_id: String) -> HBoxContainer:
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 8)
-	hb.add_child(_avatar(String(f.get("avatar_id", "knight")), 32))
+	hb.add_child(_avatar(String(f.get("avatar_id", "knight")), 32, String(f.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1066,7 +1097,7 @@ func _member_detail_card(mine: Dictionary) -> PanelContainer:
 	card.add_child(vb)
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 10)
-	head.add_child(_avatar(String(mem.get("avatar", "knight")), 44))
+	head.add_child(_avatar(String(mem.get("avatar", "knight")), 44, String(mem.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1109,7 +1140,7 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
 	inner.add_child(hb)
-	hb.add_child(_avatar(String(mem.get("avatar", "knight")), 40))
+	hb.add_child(_avatar(String(mem.get("avatar", "knight")), 40, String(mem.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1223,7 +1254,7 @@ func _request_row(rq: Dictionary, ally_id: String) -> PanelContainer:
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
 	inner.add_child(hb)
-	hb.add_child(_avatar(String(rq.get("avatar", "knight")), 40))
+	hb.add_child(_avatar(String(rq.get("avatar", "knight")), 40, String(rq.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1481,7 +1512,13 @@ func _build_join() -> void:
 	_body.add_child(vb)
 	vb.add_child(_intro_card(true))
 	if _create_open:
-		vb.add_child(_create_card())
+		# 17f §2: the create card is CENTRED at max ~900px
+		# instead of stretching the full page width.
+		var center := CenterContainer.new()
+		var ccard := _create_card()
+		ccard.custom_minimum_size = Vector2(900, 0)
+		center.add_child(ccard)
+		vb.add_child(center)
 	# Invites addressed to me live above the browser.
 	if not Net.alliance_invites.is_empty():
 		vb.add_child(_section("LỜI MỜI VÀO LIÊN MINH"))
@@ -1523,38 +1560,50 @@ func _build_join() -> void:
 			+ "bằng cách đấu trận: tham gia +10, thắng +30.", 12, DIM))
 
 
+## One labelled form field (17f §2): small gold label ABOVE
+## the input, tight 3px pairing.
+func _labelled_field(text: String, field: Control) -> VBoxContainer:
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 3)
+	vb.add_child(_label(text, 12, GOLD_TXT, true))
+	vb.add_child(field)
+	return vb
+
+
 func _create_card() -> PanelContainer:
 	var card := _card(14)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", 10)
 	card.add_child(vb)
 	vb.add_child(_section("TẠO LIÊN MINH MỚI"))
 	var badge_state: Dictionary = _create_preset.duplicate() \
 			if not _create_preset.is_empty() else {"icon": 1, "color": 0}
-	# Owner order 2026-11-12 (create panel looked sparse/ugly):
-	# two balanced columns — fields left, badge studio right.
+	# 17f §2 (owner, on v1: "vẫn chưa đẹp chưa gọn"): the
+	# caller centres this card at max ~900px wide; inside,
+	# two tightened columns — labelled fields left, the
+	# badge studio right, heights balanced (the studio
+	# stretches to the fields' height and its picker sits
+	# vertically centred).
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 16)
+	cols.add_theme_constant_override("separation", 14)
 	vb.add_child(cols)
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 8)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(left)
-	var name_edit := _field("Tên liên minh (3–24 ký tự)…")
+	var name_edit := _field("3–24 ký tự…")
 	name_edit.max_length = 24
-	left.add_child(name_edit)
+	left.add_child(_labelled_field("Tên liên minh", name_edit))
 	# 17b: the tag is chosen at creation (leader-editable later).
-	var tag_edit := _field("Tag liên minh (2–5 ký tự chữ/số, VD: SL123)…")
+	var tag_edit := _field("2–5 ký tự chữ/số, VD: SL123…")
 	tag_edit.max_length = 5
-	left.add_child(tag_edit)
-	left.add_child(_label("Tuyển thành viên", 13, MUTED))
+	left.add_child(_labelled_field("Tag", tag_edit))
 	var mode_opt := _option(["Mở — vào ngay không cần duyệt", "Xin vào — duyệt đơn"], 1)
 	mode_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.add_child(mode_opt)
-	left.add_child(_label("Mô tả", 13, MUTED))
+	left.add_child(_labelled_field("Tuyển thành viên", mode_opt))
 	var desc_edit := _field("Mô tả ngắn (không bắt buộc)…")
 	desc_edit.max_length = 120
-	left.add_child(desc_edit)
+	left.add_child(_labelled_field("Mô tả", desc_edit))
 	var studio := PanelContainer.new()
 	var ssb := _sb(Color(1, 1, 1, 0.045), 10, Color(1, 0.85, 0.4, 0.35), 1)
 	ssb.content_margin_left = 14
@@ -1562,13 +1611,19 @@ func _create_card() -> PanelContainer:
 	ssb.content_margin_top = 10
 	ssb.content_margin_bottom = 10
 	studio.add_theme_stylebox_override("panel", ssb)
-	studio.custom_minimum_size = Vector2(500, 0)
+	studio.custom_minimum_size = Vector2(452, 0)
 	cols.add_child(studio)
 	var svb := VBoxContainer.new()
 	svb.add_theme_constant_override("separation", 6)
 	studio.add_child(svb)
 	svb.add_child(_label("Huy hiệu liên minh", 13, MUTED))
-	svb.add_child(_badge_picker(badge_state, 96))
+	var sp1 := Control.new()
+	sp1.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	svb.add_child(sp1)
+	svb.add_child(_badge_picker(badge_state, 100))
+	var sp2 := Control.new()
+	sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	svb.add_child(sp2)
 	var brow := HBoxContainer.new()
 	brow.add_theme_constant_override("separation", 8)
 	var create := _button("Tạo liên minh", true, false, 160)
@@ -1593,10 +1648,13 @@ func _create_card() -> PanelContainer:
 		_sig = "\u0001"
 		_render())
 	brow.add_child(cancel)
+	var hint := _label("Tạo miễn phí · Tên và tag là duy nhất trên toàn server",
+			12, DIM)
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	brow.add_child(hint)
 	vb.add_child(brow)
-	vb.add_child(_label_wrap("Tạo liên minh miễn phí. Tên và tag liên minh đều là duy nhất "
-			+ "trên toàn server; tag hiện dạng [TAG] trước tên thành viên.",
-			12, DIM))
 	return card
 
 

@@ -66,6 +66,15 @@ var _body: VBoxContainer
 var _toast: PanelContainer
 var _toast_label: Label
 var _toast_tween: Tween
+# 17f §3: the MXH (social) right column.
+var _social_tab := "feed"
+var _social_body: VBoxContainer
+var _social_tabs: HBoxContainer
+var _feed_panel: PostPanel = null
+var _wall_panel: PostPanel = null
+var _album_scroll: ScrollContainer = null
+var _img_overlay: Control = null
+var _img_overlay_tex: TextureRect
 
 
 class StarIcon:
@@ -186,13 +195,22 @@ func setup(p_game) -> void:
 	# payload and re-renders when a fresh one lands.
 	Net.alliance_home_received.connect(func(_m: Dictionary, _i: Array) -> void:
 		if visible: _refresh())
+	# 17f §3: the Album tab follows my wall posts (its
+	# "Ảnh đã đăng" section) and fetched custom photos.
+	Net.post_wall_received.connect(func(_r: Array) -> void:
+		if visible and _social_tab == "album": _render_album())
+	Net.custom_avatar_ready.connect(func(_u: String) -> void:
+		if visible and _social_tab == "album": _render_album())
 
 
 func open() -> void:
 	visible = true
 	if Net.account_name != "":
 		Net.alliance_request_home()
+		Net.post_request_feed()
+		Net.post_request_wall()
 	_refresh()
+	_render_social()
 
 
 func close() -> void:
@@ -279,6 +297,61 @@ func _build() -> void:
 	var gems := CornerGems.new()
 	gems.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(gems)
+
+	# RIGHT: the MXH social column (17f §3) — same floating
+	# dialect as the profile card, from just past the zone
+	# split (≈x600) to the right margin, same top/bottom.
+	var social := PanelContainer.new()
+	social.anchor_left = ZONE_SPLIT
+	social.anchor_right = 1.0
+	social.anchor_top = 0.0
+	social.anchor_bottom = 1.0
+	social.offset_left = 12
+	social.offset_top = PANEL_TOP
+	social.offset_right = -14
+	social.offset_bottom = -PANEL_BOTTOM
+	social.add_theme_stylebox_override("panel",
+			_sb(PageShell.BG, 10, Color(0.98, 0.8, 0.35, 0.85), 2))
+	_root.add_child(social)
+	var smargin := MarginContainer.new()
+	smargin.add_theme_constant_override("margin_left", 14)
+	smargin.add_theme_constant_override("margin_right", 14)
+	smargin.add_theme_constant_override("margin_top", 12)
+	smargin.add_theme_constant_override("margin_bottom", 12)
+	social.add_child(smargin)
+	var svb := VBoxContainer.new()
+	svb.add_theme_constant_override("separation", 10)
+	smargin.add_child(svb)
+	_social_tabs = HBoxContainer.new()
+	_social_tabs.add_theme_constant_override("separation", 8)
+	svb.add_child(_social_tabs)
+	_social_body = VBoxContainer.new()
+	_social_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	svb.add_child(_social_body)
+
+	# Large-image overlay for the Album tab (tap anywhere
+	# closes it).
+	_img_overlay = Control.new()
+	_img_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_img_overlay.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.78)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_img_overlay.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_img_overlay.add_child(cc)
+	_img_overlay_tex = TextureRect.new()
+	_img_overlay_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_img_overlay_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_img_overlay_tex.custom_minimum_size = Vector2(460, 460)
+	cc.add_child(_img_overlay_tex)
+	var closer := Button.new()
+	closer.flat = true
+	closer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	closer.pressed.connect(func() -> void: _img_overlay.visible = false)
+	_img_overlay.add_child(closer)
+	_root.add_child(_img_overlay)
 
 	# Header (PageShell geometry, kept per Tín's addendum
 	# "Phải thêm tittle vào"): the gold back pill in the
@@ -587,6 +660,174 @@ func _refresh() -> void:
 	_body.add_child(stats)
 
 
+# ------------------------------------------------------------ MXH (17f §3)
+
+## Capture entry (17f): jump straight to one MXH tab.
+func shot_show_mxh(tab: String) -> void:
+	_social_tab = tab
+	_render_social()
+
+
+func _social_tab_btn(id: String, text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(0, 38)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 14)
+	var active := _social_tab == id
+	var sb := _sb(Color(0.98, 0.8, 0.35) if active else Color(0.13, 0.16, 0.26), 8,
+			Color(0.72, 0.52, 0.15) if active else Color(1, 0.85, 0.4, 0.35), 1)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 2
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("pressed", sb)
+	b.add_theme_color_override("font_color",
+			Color(0.1, 0.08, 0.02) if active else PAPER)
+	b.pressed.connect(func() -> void:
+		_social_tab = id
+		_render_social())
+	return b
+
+
+func _render_social() -> void:
+	if _social_body == null:
+		return
+	for c in _social_tabs.get_children():
+		_social_tabs.remove_child(c)
+		c.queue_free()
+	if Net.account_name == "":
+		# Guests: the whole column is the honest login state.
+		for c in _social_body.get_children():
+			c.visible = false
+		var note := _social_body.get_node_or_null("GuestNote") as Label
+		if note == null:
+			note = _label("Đăng nhập để dùng mạng xã hội", 15, MUTED)
+			note.name = "GuestNote"
+			note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_social_body.add_child(note)
+		note.visible = true
+		return
+	var gnote := _social_body.get_node_or_null("GuestNote")
+	if gnote != null:
+		gnote.visible = false
+	_social_tabs.add_child(_social_tab_btn("feed", "Bảng tin"))
+	_social_tabs.add_child(_social_tab_btn("wall", "Tường nhà"))
+	_social_tabs.add_child(_social_tab_btn("album", "Album ảnh"))
+	if _feed_panel == null:
+		_feed_panel = PostPanel.new()
+		_feed_panel.setup("feed")
+		_social_body.add_child(_feed_panel)
+	if _wall_panel == null:
+		_wall_panel = PostPanel.new()
+		_wall_panel.setup("wall")
+		_social_body.add_child(_wall_panel)
+	if _album_scroll == null:
+		_album_scroll = ScrollContainer.new()
+		_album_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		_album_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_album_scroll.name = "AlbumScroll"
+		_social_body.add_child(_album_scroll)
+	_feed_panel.visible = _social_tab == "feed"
+	_wall_panel.visible = _social_tab == "wall"
+	_album_scroll.visible = _social_tab == "album"
+	if _social_tab == "album":
+		_render_album()
+	elif _social_tab == "feed":
+		_feed_panel.refresh()
+	elif _social_tab == "wall":
+		_wall_panel.refresh()
+
+
+func _album_section(text: String) -> Label:
+	var l := _label(text, 13, GOLD)
+	l.add_theme_color_override("font_color", GOLD)
+	return l
+
+
+func _render_album() -> void:
+	if _album_scroll == null:
+		return
+	for c in _album_scroll.get_children():
+		_album_scroll.remove_child(c)
+		c.queue_free()
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_album_scroll.add_child(vb)
+	# Section 1: every image attached to my posts (the wall
+	# rows carry them, newest first).
+	vb.add_child(_album_section("ẢNH ĐÃ ĐĂNG"))
+	var posted: Array = []
+	for r in Net.post_wall_rows:
+		var img := String(r.get("image", ""))
+		if img != "":
+			posted.append(img)
+	if posted.is_empty():
+		var none := _label("Chưa có ảnh nào — đính kèm ảnh khi đăng bài.", 12, MUTED)
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(none)
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 4
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		for img in posted:
+			var cell := TextureButton.new()
+			cell.texture_normal = PostPanel.gallery_texture(img)
+			cell.ignore_texture_size = true
+			cell.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+			cell.custom_minimum_size = Vector2(104, 104)
+			cell.tooltip_text = PostPanel.gallery_name(img)
+			var tex := PostPanel.gallery_texture(img)
+			cell.pressed.connect(func() -> void: _show_big_image(tex))
+			grid.add_child(cell)
+		vb.add_child(grid)
+	# Section 2: my collection — my custom photo first (when
+	# set), the 20 anime avatars, then my granted frames
+	# composed on my current avatar.
+	vb.add_child(_album_section("BỘ SƯU TẬP"))
+	var grid2 := GridContainer.new()
+	grid2.columns = 4
+	grid2.add_theme_constant_override("h_separation", 8)
+	grid2.add_theme_constant_override("v_separation", 8)
+	vb.add_child(grid2)
+	if Avatars.has_own_custom():
+		grid2.add_child(_album_cell(Avatars.own_custom_texture(), "Ảnh của bạn"))
+	for id in Avatars.IDS:
+		grid2.add_child(_album_cell(Avatars.texture_for(id), Avatars.display_name(id)))
+	var p: Dictionary = Net.auth_profile
+	var my_avatar := Avatars.texture_for(Avatars.local_avatar())
+	for fid in p.get("owned_frames", []):
+		var holder := Control.new()
+		holder.custom_minimum_size = Vector2(104, 104)
+		var avf := AvatarFrame.new()
+		avf.set_anchors_preset(Control.PRESET_FULL_RECT)
+		avf.set_content(my_avatar, String(fid), false)
+		holder.add_child(avf)
+		grid2.add_child(holder)
+
+
+func _album_cell(tex: Texture2D, tip: String) -> TextureButton:
+	var cell := TextureButton.new()
+	cell.texture_normal = tex
+	cell.ignore_texture_size = true
+	cell.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	cell.custom_minimum_size = Vector2(104, 104)
+	cell.tooltip_text = tip
+	cell.pressed.connect(func() -> void: _show_big_image(tex))
+	return cell
+
+
+func _show_big_image(tex: Texture2D) -> void:
+	if tex == null:
+		return
+	_img_overlay_tex.texture = tex
+	_img_overlay.visible = true
+
+
 func _ribbon_strip(text: String, current: bool) -> PanelContainer:
 	## The rank cards' ribbon header strip (template v2):
 	## a small banner plaque across the card's top — deep
@@ -674,14 +915,19 @@ func _stat_cell(icon_kind: String, value: String, caption: String) -> VBoxContai
 	vb.add_theme_constant_override("separation", 2)
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var center := CenterContainer.new()
-	# Owner order 2026-11-12: FA icons for the stats row
-	# (khanda = the vendored font's sword; it has no "swords").
+	# Owner orders 2026-11-12: FA icons for the stats row, and
+	# BALANCED to equal ink size (measured on the real capture:
+	# at 20px the glyphs inked 22/25/20 px wide — per-glyph
+	# sizes below even them out).
 	var cp := FA_KHANDA
+	var px := 22
 	if icon_kind == "trophy":
 		cp = FA_TROPHY
+		px = 20
 	elif icon_kind == "emblem":
 		cp = FA_SHIELD
-	center.add_child(_fa(cp, 20, GOLD))
+		px = 22
+	center.add_child(_fa(cp, px, GOLD))
 	vb.add_child(center)
 	var v := _label(value, 20, Color.WHITE)
 	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

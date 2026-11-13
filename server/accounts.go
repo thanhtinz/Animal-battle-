@@ -163,6 +163,14 @@ type Account struct {
 	GrantedFrames  []string `json:"granted_frames,omitempty"`
 	GrantedTitles  []string `json:"granted_titles,omitempty"`
 	GrantedBubbles []string `json:"granted_bubbles,omitempty"`
+	// CustomAvatar (17f §5) is the account's self-uploaded
+	// profile photo: a 256×256 JPEG the client produced from
+	// the player's own picture (validated in
+	// UploadCustomAvatar). []byte marshals as base64 in the
+	// file store. The photo is EQUIPPED by storing
+	// AvatarID == "custom"; picking a catalogue avatar keeps
+	// the bytes for a later re-equip. Empty = never uploaded.
+	CustomAvatar []byte `json:"custom_avatar,omitempty"`
 	// MatchHistory is the rolling record of this account's latest
 	// ranked results (stage 13g home lobby "Lịch Sử"), oldest
 	// first, capped at MatchHistoryCap entries.
@@ -321,6 +329,10 @@ type Profile struct {
 	// AvatarID is the account's effective profile avatar (13j):
 	// the stored pick, normalised — never empty on the wire.
 	AvatarID string `json:"avatar_id"`
+	// HasCustomAvatar (17f §5) is the lightweight marker that
+	// the account holds an uploaded photo (the bytes travel
+	// only through the avatar_custom op, never in profiles).
+	HasCustomAvatar bool `json:"has_custom_avatar,omitempty"`
 	// DisplayName is the account's RAW stored display name
 	// (13r): "" means the player has not picked one yet — the
 	// entry flow routes them to the name panel. Consumers that
@@ -414,8 +426,13 @@ func NormalizeSkinID(id string) string {
 // EffectiveAvatar is the account's avatar pick, normalised
 // against the 17d anime catalogue (cosmetics.go): any stored
 // value outside it — including every pre-17d hero id — falls
-// back to the default art:01.
+// back to the default art:01. 17f §5: the pick "custom" is
+// honoured while the account actually holds an uploaded
+// photo; a dangling "custom" with no bytes falls back too.
 func EffectiveAvatar(a *Account) string {
+	if a.AvatarID == AvatarCustomID && len(a.CustomAvatar) > 0 {
+		return AvatarCustomID
+	}
 	return NormalizeAvatarID(a.AvatarID)
 }
 
@@ -510,7 +527,8 @@ func (a *Account) profile() Profile {
 	p := Profile{User: a.User, Wins: a.Wins, Losses: a.Losses,
 		Matches: a.Matches, MMR: EffectiveMMR(a), Rank: rankViewOf(a, false),
 		UnreadMail: unread, AvatarID: EffectiveAvatar(a), DisplayName: a.DisplayName,
-		OwnedSkins: owned, ActiveSkin: EffectiveActiveSkin(a),
+		HasCustomAvatar: len(a.CustomAvatar) > 0,
+		OwnedSkins:      owned, ActiveSkin: EffectiveActiveSkin(a),
 		ID: a.ID, Level: level, XP: xp, XPInto: into, XPForNext: forNext,
 		Credit: EffectiveCredit(a), SeasonStars: a.SeasonStars,
 		Titles: a.Titles, TournHistory: a.TournamentHistory,
@@ -599,6 +617,12 @@ type Store interface {
 	GetDMThread(key string) (*DMThread, bool)
 	PutDMThread(t *DMThread) error
 	DMThreads() []*DMThread
+	// Posts are the 17f social posts (personal walls,
+	// newsfeed source rows, alliance posts), keyed by id.
+	GetPost(id string) (*Post, bool)
+	PutPost(p *Post) error
+	DeletePost(id string) error
+	Posts() []*Post
 }
 
 type storeData struct {
@@ -608,6 +632,7 @@ type storeData struct {
 	Tournaments map[string]*Tournament `json:"tournaments,omitempty"`
 	Alliances   map[string]*Alliance   `json:"alliances,omitempty"`
 	DMs         map[string]*DMThread   `json:"dms,omitempty"`
+	Posts       map[string]*Post       `json:"posts,omitempty"`
 }
 
 type FileStore struct {
@@ -627,6 +652,7 @@ func NewFileStore(path string) (*FileStore, error) {
 	fs.data.Tournaments = make(map[string]*Tournament)
 	fs.data.Alliances = make(map[string]*Alliance)
 	fs.data.DMs = make(map[string]*DMThread)
+	fs.data.Posts = make(map[string]*Post)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -655,6 +681,9 @@ func NewFileStore(path string) (*FileStore, error) {
 		}
 		if fs.data.DMs == nil {
 			fs.data.DMs = make(map[string]*DMThread)
+		}
+		if fs.data.Posts == nil {
+			fs.data.Posts = make(map[string]*Post)
 		}
 	}
 	return fs, nil
@@ -856,6 +885,49 @@ func (fs *FileStore) DMThreads() []*DMThread {
 	out := make([]*DMThread, 0, len(fs.data.DMs))
 	for _, t := range fs.data.DMs {
 		out = append(out, copyDMThread(t))
+	}
+	return out
+}
+
+func copyPost(p *Post) *Post {
+	out := *p
+	out.Likes = append([]string(nil), p.Likes...)
+	return &out
+}
+
+func (fs *FileStore) GetPost(id string) (*Post, bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	p, ok := fs.data.Posts[id]
+	if !ok {
+		return nil, false
+	}
+	return copyPost(p), true
+}
+
+func (fs *FileStore) PutPost(p *Post) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.data.Posts == nil {
+		fs.data.Posts = make(map[string]*Post)
+	}
+	fs.data.Posts[p.ID] = copyPost(p)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) DeletePost(id string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	delete(fs.data.Posts, id)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) Posts() []*Post {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	out := make([]*Post, 0, len(fs.data.Posts))
+	for _, p := range fs.data.Posts {
+		out = append(out, copyPost(p))
 	}
 	return out
 }
@@ -1309,8 +1381,26 @@ func (ac *Accounts) MarkOffline(user string) {
 // catalogue replaced in 17d). Only the twenty anime avatars
 // (cosmetics.go AvatarIDs) are valid picks — hero ids and
 // everything else are rejected. All twenty are free for every
-// account: there is no ownership gate on avatars.
+// account: there is no ownership gate on avatars. 17f §5:
+// the pick "custom" is valid while the account holds an
+// uploaded photo (the bytes stay stored either way, so
+// switching to a catalogue avatar and back keeps the photo).
 func (ac *Accounts) SetAvatar(user, id string) (Profile, error) {
+	if id == AvatarCustomID {
+		a, ok := ac.store.GetAccount(user)
+		if !ok {
+			return Profile{}, ErrBadCredentials
+		}
+		if len(a.CustomAvatar) == 0 {
+			return Profile{}, ErrBadAvatar
+		}
+		ac.touch(a)
+		a.AvatarID = AvatarCustomID
+		if err := ac.store.PutAccount(a); err != nil {
+			return Profile{}, err
+		}
+		return ac.profileOf(a), nil
+	}
 	if !avatarIDSet[id] {
 		return Profile{}, ErrBadAvatar
 	}

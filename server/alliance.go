@@ -214,6 +214,15 @@ type AllianceChatMsg struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
 	At   int64  `json:"at"`
+	// Reply (17f rider 3): the reply reference, kept in
+	// history exactly as relayed.
+	Reply *ChatReplyTo `json:"reply_to,omitempty"`
+	// ID + Reactions (17f rider 4): the stable line id and
+	// its reaction state, persisted with the history.
+	ID        string              `json:"id,omitempty"`
+	Reactions map[string][]string `json:"reactions,omitempty"`
+	// Image (17f rider 5): a photo line's base64 JPEG.
+	Image string `json:"image,omitempty"`
 }
 
 // AllianceQuests is one alliance's weekly-quest state (17b):
@@ -1472,19 +1481,71 @@ func (as *Alliances) SetNotice(id, actor, text string) error {
 // that passed the rate limit and were actually relayed, so
 // the history is exactly what members saw.
 func (as *Alliances) AddChatMsg(id, user, name, text string) {
+	as.AddChatMsgR(id, user, name, text, nil)
+}
+
+// AddChatMsgR is AddChatMsg with a reply reference (17f
+// rider 3), stored on the line so history keeps it. Returns
+// the stored line (the hub stamps its id on the live line).
+func (as *Alliances) AddChatMsgR(id, user, name, text string, reply *ChatReplyTo) *AllianceChatMsg {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	a, ok := as.get(id)
 	if !ok {
-		return
+		return nil
 	}
 	a.Chat = append(a.Chat, AllianceChatMsg{
-		User: user, Name: name, Text: text, At: as.now().Unix(),
+		User: user, Name: name, Text: text, At: as.now().Unix(), Reply: reply,
+		ID: newLineID("a"),
 	})
 	if len(a.Chat) > AllianceChatCap {
 		a.Chat = a.Chat[len(a.Chat)-AllianceChatCap:]
 	}
 	as.save(a)
+	stored := a.Chat[len(a.Chat)-1]
+	return &stored
+}
+
+// AddChatImage persists one alliance photo line (17f
+// rider 5: base64 JPEG, no text), same history cap as text.
+func (as *Alliances) AddChatImage(id, user, name, imageB64 string) *AllianceChatMsg {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a, ok := as.get(id)
+	if !ok {
+		return nil
+	}
+	a.Chat = append(a.Chat, AllianceChatMsg{
+		User: user, Name: name, At: as.now().Unix(),
+		ID: newLineID("a"), Image: imageB64,
+	})
+	if len(a.Chat) > AllianceChatCap {
+		a.Chat = a.Chat[len(a.Chat)-AllianceChatCap:]
+	}
+	as.save(a)
+	stored := a.Chat[len(a.Chat)-1]
+	return &stored
+}
+
+// ToggleChatReaction flips one user's reaction on a stored
+// alliance-chat line (17f rider 4) and returns the line's
+// full new reaction state. found=false for an unknown id.
+func (as *Alliances) ToggleChatReaction(id, lineID, user, emote string) (map[string][]string, bool) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	a, ok := as.get(id)
+	if !ok {
+		return nil, false
+	}
+	for i := range a.Chat {
+		if a.Chat[i].ID == lineID && lineID != "" {
+			a.Chat[i].Reactions = toggleReactionIn(a.Chat[i].Reactions, user, emote)
+			state := copyReactions(a.Chat[i].Reactions)
+			as.save(a)
+			return state, true
+		}
+	}
+	return nil, false
 }
 
 // ChatHistory returns a copy of the persisted chat lines
@@ -1586,9 +1647,32 @@ func (as *Alliances) View(a *Alliance, viewer string, online func(string) bool) 
 	out["notice_at"] = a.NoticeAt
 	chat := make([]map[string]any, 0, len(a.Chat))
 	for _, cm := range a.Chat {
-		chat = append(chat, map[string]any{
+		// 17f rider: history lines carry the same identity
+		// fields as live lines (ts = the stored accept time).
+		row := map[string]any{
 			"user": cm.User, "name": cm.Name, "text": cm.Text, "at": cm.At,
-		})
+			"ts": cm.At, "avatar_id": AvatarDefaultID, "frame_id": "", "title": "",
+		}
+		if as.acc != nil && cm.User != "" {
+			if av := as.acc.AvatarOf(cm.User); av != "" {
+				row["avatar_id"] = av
+			}
+			row["frame_id"] = as.acc.EquippedFrameOf(cm.User)
+			row["title"] = as.acc.EquippedTitleOf(cm.User)
+		}
+		if cm.Reply != nil {
+			row["reply_to"] = cm.Reply
+		}
+		if cm.ID != "" {
+			row["id"] = cm.ID
+		}
+		if len(cm.Reactions) > 0 {
+			row["reactions"] = cm.Reactions
+		}
+		if cm.Image != "" {
+			row["image"] = cm.Image
+		}
+		chat = append(chat, row)
 	}
 	out["chat"] = chat
 	qrows := make([]map[string]any, 0, len(allianceQuestDefs))

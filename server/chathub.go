@@ -26,13 +26,20 @@ package main
 // the lockstep sim or any checksum.
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg" // JPEG decode for chat-image validation
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ------------------------------------------------------------ emoticons
@@ -195,6 +202,95 @@ type DMMsg struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
 	At   int64  `json:"at"`
+	// Reply (17f rider 3): the reply reference the sender
+	// attached, kept in history exactly as relayed.
+	Reply *ChatReplyTo `json:"reply_to,omitempty"`
+	// ID + Reactions (17f rider 4): every line carries a
+	// stable id (unique per channel scope) and its reaction
+	// state {emote_id: [usernames]} — persisted with the
+	// history for alliance + DM lines.
+	ID        string              `json:"id,omitempty"`
+	Reactions map[string][]string `json:"reactions,omitempty"`
+	// Image (17f rider 5): a photo line's base64 JPEG (the
+	// line then has no text). Alliance + DM channels only.
+	Image string `json:"image,omitempty"`
+}
+
+// newLineID mints a line id unique per channel scope
+// (prefix w = world, a = alliance, d = dm, v = voice).
+func newLineID(prefix string) string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return prefix + hex.EncodeToString(b[:])
+}
+
+// toggleReactionIn flips `user`'s reaction of `emote` in a
+// line's reaction state and returns the new state (empty
+// emote buckets are removed). Shared by every channel.
+func toggleReactionIn(state map[string][]string, user, emote string) map[string][]string {
+	if state == nil {
+		state = map[string][]string{}
+	}
+	users := state[emote]
+	found := false
+	out := users[:0]
+	for _, u := range users {
+		if u == user {
+			found = true
+			continue
+		}
+		out = append(out, u)
+	}
+	if !found {
+		out = append(out, user)
+	}
+	if len(out) == 0 {
+		delete(state, emote)
+	} else {
+		state[emote] = out
+	}
+	return state
+}
+
+// copyReactions deep-copies a reaction state for fan-out.
+func copyReactions(state map[string][]string) map[string][]string {
+	if len(state) == 0 {
+		return map[string][]string{}
+	}
+	out := make(map[string][]string, len(state))
+	for k, v := range state {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+// ChatReplyTo is the reply reference a chat line may carry
+// (17f rider 3): it names the player being replied to — the
+// ONLY place an @username appears on a line. Relayed
+// verbatim once validated; a malformed one is dropped
+// silently and the message still sends.
+type ChatReplyTo struct {
+	User string `json:"user"`
+	Name string `json:"name"`
+}
+
+// sanitizeReplyTo validates a raw reply_to payload: user
+// and name must be strings, user non-empty, name ≤ 32
+// runes. nil raw / any violation → nil (drop silently).
+func sanitizeReplyTo(raw json.RawMessage) *ChatReplyTo {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	user, uok := m["user"].(string)
+	name, nok := m["name"].(string)
+	if !uok || !nok || user == "" || utf8.RuneCountInString(name) > 32 {
+		return nil
+	}
+	return &ChatReplyTo{User: user, Name: name}
 }
 
 // DMThread is one pair's conversation: both usernames in
@@ -240,6 +336,12 @@ func NewDMs(store Store) *DMs {
 // returns the updated thread. The recipient's unread count
 // grows; the sender's own lines never count as unread.
 func (d *DMs) AppendText(from, fromName, to, text string) (*DMThread, error) {
+	return d.AppendTextR(from, fromName, to, text, nil)
+}
+
+// AppendTextR is AppendText with a reply reference (17f
+// rider 3), stored on the line so history keeps it.
+func (d *DMs) AppendTextR(from, fromName, to, text string, reply *ChatReplyTo) (*DMThread, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	key := DMKey(from, to)
@@ -251,7 +353,7 @@ func (d *DMs) AppendText(from, fromName, to, text string) (*DMThread, error) {
 		}
 		th = &DMThread{Key: key, Users: users, Unread: map[string]int{}}
 	}
-	th.Msgs = append(th.Msgs, DMMsg{From: from, Name: fromName, Text: text, At: d.now().Unix()})
+	th.Msgs = append(th.Msgs, DMMsg{From: from, Name: fromName, Text: text, At: d.now().Unix(), Reply: reply, ID: newLineID("d")})
 	if len(th.Msgs) > DMHistoryCap {
 		th.Msgs = th.Msgs[len(th.Msgs)-DMHistoryCap:]
 	}
@@ -263,6 +365,59 @@ func (d *DMs) AppendText(from, fromName, to, text string) (*DMThread, error) {
 		return nil, err
 	}
 	return th, nil
+}
+
+// AppendImage stores one photo line (17f rider 5: the
+// base64 JPEG rides Image; the line has no text) and
+// returns the updated thread.
+func (d *DMs) AppendImage(from, fromName, to, imageB64 string) (*DMThread, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	key := DMKey(from, to)
+	th, ok := d.store.GetDMThread(key)
+	if !ok {
+		users := [2]string{from, to}
+		if to < from {
+			users = [2]string{to, from}
+		}
+		th = &DMThread{Key: key, Users: users, Unread: map[string]int{}}
+	}
+	th.Msgs = append(th.Msgs, DMMsg{From: from, Name: fromName, At: d.now().Unix(),
+		ID: newLineID("d"), Image: imageB64})
+	if len(th.Msgs) > DMHistoryCap {
+		th.Msgs = th.Msgs[len(th.Msgs)-DMHistoryCap:]
+	}
+	if th.Unread == nil {
+		th.Unread = map[string]int{}
+	}
+	th.Unread[to]++
+	if err := d.store.PutDMThread(th); err != nil {
+		return nil, err
+	}
+	return th, nil
+}
+
+// ToggleReaction flips one user's reaction on a stored DM
+// line (17f rider 4) and returns the line's full new
+// reaction state. found=false for an unknown line id.
+func (d *DMs) ToggleReaction(a, b, lineID, user, emote string) (map[string][]string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	th, ok := d.store.GetDMThread(DMKey(a, b))
+	if !ok {
+		return nil, false
+	}
+	for i := range th.Msgs {
+		if th.Msgs[i].ID == lineID && lineID != "" {
+			th.Msgs[i].Reactions = toggleReactionIn(th.Msgs[i].Reactions, user, emote)
+			state := copyReactions(th.Msgs[i].Reactions)
+			if err := d.store.PutDMThread(th); err != nil {
+				return nil, false
+			}
+			return state, true
+		}
+	}
+	return nil, false
 }
 
 // History returns the pair's stored lines, oldest first.
@@ -441,6 +596,128 @@ func (h *Hub) chatDecor(user string) (tag, bubble string, champ bool) {
 	return tag, bubble, champ
 }
 
+// chatIdentity resolves the 17f chat-line identity fields
+// every fanned-out or history line carries (the hub client
+// renders avatar + name + title + <TAG> + @user + time from
+// them): the sender's account username, effective avatar,
+// effective frame, equipped display title, and the accept
+// timestamp (unix seconds; history lines pass their stored
+// At). Nil-safe for hubs without an account service.
+func (h *Hub) chatIdentity(user string, ts int64) map[string]any {
+	out := map[string]any{
+		"user": user, "ts": ts,
+		"avatar_id": AvatarDefaultID, "frame_id": "", "title": "",
+	}
+	if h.acc != nil && user != "" {
+		if av := h.acc.AvatarOf(user); av != "" {
+			out["avatar_id"] = av
+		}
+		out["frame_id"] = h.acc.EquippedFrameOf(user)
+		out["title"] = h.acc.EquippedTitleOf(user)
+	}
+	return out
+}
+
+// mergeIdentity stamps chatIdentity's fields onto a line map.
+func (h *Hub) mergeIdentity(msg map[string]any, user string, ts int64) {
+	for k, v := range h.chatIdentity(user, ts) {
+		msg[k] = v
+	}
+}
+
+// ------------------------------------------------- line reactions (17f rider 4)
+
+// registerSessionLine marks a line id as issued by this
+// process (world text + voice lines): only registered ids
+// accept session-scope reactions.
+func (h *Hub) registerSessionLine(id string) {
+	h.userMu.Lock()
+	defer h.userMu.Unlock()
+	if h.sessionLines == nil {
+		h.sessionLines = make(map[string]bool)
+	}
+	h.sessionLines[id] = true
+}
+
+// toggleSessionReaction flips a reaction in the session
+// store. found=false for an unregistered id.
+func (h *Hub) toggleSessionReaction(user, lineID, emote string) (map[string][]string, bool) {
+	h.userMu.Lock()
+	defer h.userMu.Unlock()
+	if !h.sessionLines[lineID] {
+		return nil, false
+	}
+	if h.sessionReact == nil {
+		h.sessionReact = make(map[string]map[string][]string)
+	}
+	h.sessionReact[lineID] = toggleReactionIn(h.sessionReact[lineID], user, emote)
+	return copyReactions(h.sessionReact[lineID]), true
+}
+
+// ReactToLine serves the chat_react op: it toggles the
+// caller's reaction of `emote` on one line and fans the
+// line's FULL reaction state out to everyone who can see
+// the line. channel: "world" | "alliance" | "dm" (peer =
+// the DM partner). Unknown ids/emotes drop silently.
+// Persisted channels (alliance text, DM) store the state in
+// their history; world + voice lines live in the session
+// store only.
+func (h *Hub) ReactToLine(user, channel, peer, lineID, emote string) {
+	if user == "" || lineID == "" || !emoteIDSet[emote] {
+		return
+	}
+	switch channel {
+	case "world":
+		state, ok := h.toggleSessionReaction(user, lineID, emote)
+		if !ok {
+			return
+		}
+		h.SendToAllUsers(map[string]any{
+			"t": "chat_react", "scope": "world", "id": lineID,
+			"reactions": state,
+		})
+	case "alliance":
+		if h.allis == nil {
+			return
+		}
+		a := h.allis.OfUser(user)
+		if a == nil {
+			return
+		}
+		state, ok := h.allis.ToggleChatReaction(a.ID, lineID, user, emote)
+		if !ok {
+			// Not a persisted line — an alliance VOICE line
+			// lives in the session store.
+			state, ok = h.toggleSessionReaction(user, lineID, emote)
+			if !ok {
+				return
+			}
+		}
+		h.SendToUsers(h.allis.MemberUsers(a.ID), map[string]any{
+			"t": "chat_react", "scope": "alliance", "id": lineID,
+			"alliance": a.ID, "reactions": state,
+		})
+	case "dm":
+		if h.dms == nil || peer == "" || peer == user {
+			return
+		}
+		state, ok := h.dms.ToggleReaction(user, peer, lineID, user, emote)
+		if !ok {
+			return
+		}
+		base := map[string]any{
+			"t": "chat_react", "scope": "dm", "id": lineID,
+			"reactions": state,
+		}
+		toPeer := cloneMsg(base)
+		toPeer["peer"] = user
+		h.SendToUsers([]string{peer}, toPeer)
+		toSelf := cloneMsg(base)
+		toSelf["peer"] = peer
+		h.SendToUsers([]string{user}, toSelf)
+	}
+}
+
 // SendToAllUsers delivers one message to every live session
 // of every logged-in account (17e fan-out primitive).
 func (h *Hub) SendToAllUsers(msg map[string]any) {
@@ -481,6 +758,12 @@ func (h *Hub) chatGateLocked(win map[string][]time.Time, user string) bool {
 // like room chat; past the budget the line drops silently.
 // The sender's own sessions receive the line back.
 func (h *Hub) RelayWorldChat(user, name, text string) {
+	h.RelayWorldChatR(user, name, text, nil)
+}
+
+// RelayWorldChatR is RelayWorldChat with a reply reference
+// (17f rider 3), relayed verbatim on the line.
+func (h *Hub) RelayWorldChatR(user, name, text string, reply *ChatReplyTo) {
 	h.userMu.Lock()
 	if h.worldChatWin == nil {
 		h.worldChatWin = make(map[string][]time.Time)
@@ -495,9 +778,11 @@ func (h *Hub) RelayWorldChat(user, name, text string) {
 	}
 	text = SanitizeEmotes(text)
 	tag, bubble, champ := h.chatDecor(user)
+	lineID := newLineID("w")
+	h.registerSessionLine(lineID)
 	msg := map[string]any{
 		"t": "chat", "scope": "world", "from": WorldChatFrom,
-		"name": name, "text": text,
+		"name": name, "text": text, "id": lineID,
 	}
 	if tag != "" {
 		msg["ally_tag"] = tag
@@ -506,13 +791,104 @@ func (h *Hub) RelayWorldChat(user, name, text string) {
 	if champ {
 		msg["war_champ"] = true
 	}
+	if reply != nil {
+		msg["reply_to"] = reply
+	}
+	h.mergeIdentity(msg, user, time.Now().Unix())
 	h.SendToAllUsers(msg)
+}
+
+// ------------------------------------------------- chat images (17f rider 5)
+
+// ChatImageMaxBytes caps a chat photo's JPEG payload;
+// either dimension may reach ChatImageMaxDim.
+const (
+	ChatImageMaxBytes = 400 * 1024
+	ChatImageMaxDim   = 1024
+)
+
+var (
+	ErrBadChatImage  = errors.New("Ảnh không hợp lệ")
+	ErrChatImageBig  = errors.New("Ảnh quá lớn (tối đa 400KB)")
+	ErrChatImageDims = errors.New("Ảnh quá to (tối đa 1024×1024)")
+)
+
+// ValidateChatImage checks a chat photo payload: a
+// decodable JPEG, ≤ 400KB, ≤ 1024 on either side.
+func ValidateChatImage(jpg []byte) error {
+	if len(jpg) > ChatImageMaxBytes {
+		return ErrChatImageBig
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(jpg))
+	if err != nil || format != "jpeg" {
+		return ErrBadChatImage
+	}
+	if cfg.Width > ChatImageMaxDim || cfg.Height > ChatImageMaxDim {
+		return ErrChatImageDims
+	}
+	return nil
+}
+
+// RelayDMImage stores + fans out one DM PHOTO line (17f
+// rider 5): a normal chat line with `image` = the base64
+// JPEG and no text, gated by the shared chat budget.
+func (h *Hub) RelayDMImage(user, name, peer, imageB64 string) error {
+	if peer == user {
+		return ErrDMSelf
+	}
+	h.userMu.Lock()
+	if h.worldChatWin == nil {
+		h.worldChatWin = make(map[string][]time.Time)
+	}
+	ok := h.chatGateLocked(h.worldChatWin, user)
+	h.userMu.Unlock()
+	if !ok {
+		return nil // silently dropped, like every chat channel
+	}
+	lineID := ""
+	if h.dms != nil {
+		th, err := h.dms.AppendImage(user, name, peer, imageB64)
+		if err != nil {
+			return err
+		}
+		if th != nil && len(th.Msgs) > 0 {
+			lineID = th.Msgs[len(th.Msgs)-1].ID
+		}
+	}
+	tag, bubble, champ := h.chatDecor(user)
+	base := map[string]any{
+		"t": "chat", "scope": "dm", "from": WorldChatFrom,
+		"name": name, "image": imageB64, "from_user": user, "bubble": bubble,
+	}
+	if lineID != "" {
+		base["id"] = lineID
+	}
+	if tag != "" {
+		base["ally_tag"] = tag
+	}
+	if champ {
+		base["war_champ"] = true
+	}
+	h.mergeIdentity(base, user, time.Now().Unix())
+	toPeer := cloneMsg(base)
+	toPeer["peer"] = user
+	h.SendToUsers([]string{peer}, toPeer)
+	toSelf := cloneMsg(base)
+	toSelf["peer"] = peer
+	h.SendToUsers([]string{user}, toSelf)
+	return nil
 }
 
 // RelayDMText stores + fans out one private line. Storage
 // happens BEFORE fan-out (history is exactly what was
 // delivered). Returns ErrDMTarget for a self-DM.
 func (h *Hub) RelayDMText(user, name, peer, text string) error {
+	return h.RelayDMTextR(user, name, peer, text, nil)
+}
+
+// RelayDMTextR is RelayDMText with a reply reference (17f
+// rider 3): relayed on the line AND stored in history.
+func (h *Hub) RelayDMTextR(user, name, peer, text string, reply *ChatReplyTo) error {
 	if peer == user {
 		return ErrDMSelf
 	}
@@ -529,9 +905,14 @@ func (h *Hub) RelayDMText(user, name, peer, text string) error {
 		text = string(rs[:ChatMaxLen])
 	}
 	text = SanitizeEmotes(text)
+	lineID := ""
 	if h.dms != nil {
-		if _, err := h.dms.AppendText(user, name, peer, text); err != nil {
+		th, err := h.dms.AppendTextR(user, name, peer, text, reply)
+		if err != nil {
 			return err
+		}
+		if th != nil && len(th.Msgs) > 0 {
+			lineID = th.Msgs[len(th.Msgs)-1].ID
 		}
 	}
 	tag, bubble, champ := h.chatDecor(user)
@@ -539,6 +920,13 @@ func (h *Hub) RelayDMText(user, name, peer, text string) error {
 		"t": "chat", "scope": "dm", "from": WorldChatFrom,
 		"name": name, "text": text, "from_user": user, "bubble": bubble,
 	}
+	if lineID != "" {
+		base["id"] = lineID
+	}
+	if reply != nil {
+		base["reply_to"] = reply
+	}
+	h.mergeIdentity(base, user, time.Now().Unix())
 	if tag != "" {
 		base["ally_tag"] = tag
 	}
@@ -588,11 +976,14 @@ func (h *Hub) voiceGate(user string) bool {
 // voiceMsg builds the wire shape shared by every voice relay.
 func (h *Hub) voiceMsg(scope, user, name string, wav []byte, dur float64) map[string]any {
 	tag, bubble, champ := h.chatDecor(user)
+	lineID := newLineID("v")
+	h.registerSessionLine(lineID)
 	msg := map[string]any{
 		"t": "voice", "scope": scope, "from": WorldChatFrom,
-		"name": name, "dur": dur, "bubble": bubble,
+		"name": name, "dur": dur, "bubble": bubble, "id": lineID,
 		"data": base64.StdEncoding.EncodeToString(wav),
 	}
+	h.mergeIdentity(msg, user, time.Now().Unix())
 	if tag != "" {
 		msg["ally_tag"] = tag
 	}
