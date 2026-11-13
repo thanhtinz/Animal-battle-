@@ -616,7 +616,10 @@ func _line_row(line: Dictionary, channel: String) -> Control:
 	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(head)
 	var nl := _label(String(line.get("name", "?")), 14, Color(st["text"]))
-	nl.clip_text = true
+	# NEITHER clip_text NOR overrun-trim here: both collapse
+	# the label's minimum width to ~1px in Godot 4.4 and the
+	# name vanishes (measured by tests/probe_linerow.gd).
+	# A plain label sizes to its text; names are ≤16 chars.
 	nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(nl)
 	var title := String(line.get("title", ""))

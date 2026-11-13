@@ -76,60 +76,96 @@ class FlagBadge:
 		if w < 8.0 or h < 8.0:
 			return
 		var base := AllyBadge.color_of(color_idx)
-		# --- pole: dark wood + gold finial + a small foot.
-		var pole_x := w * 0.075
-		var pole_w := clampf(w * 0.045, 2.0, 5.0)
-		var pole_top := h * 0.10
-		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w, h * 0.88),
-				Color(0.30, 0.20, 0.10))
-		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w * 0.45, h * 0.88),
-				Color(0.42, 0.29, 0.15))
-		draw_circle(Vector2(pole_x, h * 0.075), clampf(w * 0.05, 2.5, 6.0),
-				Color(0.98, 0.80, 0.35))
-		draw_rect(Rect2(pole_x - w * 0.07, h * 0.965, w * 0.14, maxf(2.0, h * 0.03)),
-				Color(0.30, 0.20, 0.10))
-		# --- cloth: vertical strips on a sine wave, each
-		# strip shaded by the wave's slope so the cloth reads
-		# as folded fabric, never a flat rectangle.
-		var x0 := pole_x + pole_w * 0.5
+		var x0 := w * 0.075 + clampf(w * 0.045, 2.0, 5.0) * 0.5
 		var x1 := w * 0.985
 		var y0 := h * 0.13
 		var ch := h * 0.60
-		var amp := ch * 0.055
-		var strips := 14
-		var sw := (x1 - x0) / strips
+		var amp := ch * 0.10
 		var phase := 0.7
+		# Wave grows toward the fly end; the bottom edge gets
+		# a touch more travel so the cloth sags like fabric.
 		var wave := func(t: float) -> float:
-			return sin(phase + t * 4.6) * amp * (0.35 + 0.65 * t)
+			return sin(phase + t * 5.2) * amp * (0.30 + 0.70 * t)
+		# --- soft drop shadow of the whole cloth.
+		var shadow_pts := PackedVector2Array()
+		for i in 9:
+			var tt := float(i) / 8.0
+			shadow_pts.append(Vector2(x0 + (x1 - x0) * tt + w * 0.02,
+					y0 + wave.call(tt) + h * 0.035))
+		for i in range(8, -1, -1):
+			var tt := float(i) / 8.0
+			shadow_pts.append(Vector2(x0 + (x1 - x0) * tt + w * 0.02,
+					y0 + ch + wave.call(tt) * 1.15 + h * 0.035))
+		draw_colored_polygon(shadow_pts, Color(0, 0, 0, 0.20))
+		# --- cloth: 18 strips, fold shading follows the
+		# wave's slope with real contrast (never flat).
+		var strips := 18
+		var sw := (x1 - x0) / strips
 		for i in strips:
 			var t0 := float(i) / strips
 			var t1 := float(i + 1) / strips
 			var dy0: float = wave.call(t0)
 			var dy1: float = wave.call(t1)
-			var shade := 0.86 + 0.14 * cos(phase + (t0 + t1) * 0.5 * 4.6)
-			var col := Color(base.r * shade, base.g * shade, base.b * shade)
+			var slope := cos(phase + (t0 + t1) * 0.5 * 5.2)
+			var shade := clampf(0.80 + 0.26 * slope, 0.62, 1.10)
+			var col := Color(minf(base.r * shade, 1.0),
+					minf(base.g * shade, 1.0), minf(base.b * shade, 1.0))
 			draw_colored_polygon(PackedVector2Array([
 				Vector2(x0 + sw * i, y0 + dy0),
 				Vector2(x0 + sw * (i + 1), y0 + dy1),
-				Vector2(x0 + sw * (i + 1), y0 + ch + dy1 * 1.12),
-				Vector2(x0 + sw * i, y0 + ch + dy0 * 1.12)]), col)
-		# A darker fold line a third across the cloth.
-		var fx := x0 + (x1 - x0) * 0.36
-		var fdy: float = wave.call(0.36)
-		draw_line(Vector2(fx, y0 + fdy + 1.0),
-				Vector2(fx, y0 + ch + fdy * 1.12 - 1.0),
-				Color(0, 0, 0, 0.16), clampf(w * 0.03, 1.5, 3.5))
-		# Cloth outline (top/bottom follow the wave coarsely).
-		var edge := Color(0, 0, 0, 0.22)
-		draw_line(Vector2(x0, y0 + wave.call(0.0)), Vector2(x1, y0 + wave.call(1.0)), edge, 1.2)
-		draw_line(Vector2(x0, y0 + ch + wave.call(0.0) * 1.12),
-				Vector2(x1, y0 + ch + wave.call(1.0) * 1.12), edge, 1.2)
-		# --- the icon printed on the cloth: soft shadow pass
-		# then the white glyph. Small flags give the glyph a
-		# bigger share of the cloth so it survives at 30px.
+				Vector2(x0 + sw * (i + 1), y0 + ch + dy1 * 1.15),
+				Vector2(x0 + sw * i, y0 + ch + dy0 * 1.15)]), col)
+		# Sheen band across the upper cloth + a deep fold
+		# shadow in the lower third, both following the wave.
+		for i in strips:
+			var t0 := float(i) / strips
+			var t1 := float(i + 1) / strips
+			var dy0: float = wave.call(t0)
+			var dy1: float = wave.call(t1)
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x0 + sw * i, y0 + dy0 + ch * 0.10),
+				Vector2(x0 + sw * (i + 1), y0 + dy1 + ch * 0.10),
+				Vector2(x0 + sw * (i + 1), y0 + dy1 + ch * 0.30),
+				Vector2(x0 + sw * i, y0 + dy0 + ch * 0.30)]),
+					Color(1, 1, 1, 0.10))
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x0 + sw * i, y0 + dy0 * 1.15 + ch * 0.78),
+				Vector2(x0 + sw * (i + 1), y0 + dy1 * 1.15 + ch * 0.78),
+				Vector2(x0 + sw * (i + 1), y0 + ch + dy1 * 1.15),
+				Vector2(x0 + sw * i, y0 + ch + dy0 * 1.15)]),
+					Color(0, 0, 0, 0.12))
+		# --- gold trim along the waving edges + fly end.
+		var trim := Color(0.98, 0.80, 0.35, 0.85)
+		var trim_w := clampf(h * 0.028, 1.2, 2.4)
+		var top_pts := PackedVector2Array()
+		var bot_pts := PackedVector2Array()
+		for i in 19:
+			var tt := float(i) / 18.0
+			top_pts.append(Vector2(x0 + (x1 - x0) * tt, y0 + wave.call(tt)))
+			bot_pts.append(Vector2(x0 + (x1 - x0) * tt, y0 + ch + wave.call(tt) * 1.15))
+		draw_polyline(top_pts, trim, trim_w)
+		draw_polyline(bot_pts, trim, trim_w)
+		draw_line(Vector2(x1, y0 + wave.call(1.0)),
+				Vector2(x1, y0 + ch + wave.call(1.0) * 1.15), trim, trim_w)
+		# --- pole over the hoist edge: two-tone wood, gold
+		# ball finial with a highlight, small foot.
+		var pole_x := w * 0.075
+		var pole_w := clampf(w * 0.05, 2.5, 5.5)
+		var pole_top := h * 0.10
+		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w, h * 0.88),
+				Color(0.28, 0.18, 0.09))
+		draw_rect(Rect2(pole_x - pole_w * 0.5, pole_top, pole_w * 0.45, h * 0.88),
+				Color(0.45, 0.31, 0.16))
+		var ball_r := clampf(w * 0.055, 3.0, 6.5)
+		draw_circle(Vector2(pole_x, h * 0.075), ball_r, Color(0.98, 0.80, 0.35))
+		draw_circle(Vector2(pole_x - ball_r * 0.3, h * 0.075 - ball_r * 0.3),
+				ball_r * 0.38, Color(1.0, 0.93, 0.65))
+		draw_rect(Rect2(pole_x - w * 0.07, h * 0.965, w * 0.14, maxf(2.0, h * 0.03)),
+				Color(0.28, 0.18, 0.09))
+		# --- the icon printed on the cloth.
 		var share := 0.62 if h > 44.0 else 0.76
 		var ih := ch * share
-		var iw := ih # icons are square silhouettes
+		var iw := ih
 		var cx := (x0 + x1) * 0.5
 		var cy: float = y0 + ch * 0.5 + float(wave.call(0.5))
 		var rect := Rect2(cx - iw * 0.5, cy - ih * 0.5, iw, ih)

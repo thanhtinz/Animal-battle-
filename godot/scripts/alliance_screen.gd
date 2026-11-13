@@ -21,6 +21,7 @@ const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
 const FA_CROWN := 0xF521
 const FA_USERS := 0xF0C0
 const FA_USER_PLUS := 0xF234
+const FA_USER_CHECK := 0xF4FC
 const FA_COMMENTS := 0xF086
 const FA_GEAR := 0xF013
 const FA_LEAVE := 0xF2F5
@@ -668,14 +669,14 @@ func _build_joined() -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 8)
 	right.add_child(tabs)
-	var req_count := int(mine.get("requests_count", 0))
+	# Owner order 2026-11-12: NO "Yêu cầu" tab — join
+	# requests live in the left actions card and only the
+	# leader + deputies ever see that entry.
+	if _tab == "requests" and String(mine.get("my_role", "")) not in ["leader", "deputy"]:
+		_tab = "members"
 	tabs.add_child(_tab_btn("members", "Thành viên"))
 	# 17f §4: the Bài viết tab (alliance posts).
 	tabs.add_child(_tab_btn("posts", "Bài viết"))
-	var req_label := "Yêu cầu"
-	if req_count > 0:
-		req_label += " (%d)" % req_count
-	tabs.add_child(_tab_btn("requests", req_label))
 	tabs.add_child(_tab_btn("quests", "Nhiệm vụ"))
 	tabs.add_child(_tab_btn("activity", "Hoạt động"))
 	if _detail_user != "":
@@ -840,6 +841,23 @@ func _actions_card(mine: Dictionary) -> PanelContainer:
 			_sig = "\u0001"
 			_render())
 		vb.add_child(inv)
+		# Owner order 2026-11-12: join requests moved here
+		# from the tab row — leader + deputies only (the
+		# server only sends the list to them anyway).
+		var req_count := int(mine.get("requests_count", 0))
+		var reql := "Đơn xin vào"
+		if req_count > 0:
+			reql += " (%d)" % req_count
+		var reqb := _icon_btn(reql, FA_USER_CHECK,
+				"primary" if _tab == "requests" else "")
+		reqb.pressed.connect(func() -> void:
+			_tab = "requests"
+			_invite_open = false
+			_settings_open = false
+			_notice_open = false
+			_sig = ""
+			_render())
+		vb.add_child(reqb)
 	var chatb := _icon_btn("Chat liên minh", FA_COMMENTS)
 	# 17e: alliance chat MOVED to the chat hub (the owner's
 	# "toàn bộ chat gom về một chỗ") — this button opens the

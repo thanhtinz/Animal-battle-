@@ -213,10 +213,21 @@ func _build_composer() -> void:
 	card.add_theme_stylebox_override("panel",
 			_sb(Color(1, 1, 1, 0.045), 10, PANEL_LINE, 1))
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", 6)
 	card.add_child(vb)
+	# Row 1: my avatar + writing field + Đăng bài at one
+	# height — one tidy bar instead of a big empty box
+	# (owner: "khung đăng bài viết xấu").
+	var row1 := HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 8)
+	var my_av := AvatarFrame.new()
+	my_av.custom_minimum_size = Vector2(46, 46)
+	my_av.set_content(Avatars.texture_for_user(Avatars.local_avatar(),
+			Net.account_name),
+			String(Net.auth_profile.get("frame_id", "")), false)
+	row1.add_child(my_av)
 	_draft_text = TextEdit.new()
-	_draft_text.custom_minimum_size = Vector2(0, 62)
+	_draft_text.custom_minimum_size = Vector2(0, 46)
 	_draft_text.placeholder_text = "Viết gì đó…"
 	_draft_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_draft_text.add_theme_font_size_override("font_size", 14)
@@ -226,42 +237,44 @@ func _build_composer() -> void:
 			_field_sb(FIELD_BG, PANEL_LINE, 1, true))
 	_draft_text.add_theme_stylebox_override("focus",
 			_field_sb(FIELD_BG, GOLD, 1, true))
-	vb.add_child(_draft_text)
-	# Attach chip (hidden until an image is picked).
+	_draft_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row1.add_child(_draft_text)
+	var post_btn := _button("Đăng bài", true, 104)
+	post_btn.custom_minimum_size = Vector2(104, 46)
+	post_btn.pressed.connect(_on_post_pressed)
+	row1.add_child(post_btn)
+	vb.add_child(row1)
+	# Row 2 (slim): gallery toggle + hint + the attach chip.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var pick := _button("", false, 34)
+	pick.custom_minimum_size = Vector2(34, 30)
+	_btn_icon(pick, FA_IMAGE, 15, GOLD)
+	pick.pressed.connect(func() -> void:
+		_gallery.visible = not _gallery.visible)
+	row.add_child(pick)
+	var hint := _label("Đính kèm ảnh từ thư viện của game", 11, DIM)
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(hint)
 	_attach_chip = HBoxContainer.new()
-	_attach_chip.add_theme_constant_override("separation", 8)
+	_attach_chip.add_theme_constant_override("separation", 6)
 	_attach_chip.visible = false
 	_attach_tex = TextureRect.new()
-	_attach_tex.custom_minimum_size = Vector2(36, 36)
+	_attach_tex.custom_minimum_size = Vector2(28, 28)
 	_attach_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_attach_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_attach_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_attach_chip.add_child(_attach_tex)
-	_attach_name = _label("", 13, MUTED)
+	_attach_name = _label("", 12, MUTED)
 	_attach_name.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_attach_chip.add_child(_attach_name)
 	var unattach := Button.new()
 	unattach.flat = true
-	unattach.custom_minimum_size = Vector2(30, 30)
-	_btn_icon(unattach, FA_XMARK, 13, MUTED)
+	unattach.custom_minimum_size = Vector2(26, 26)
+	_btn_icon(unattach, FA_XMARK, 12, MUTED)
 	unattach.pressed.connect(func() -> void: _set_attach(""))
 	_attach_chip.add_child(unattach)
-	vb.add_child(_attach_chip)
-	# Action row: gallery toggle + Đăng.
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var pick := _button("", false, 44)
-	_btn_icon(pick, FA_IMAGE, 16, GOLD)
-	pick.pressed.connect(func() -> void:
-		_gallery.visible = not _gallery.visible)
-	row.add_child(pick)
-	row.add_child(_label("Đính kèm ảnh từ thư viện của game", 12, DIM))
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
-	var post_btn := _button("Đăng bài", true, 110)
-	post_btn.pressed.connect(_on_post_pressed)
-	row.add_child(post_btn)
+	row.add_child(_attach_chip)
 	vb.add_child(row)
 	# Gallery grid (hidden until toggled).
 	_gallery = GridContainer.new()
