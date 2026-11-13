@@ -198,6 +198,8 @@ var _mq_layer: CanvasLayer = null
 var _mq_strip: PanelContainer = null
 var _mq_clip: Control = null
 var _mq_label: Label = null
+var _mq_icon: Label = null
+var _mq_fade_mat: ShaderMaterial = null
 var _mq_queue: Array = []
 var _mq_x: float = 0.0
 var _mq_text_w: float = 0.0
@@ -1324,6 +1326,23 @@ func _on_voice_msg(m: Dictionary, wav: PackedByteArray) -> void:
 
 const MARQUEE_SPEED := 110.0
 const MARQUEE_H := 38.0
+# Owner order 2026-11-12 (late): the pill's two ends
+# DISSOLVE instead of ending in rounded caps — one shared
+# fade material on the strip and the scrolling label
+# melts each item's alpha at the pill's left/right edges
+# (viewport-space math, so both items fade in register).
+const MQ_FADE_SHADER = """
+shader_type canvas_item;
+uniform float u_left = 0.0;
+uniform float u_w = 800.0;
+uniform float u_fade = 70.0;
+void fragment() {
+	COLOR *= texture(TEXTURE, UV);
+	float px = FRAGCOORD.x - u_left;
+	float a = smoothstep(0.0, u_fade, px) * (1.0 - smoothstep(u_w - u_fade, u_w, px));
+	COLOR.a *= a;
+}
+"""
 
 
 ## The pill's width: at most 800px, always 32px short of
@@ -1333,7 +1352,8 @@ func _mq_pill_w() -> float:
 
 
 ## (Re)applies the pill geometry — centred horizontally,
-## 10px from the top, MARQUEE_H tall.
+## 44px from the top (owner asked it lower, clear of the
+## top bar), MARQUEE_H tall.
 func _mq_fit() -> void:
 	var w := _mq_pill_w()
 	_mq_strip.anchor_left = 0.5
@@ -1342,8 +1362,8 @@ func _mq_fit() -> void:
 	_mq_strip.anchor_bottom = 0.0
 	_mq_strip.offset_left = -w / 2.0
 	_mq_strip.offset_right = w / 2.0
-	_mq_strip.offset_top = 10
-	_mq_strip.offset_bottom = 10 + MARQUEE_H
+	_mq_strip.offset_top = 44
+	_mq_strip.offset_bottom = 44 + MARQUEE_H
 
 
 func _ensure_marquee() -> void:
@@ -1356,24 +1376,51 @@ func _ensure_marquee() -> void:
 	_mq_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.13, 0.18, 0.30, 0.50)
-	sb.border_color = Color(1.0, 0.90, 0.55, 0.55)
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(19)
+	# No border, no corner radius: the fade material melts
+	# the two ends away instead (owner order, see above).
+	sb.set_border_width_all(0)
+	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 18
 	sb.content_margin_right = 18
 	sb.shadow_size = 6
 	sb.shadow_color = Color(0, 0, 0, 0.35)
 	sb.shadow_offset = Vector2(0, 2)
 	_mq_strip.add_theme_stylebox_override("panel", sb)
+	var sh := Shader.new()
+	sh.code = MQ_FADE_SHADER
+	_mq_fade_mat = ShaderMaterial.new()
+	_mq_fade_mat.shader = sh
+	_mq_strip.material = _mq_fade_mat
 	_mq_fit()
+	# Row inside the pill: a FIXED megaphone icon at the
+	# left (the "[Loa]" word is gone — owner order), then
+	# the scrolling text's clip.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mq_strip.add_child(row)
+	_mq_icon = Label.new()
+	_mq_icon.text = String.chr(0xF0A1) # FA bullhorn
+	_mq_icon.add_theme_font_override("font",
+		load("res://assets/fonts/fa-solid-900.ttf"))
+	_mq_icon.add_theme_font_size_override("font_size", 16)
+	_mq_icon.add_theme_color_override("font_color",
+		Color(1.0, 0.85, 0.45))
+	_mq_icon.custom_minimum_size = Vector2(22, 0)
+	_mq_icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mq_icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_mq_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_mq_icon)
 	_mq_clip = Control.new()
 	_mq_clip.clip_contents = true
 	_mq_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mq_strip.add_child(_mq_clip)
+	_mq_clip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_mq_clip)
 	_mq_label = Label.new()
 	_mq_label.add_theme_font_size_override("font_size", 17)
 	_mq_label.add_theme_color_override("font_color", Color(0.98, 0.90, 0.70))
 	_mq_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mq_label.material = _mq_fade_mat
 	_mq_clip.add_child(_mq_label)
 	_mq_layer.add_child(_mq_strip)
 	_mq_strip.visible = false
@@ -1381,7 +1428,7 @@ func _ensure_marquee() -> void:
 
 func _show_marquee(sender_name: String, text: String) -> void:
 	_ensure_marquee()
-	var line := "[Loa] " + sender_name + ": " + text
+	var line := sender_name + ": " + text
 	if _mq_active:
 		if _mq_queue.size() < 3:
 			_mq_queue.append(line)
@@ -1394,10 +1441,16 @@ func _mq_start(line: String) -> void:
 	_mq_fit() # viewport may have changed since the build
 	_mq_text_w = ThemeDB.fallback_font.get_string_size(line,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
-	# The text enters at the pill's CONTENT right edge (pill
-	# width minus the 18px side margins), vertically centred
-	# in the 38px pill.
-	_mq_x = _mq_pill_w() - 36.0
+	# The fade material needs the pill's viewport geometry.
+	if _mq_fade_mat != null:
+		var pill_w := _mq_pill_w()
+		_mq_fade_mat.set_shader_parameter("u_w", pill_w)
+		_mq_fade_mat.set_shader_parameter("u_left",
+			(get_viewport().get_visible_rect().size.x - pill_w) / 2.0)
+	# The text enters at the CLIP's right edge (pill width
+	# minus the 18px side margins, the 22px icon and the
+	# 8px gap), vertically centred in the 38px pill.
+	_mq_x = _mq_pill_w() - 66.0
 	var ly := (MARQUEE_H - ThemeDB.fallback_font.get_height(17)) / 2.0
 	_mq_label.position = Vector2(_mq_x, ly)
 	_mq_strip.visible = true
