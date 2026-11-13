@@ -122,6 +122,7 @@ var _rail_box: VBoxContainer
 var _rail_bg: PanelContainer
 var _rail_close_box: VBoxContainer
 var _rail_arrow: Control
+var _rail_friends_dot: Control
 
 # Friends panel (17i golden-screen redesign): two cards on
 # the shared PageShell page — a 300px menu card (view rows
@@ -621,6 +622,43 @@ class _Disc:
 		draw_arc(c, r - 1.0, 0, TAU, 48, Color(1, 0.85, 0.4, 0.4), 1.0, true)
 
 
+## Rail medallion disc (17i home polish): the seam-free
+## glass disc for the right-rail buttons — slate glass fill
+## in the 17i card colour and a gold ring, drawn with
+## draw_circle/draw_arc like _Disc (a StyleBoxFlat disc
+## shows a centre seam). The dashed variant rings the "+"
+## add chip so it reads as "add" against the solid discs.
+class _RailDisc:
+	extends Control
+	var dashed := false
+	func _draw() -> void:
+		var c := size * 0.5
+		var r := minf(size.x, size.y) * 0.5
+		draw_circle(c, r - 0.5, Color(0.05, 0.07, 0.13, 0.78))
+		if dashed:
+			var n := 14
+			for i in range(n):
+				draw_arc(c, r - 1.0, TAU * float(i) / n + 0.05,
+						TAU * (float(i) + 0.55) / n, 6,
+						Color(1, 0.85, 0.45, 0.65), 1.5, true)
+		else:
+			draw_arc(c, r - 1.0, 0, TAU, 48,
+					Color(1, 0.85, 0.45, 0.6), 1.5, true)
+
+
+## Presence dot: an 8px coloured core inside a dark
+## separation ring, so it reads on any avatar or sky
+## behind it.
+class _RailDot:
+	extends Control
+	var col := Color(0.45, 0.47, 0.55)
+	func _draw() -> void:
+		var c := size * 0.5
+		draw_circle(c, minf(size.x, size.y) * 0.5 - 0.5,
+				Color(0.02, 0.03, 0.06, 0.9))
+		draw_circle(c, 4.0, col)
+
+
 func _icon_button(icon_kind: String, tip: String, sz := 48.0, bare := false) -> Dictionary:
 	var holder := Control.new()
 	holder.custom_minimum_size = Vector2(sz, sz)
@@ -1037,17 +1075,63 @@ func _on_banner_tap() -> void:
 ## 56px portrait with 1px to spare, the two top chips
 ## shrink to 27px each (27+4+27 = RAIL_W), the bottom
 ## arrow chip matches them, and the backing totals RAIL_W + 10 = 68px.
+## 17i polish supersedes the sizes: the strip is a glass
+## card (slate 0.78, radius 16), every chip is a 40px
+## medallion (the top pair centred on the strip's top
+## corners, the "+" dashed), portraits are 40px
+## AvatarFrame chips — RAIL_W itself is unchanged.
 ## Guests see the chips and an empty friends segment;
 ## every friends tap routes them to the account flow
 ## instead.
 const RAIL_W := 58.0
+
+## One rail medallion button (17i home polish): a 40px
+## _RailDisc with the GlassIcon glyph centred on it. The
+## flat tap button overflows the holder by 2px on every
+## side, so the tap target is 44px while the visible disc
+## stays 40. The rail gets its OWN helper — the shared
+## _icon_button keeps its current rendering for the other
+## surfaces (mail/gear cluster, friends panel header).
+## tint multiplies the glyph: GOLD for the friends/plus
+## glyphs (drawn LIGHT in icons.gd), WHITE where the glyph
+## is already gold (chart, trophy).
+func _rail_disc_button(icon_kind: String, tip: String,
+		tint := Color.WHITE, dashed := false) -> Dictionary:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(40, 40)
+	holder.size = Vector2(40, 40)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var disc := _RailDisc.new()
+	disc.dashed = dashed
+	disc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	disc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(disc)
+	var isz := 22.5
+	var ic := GlassIcon.new()
+	ic.kind = icon_kind
+	ic.custom_minimum_size = Vector2(isz, isz)
+	ic.size = Vector2(isz, isz)
+	ic.position = Vector2((40.0 - isz) * 0.5, (40.0 - isz) * 0.5)
+	ic.modulate = tint
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(ic)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.offset_left = -2
+	btn.offset_top = -2
+	btn.offset_right = 2
+	btn.offset_bottom = 2
+	btn.tooltip_text = tip
+	holder.add_child(btn)
+	return {"holder": holder, "btn": btn}
 
 func _build_rail() -> void:
 	_rail_bg = PanelContainer.new()
 	_rail_bg.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_rail_bg.position = Vector2(-(RAIL_W + 10.0), 76)
 	_rail_bg.add_theme_stylebox_override("panel",
-			_sb(Color(0.02, 0.03, 0.07, 0.5), 12, Color(1, 0.85, 0.4, 0.3), 1))
+			_sb(Color(0.05, 0.07, 0.13, 0.78), 16, Color(1.0, 0.85, 0.45, 0.28), 1))
 	_rail_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_rail_bg)
 
@@ -1057,49 +1141,71 @@ func _build_rail() -> void:
 	rail.position = Vector2(-(RAIL_W + 5.0), 81)
 	rail.custom_minimum_size = Vector2(RAIL_W, 0)
 	rail.alignment = BoxContainer.ALIGNMENT_BEGIN
-	rail.add_theme_constant_override("separation", 6)
+	rail.add_theme_constant_override("separation", 8)
 	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(rail)
 	_rail_box = rail
 
-	# Owner order 2026-11-12 (his reference rail): the top
-	# pair carries NO round frames and sits OUTSIDE the
-	# vertical strip, above it — bare glyphs on the sky.
+	# The top pair (owner reference rail 2026-11-12, polish
+	# 17i): the pair sits OUTSIDE the vertical strip,
+	# straddling its top edge — since 17i each glyph rides
+	# in a 40px glass medallion centred on one of the
+	# strip's top corners (friends over the left corner,
+	# chart over the right), so the pair reads as anchored
+	# to the strip instead of floating bare on the sky.
+	# The row's right edge is flush with the screen edge,
+	# its y is the placement that cleared the ping row.
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	# Straddling the strip's top edge (strip starts at 76):
-	# clear of the ping row above, visibly OUTSIDE the
-	# frame's enclosed area.
-	top.position = Vector2(-(RAIL_W + 5.0), 58)
-	top.custom_minimum_size = Vector2(RAIL_W, 0)
+	top.position = Vector2(-88.0, 58)
+	top.custom_minimum_size = Vector2(88, 40)
 	top.alignment = BoxContainer.ALIGNMENT_CENTER
 	top.add_theme_constant_override("separation", 8)
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(top)
-	var friends_btn := _icon_button("friends", "Bạn bè", 30.0, true)
+	var friends_btn := _rail_disc_button("friends", "Bạn bè",
+			Color(1.0, 0.8, 0.35))
 	friends_btn["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
 	top.add_child(friends_btn["holder"])
-	var chart_btn := _icon_button("chart", "Bảng xếp hạng", 30.0, true)
+	# Presence dot on the friends medallion: lit while any
+	# close friend is online (set in _rebuild_rail).
+	_rail_friends_dot = _RailDot.new()
+	_rail_friends_dot.col = Color(0.35, 0.9, 0.45)
+	_rail_friends_dot.size = Vector2(11, 11)
+	_rail_friends_dot.position = Vector2(30, 30)
+	_rail_friends_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail_friends_dot.visible = false
+	friends_btn["holder"].add_child(_rail_friends_dot)
+	var chart_btn := _rail_disc_button("chart", "Bảng xếp hạng")
 	chart_btn["btn"].pressed.connect(func() -> void:
 		if game != null:
 			game.home_open_leaderboard())
 	top.add_child(chart_btn["holder"])
 	# 15h: tournament entry — the trophy chip sits on its own
-	# row under the BXH / Bạn bè pair (the pair exactly fills
-	# the 58px rail; the mode panel is full, and the rail is
-	# where the other meta screens live). Guests route to the
-	# account flow like the friends chip does.
-	var trophy_btn := _icon_button("trophy", "Giải đấu", 27.0)
+	# row under the BXH / Bạn bè pair (the mode panel is
+	# full, and the rail is where the other meta screens
+	# live). Guests route to the account flow like the
+	# friends chip does.
+	var trophy_btn := _rail_disc_button("trophy", "Giải đấu")
 	trophy_btn["btn"].pressed.connect(func() -> void:
 		if Net.account_name == "":
 			if game != null:
 				game.home_open_account()
 		elif game != null:
 			game.home_open_tournament())
+	# Breathing room under the top pair: the pair's 40px
+	# medallions end at y=98 while the strip's content
+	# starts at y=81 — without this spacer the trophy
+	# medallion (also 40px) would overlap the pair's lower
+	# rims and swallow the friends presence dot.
+	var rail_spacer := Control.new()
+	rail_spacer.custom_minimum_size = Vector2(1, 10)
+	rail_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rail.add_child(rail_spacer)
 	rail.add_child(_rail_centered(trophy_btn["holder"]))
 
 	_rail_close_box = VBoxContainer.new()
-	_rail_close_box.add_theme_constant_override("separation", 6)
+	_rail_close_box.add_theme_constant_override("separation", 8)
 	_rail_close_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rail.add_child(_rail_close_box)
 
@@ -1107,9 +1213,9 @@ func _build_rail() -> void:
 	# chip is GONE — the "<" arrow lives there now (it used to
 	# float beside the column at mid-height; that separate
 	# chip is removed, so there is exactly ONE arrow, in the
-	# column, where "+" used to be). Same 27px chip family as
-	# the top pair; tapping it opens the friends panel.
-	var arr := _icon_button("chev_left", "Mở danh sách bạn bè", 27.0)
+	# column, where "+" used to be). Same medallion family as
+	# the top pair (17i); tapping it opens the friends panel.
+	var arr := _rail_disc_button("chev_left", "Mở danh sách bạn bè")
 	arr["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
 	_rail_arrow = arr["holder"]
 	rail.add_child(_rail_centered(_rail_arrow))
@@ -1149,9 +1255,10 @@ func _rail_open_friends(tab: String) -> void:
 ## (Re)build the rail's close-friend portraits from the
 ## cached friends rows: flagged "bạn thân" only, online
 ## first (then most-recently-seen), at most 4. Portraits
-## are the friends' chosen avatar art in square gold
-## frames, with a green presence dot; a tap opens the
-## friends panel on the Bạn bè tab.
+## are 40px AvatarFrame chips (avatar + granted frame,
+## as in the friends panel) with a presence dot at the
+## bottom-right (green online, grey offline); a tap opens
+## the friends panel on the Bạn bè tab.
 func _rebuild_rail() -> void:
 	if _rail_close_box == null:
 		return
@@ -1159,6 +1266,8 @@ func _rebuild_rail() -> void:
 		_rail_close_box.remove_child(c)
 		c.queue_free()
 	if Net.account_name == "":
+		if _rail_friends_dot != null:
+			_rail_friends_dot.visible = false
 		_fit_rail()
 		return
 	var close_rows: Array = []
@@ -1177,12 +1286,19 @@ func _rebuild_rail() -> void:
 		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(_rail_portrait(r))
 		_rail_close_box.add_child(cell)
+	# Friends medallion presence dot: lit while any close
+	# friend is online.
+	if _rail_friends_dot != null:
+		_rail_friends_dot.visible = close_rows.any(
+				func(r: Dictionary) -> bool: return bool(r.get("online", false)))
 	# Owner order 2026-11-12 (his reference rail): while a
 	# friend slot is still free, the "+" add chip closes
 	# the friend column — with no close friends at all it
-	# is the only thing above the arrow.
+	# is the only thing above the arrow. Since 17i the chip
+	# is a dashed-ring medallion so it reads as "add".
 	if close_rows.size() < 4:
-		var plus := _icon_button("plus", "Thêm bạn", 27.0)
+		var plus := _rail_disc_button("plus", "Thêm bạn",
+				Color(1.0, 0.8, 0.35), true)
 		plus["btn"].pressed.connect(func() -> void: _rail_open_friends("all"))
 		_rail_close_box.add_child(_rail_centered(plus["holder"]))
 	_fit_rail()
@@ -1190,35 +1306,22 @@ func _rebuild_rail() -> void:
 
 func _rail_portrait(r: Dictionary) -> Control:
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(56, 56)
-	holder.size = Vector2(56, 56)
+	holder.custom_minimum_size = Vector2(40, 40)
+	holder.size = Vector2(40, 40)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var frame := PanelContainer.new()
-	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
-	frame.add_theme_stylebox_override("panel",
-			_sb(Color(0.10, 0.08, 0.05), 4, GOLD, 2))
-	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(frame)
 	var av := AvatarFrame.new()
-	av.custom_minimum_size = Vector2(50, 50)
-	av.size = Vector2(50, 50)
-	av.position = Vector2(3, 3)
+	av.custom_minimum_size = Vector2(40, 40)
+	av.size = Vector2(40, 40)
 	av.set_content(Avatars.texture_for_user(String(r.get("avatar_id", "")),
 			String(r.get("user", ""))), String(r.get("frame_id", "")), false)
 	holder.add_child(av)
-	if bool(r.get("online", false)):
-		var dot := PanelContainer.new()
-		# _sb's shared content margins (10px sides) would
-		# inflate this tiny panel's minimum size to a 20x12
-		# pill; zero them so the dot stays a true 12px circle.
-		var dot_sb := _sb(Color(0.35, 0.9, 0.45), 6)
-		dot_sb.set_content_margin_all(0)
-		dot.add_theme_stylebox_override("panel", dot_sb)
-		dot.custom_minimum_size = Vector2(12, 12)
-		dot.size = Vector2(12, 12)
-		dot.position = Vector2(42, 42)
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.add_child(dot)
+	var dot := _RailDot.new()
+	dot.col = Color(0.35, 0.9, 0.45) if bool(r.get("online", false)) \
+			else Color(0.45, 0.47, 0.55)
+	dot.size = Vector2(11, 11)
+	dot.position = Vector2(28, 28)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(dot)
 	var tap := Button.new()
 	tap.flat = true
 	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
