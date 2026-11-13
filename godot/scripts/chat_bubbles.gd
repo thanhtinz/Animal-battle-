@@ -69,7 +69,7 @@ static func wrap_lines(font: Font, text: String) -> Array:
 	var cur := ""
 	for w in words:
 		var cand := w if cur == "" else cur + " " + w
-		if font.get_string_size(cand, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x <= MAX_W - 16.0 or cur == "":
+		if _line_w(font, cand) <= MAX_W - 16.0 or cur == "":
 			cur = cand
 		else:
 			lines.append(cur)
@@ -84,16 +84,40 @@ static func wrap_lines(font: Font, text: String) -> Array:
 		var shown := String(lines[0]) + " " + String(lines[1])
 		if joined.length() > shown.length():
 			var l2 := String(lines[1])
-			while l2.length() > 1 and font.get_string_size(l2 + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x > MAX_W - 16.0:
+			while l2.length() > 1 and _line_w(font, l2 + "…") > MAX_W - 16.0:
 				l2 = l2.substr(0, l2.length() - 1)
 			lines[1] = l2 + "…"
 	return lines
 
 
+## 17e: token-aware width/draw helpers — an emoticon token
+## measures and paints as a fixed-size image in the flow;
+## every other behaviour of this layer is unchanged.
+static func _word_w(font: Font, w: String) -> float:
+	var width := 0.0
+	for a in Emotes.parse_atoms(w):
+		if a["k"] == "e":
+			width += Emotes.BUBBLE_PX
+		else:
+			width += font.get_string_size(String(a["s"]), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+	return width
+
+
+static func _line_w(font: Font, line: String) -> float:
+	var words := line.split(" ", false)
+	var w := 0.0
+	var space_w := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+	for i in words.size():
+		if i > 0:
+			w += space_w
+		w += _word_w(font, words[i])
+	return w
+
+
 static func bubble_size(font: Font, lines: Array) -> Vector2:
 	var w := 0.0
 	for l in lines:
-		w = maxf(w, font.get_string_size(String(l), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x)
+		w = maxf(w, _line_w(font, String(l)))
 	var lh := font.get_height(FONT_SIZE)
 	return Vector2(w + 16.0, lines.size() * lh + 10.0)
 
@@ -128,9 +152,25 @@ static func paint(ci: CanvasItem, font: Font, center: Vector2, text: String, sty
 		ci.draw_colored_polygon(shield, st["border"])
 	var lh := font.get_height(FONT_SIZE)
 	var y := rect.position.y + 5.0 + font.get_ascent(FONT_SIZE)
+	var space_w := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 	for l in lines:
-		ci.draw_string(font, Vector2(rect.position.x + 8, y), String(l),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, st["text"])
+		# 17e: draw the line atom by atom so tokens render
+		# as their image; plain words draw exactly as before.
+		var x := rect.position.x + 8
+		for a in Emotes.parse_atoms(String(l)):
+			if bool(a["sp"]):
+				x += space_w
+			if a["k"] == "e":
+				var tex := Emotes.texture(String(a["id"]))
+				if tex != null:
+					var px := Emotes.BUBBLE_PX
+					ci.draw_texture_rect(tex, Rect2(x, y - font.get_ascent(FONT_SIZE) + (lh - px) * 0.5, px, px), false)
+				x += Emotes.BUBBLE_PX
+			else:
+				var word := String(a["s"])
+				ci.draw_string(font, Vector2(x, y), word,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, st["text"])
+				x += font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 		y += lh
 
 

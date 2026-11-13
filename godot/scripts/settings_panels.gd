@@ -11,9 +11,12 @@ extends CanvasLayer
 ##               cooldown (the panel shows the next date).
 ##   Avatar    — 2 tabs: Avatar (the owner's 20 anime
 ##               avatars, all free) and Khung avatar (the 11
-##               owner frames + "Không khung"; ownership is
-##               computed server-side, unowned rows show
-##               their unlock condition).
+##               owner frames + "Không khung". Frames are
+##               ITEMS (rule change 2026-11-12): possession
+##               is server-recorded; tapping any item opens
+##               its detail popup — unowned items show
+##               "Cách nhận: Nhận qua sự kiện", owned items
+##               equip from the popup).
 ##   Danh hiệu — the full title catalogue from the profile
 ##               payload: name, how it's earned, owned state
 ##               and thời hạn; equipping uses the account's
@@ -49,21 +52,17 @@ const FRAME_NAMES := {
 	"frame_12": "Ruy Băng Sao",
 }
 const FRAME_UNLOCK := {
-	"frame_01": "Đạt cấp 5", "frame_03": "Đạt cấp 15",
-	"frame_04": "Liên minh của bạn đạt cấp 3",
-	"frame_05": "Thắng 50 trận đã ghi nhận",
-	"frame_06": "Hạng cao nhất đạt Hầu Tước",
-	"frame_07": "Vô địch một giải đấu người chơi",
-	"frame_08": "Đạt cấp 25",
-	"frame_09": "Nhiệm vụ tuần của liên minh — hệ thống đếm cộng dồn chưa mở",
-	"frame_10": "Liên minh của bạn đạt cấp 5",
-	"frame_11": "Thắng 150 trận đã ghi nhận",
-	"frame_12": "Liên minh vô địch Đại chiến tháng — giải Đại chiến chưa mở",
+	"frame_01": "Sự kiện", "frame_03": "Sự kiện",
+	"frame_04": "Sự kiện", "frame_05": "Sự kiện",
+	"frame_06": "Sự kiện", "frame_07": "Sự kiện",
+	"frame_08": "Sự kiện", "frame_09": "Sự kiện",
+	"frame_10": "Sự kiện", "frame_11": "Sự kiện",
+	"frame_12": "Sự kiện",
 }
 const BUBBLE_UNLOCK := {
-	"mac_dinh": "Mặc định cho mọi tài khoản",
-	"hang": "Hạng cao nhất đạt Kỵ Sĩ",
-	"vo_dich": "Liên minh vô địch Đại chiến tháng — giải Đại chiến chưa mở",
+	"mac_dinh": "Có sẵn cho mọi tài khoản",
+	"hang": "Sự kiện",
+	"vo_dich": "Sự kiện",
 }
 
 var game = null # Main (duck-typed)
@@ -74,6 +73,7 @@ var _avatar_tab := "avatar" # avatar | frames
 var _status_msg := ""
 var _status_bad := false
 var _rename_edit: LineEdit = null
+var _detail_root: Control = null # item-detail popup (grant items)
 
 class BubblePreview:
 	extends Control
@@ -108,6 +108,117 @@ func setup(p_game) -> void:
 			_render())
 
 
+func _close_detail() -> void:
+	if _detail_root != null:
+		_detail_root.queue_free()
+		_detail_root = null
+
+
+func _center_label(text: String, fsize: int, col: Color) -> Label:
+	var l := _label(text, fsize, col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return l
+
+
+## Item-detail popup (owner correction 2026-11-12 18:35):
+## tapping ANY frame / title / bubble row opens this small
+## navy/gold popup — preview, name, and either
+## "Cách nhận: Nhận qua sự kiện" (unowned, no equip button)
+## or "Đã sở hữu" + a "Trang bị" button (owned; "Đang dùng"
+## when equipped). Equipping happens HERE, never by direct
+## tap on a row. Player copy never mentions how items are
+## distributed behind the scenes.
+func _open_item_detail(kind: String, item_id: String, disp_name: String,
+		is_owned: bool, is_equipped: bool, extra: String = "") -> void:
+	_close_detail()
+	_detail_root = Control.new()
+	_detail_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_detail_root)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and ev.pressed:
+			_close_detail())
+	_detail_root.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_detail_root.add_child(cc)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(360, 0)
+	var ps := _sb(MODAL_BG, 14, GOLD_TXT, 2)
+	ps.content_margin_left = 18
+	ps.content_margin_right = 18
+	ps.content_margin_top = 14
+	ps.content_margin_bottom = 14
+	panel.add_theme_stylebox_override("panel", ps)
+	cc.add_child(panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	panel.add_child(col)
+	match kind:
+		"frame":
+			var holder := AvatarFrame.new()
+			holder.custom_minimum_size = Vector2(120, 120)
+			holder.set_content(Avatars.texture_for(Avatars.local_avatar()), item_id, true)
+			var hc := CenterContainer.new()
+			hc.add_child(holder)
+			col.add_child(hc)
+			col.add_child(_center_label(disp_name, 18, GOLD_TXT))
+		"title":
+			col.add_child(_center_label(disp_name, 22, GOLD_TXT))
+		"bubble":
+			var prev := BubblePreview.new()
+			prev.style_id = item_id
+			prev.custom_minimum_size = Vector2(250, 70)
+			col.add_child(prev)
+			col.add_child(_center_label(disp_name, 18, GOLD_TXT))
+	if is_equipped:
+		col.add_child(_center_label("Đang dùng", 14, GOLD_TXT))
+	elif is_owned:
+		col.add_child(_center_label("Đã sở hữu", 14, Color(0.55, 0.9, 0.55)))
+		if extra != "":
+			col.add_child(_center_label(extra, 12, MUTED))
+		var eb := _button("Trang bị", true, 150)
+		eb.pressed.connect(func() -> void: _equip_from_detail(kind, item_id, disp_name))
+		var ec := CenterContainer.new()
+		ec.add_child(eb)
+		col.add_child(ec)
+	else:
+		col.add_child(_center_label("Cách nhận: Nhận qua sự kiện", 14, PAPER))
+	var cb := _button("Đóng", false, 110)
+	cb.pressed.connect(func() -> void: _close_detail())
+	var bc := CenterContainer.new()
+	bc.add_child(cb)
+	col.add_child(bc)
+
+
+func _equip_from_detail(kind: String, item_id: String, disp_name: String) -> void:
+	match kind:
+		"frame":
+			Net.set_frame(item_id)
+		"title":
+			Net.set_title(item_id)
+		"bubble":
+			Net.set_bubble(item_id)
+	_close_detail()
+	_set_status("Đã trang bị " + disp_name + ".", false)
+	_render()
+
+
+## shot_open_frame_detail is the capture hook for the item
+## popup: frames tab + the detail of one (usually unowned)
+## frame.
+func shot_open_frame_detail(fid: String) -> void:
+	open("frames")
+	var p: Dictionary = Net.auth_profile
+	var owned: Array = p.get("owned_frames", [])
+	_open_item_detail("frame", fid, String(FRAME_NAMES.get(fid, fid)),
+		owned.has(fid), String(p.get("frame_id", "")) == fid)
+
+
 func open(which: String = "hub") -> void:
 	_view = which if which in ["hub", "rename", "avatar", "frames", "titles", "decor"] else "hub"
 	if _view == "frames":
@@ -121,6 +232,7 @@ func open(which: String = "hub") -> void:
 
 
 func close() -> void:
+	_close_detail()
 	visible = false
 
 
@@ -299,6 +411,11 @@ func _fmt_date(unix_s: int) -> String:
 
 
 func _render() -> void:
+	_close_detail()
+	_render_body()
+
+
+func _render_body() -> void:
 	if _body == null:
 		return
 	for c in _body.get_children():
@@ -471,7 +588,7 @@ func _render_frames_tab() -> void:
 	var owned: Array = p.get("owned_frames", [])
 	var equipped := String(p.get("frame_id", ""))
 	var my_avatar := Avatars.texture_for(Avatars.local_avatar())
-	_body.add_child(_label_wrap("Khung bọc quanh avatar của bạn. Khung chưa mở khoá hiển thị điều kiện mở ngay bên dưới.", 13, MUTED))
+	_body.add_child(_label_wrap("Khung bọc quanh avatar của bạn — chạm vào một khung để xem chi tiết và trang bị.", 13, MUTED))
 	var sc := _scroll()
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 8)
@@ -480,8 +597,10 @@ func _render_frames_tab() -> void:
 	list.add_child(_frame_row("", "Không khung", "Mặc định — không dùng khung",
 		true, equipped == "", my_avatar))
 	for fid in AvatarFrame.frame_ids():
+		var is_owned := owned.has(fid)
+		var sub := "Đã sở hữu" if is_owned else String(FRAME_UNLOCK.get(fid, ""))
 		list.add_child(_frame_row(fid, String(FRAME_NAMES.get(fid, fid)),
-			String(FRAME_UNLOCK.get(fid, "")), owned.has(fid), equipped == fid, my_avatar))
+			sub, is_owned, equipped == fid, my_avatar))
 	_body.add_child(sc)
 
 
@@ -507,12 +626,15 @@ func _frame_row(fid: String, fname: String, unlock: String, is_owned: bool,
 		var pill := _label("Đang dùng", 13, GOLD_TXT)
 		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pill)
-	elif is_owned:
-		var b := _button("Dùng", false, 76)
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		b.pressed.connect(func() -> void: Net.set_frame(fid))
-		row.add_child(b)
 	card.add_child(row)
+	# Tap anywhere on the row -> the item-detail popup
+	# (equipping lives there, not on the row).
+	var tap := Button.new()
+	tap.flat = true
+	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tap.pressed.connect(func() -> void:
+		_open_item_detail("frame", fid, fname, is_owned, is_equipped))
+	card.add_child(tap)
 	return card
 
 
@@ -568,13 +690,15 @@ func _title_row(r: Dictionary) -> Control:
 		var pill := _label("Đang dùng", 13, GOLD_TXT)
 		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pill)
-	elif owned:
-		var nm := String(r.get("name", ""))
-		var b := _button("Dùng", false, 76)
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		b.pressed.connect(func() -> void: Net.set_title(nm))
-		row.add_child(b)
 	card.add_child(row)
+	var nm := String(r.get("name", ""))
+	var tap := Button.new()
+	tap.flat = true
+	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tap.pressed.connect(func() -> void:
+		_open_item_detail("title", nm, nm, owned, equipped,
+			"Thời hạn: " + String(r.get("expiry", ""))))
+	card.add_child(tap)
 	return card
 
 
@@ -620,16 +744,20 @@ func _bubble_row(bid: String, is_owned: bool, is_equipped: bool) -> Control:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	col.add_child(_label(String(st.get("name", bid)), 16, PAPER if is_owned else MUTED))
-	col.add_child(_label_wrap(String(BUBBLE_UNLOCK.get(bid, "")), 12, MUTED))
+	var sub := String(BUBBLE_UNLOCK.get(bid, "")) if not is_owned else "Đã sở hữu"
+	if bid == ChatBubbles.STYLE_IDS[0]:
+		sub = String(BUBBLE_UNLOCK.get(bid, ""))
+	col.add_child(_label_wrap(sub, 12, MUTED))
 	row.add_child(col)
 	if is_equipped:
 		var pill := _label("Đang dùng", 13, GOLD_TXT)
 		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(pill)
-	elif is_owned:
-		var b := _button("Dùng", false, 76)
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		b.pressed.connect(func() -> void: Net.set_bubble(bid))
-		row.add_child(b)
 	card.add_child(row)
+	var tap := Button.new()
+	tap.flat = true
+	tap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tap.pressed.connect(func() -> void:
+		_open_item_detail("bubble", bid, String(st.get("name", bid)), is_owned, is_equipped))
+	card.add_child(tap)
 	return card

@@ -1450,11 +1450,6 @@ func _fill_leaderboard() -> void:
 ## own alliance in the sticky footer, and one clear way into
 ## the alliance screen. Badge chip colours mirror the
 ## alliance screen's fixed shield set.
-const LB_BADGE_COLORS := {
-	"red": Color(0.45, 0.08, 0.10), "blue": Color(0.10, 0.25, 0.55),
-	"teal": Color(0.05, 0.35, 0.38), "green": Color(0.10, 0.32, 0.12),
-	"gold": Color(0.45, 0.35, 0.05), "purple": Color(0.25, 0.12, 0.42),
-}
 
 
 func _fill_lb_alliance() -> void:
@@ -1554,12 +1549,13 @@ func _lb_alliance_card(pos: int, row: Dictionary) -> PanelContainer:
 	rank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rank.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(rank)
-	var chip := PanelContainer.new()
-	chip.custom_minimum_size = Vector2(30, 36)
+	# 17e addendum: the alliance badge is its icon texture
+	# tinted by its slot colour (ally_badge.gd).
+	var chip := CenterContainer.new()
+	chip.custom_minimum_size = Vector2(36, 36)
 	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	chip.add_theme_stylebox_override("panel", _lb_sb(
-			LB_BADGE_COLORS.get(String(row.get("badge", "red")), Color(0.45, 0.08, 0.1)), 7,
-			Color(0.98, 0.8, 0.35, 0.9), 2))
+	chip.add_child(AllyBadge.make(int(row.get("badge_icon", 1)),
+			int(row.get("badge_color", 0)), 32))
 	hb.add_child(chip)
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL

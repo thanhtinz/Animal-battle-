@@ -86,24 +86,71 @@ const (
 	allianceLevelBase = 250
 )
 
-// AllianceBadges is the fixed shield-colour set (ids); the
-// client maps each id to the mock's fill colour.
+// AllianceBadges is the LEGACY 17a shield-colour list. It
+// survives ONLY as the migration key for old records: its
+// index becomes the new colour index (see migrateBadge).
 var AllianceBadges = []string{"red", "blue", "teal", "green", "gold", "purple"}
 
-func validAllianceBadge(b string) bool {
-	for _, x := range AllianceBadges {
-		if x == b {
-			return true
+// Badge model (17e addendum): an alliance badge is an ICON
+// (1..10 — the owner's sheet, godot/assets/alliance_icons)
+// plus a COLOUR index into the game's 8 slot colours
+// (0 Đỏ · 1 Xanh dương · 2 Xanh lá · 3 Vàng · 4 Tím ·
+// 5 Cam · 6 Xanh ngọc · 7 Hồng).
+const (
+	BadgeIconCount  = 10
+	BadgeColorCount = 8
+)
+
+func validBadgeIconColor(icon, color int) bool {
+	return icon >= 1 && icon <= BadgeIconCount &&
+		color >= 0 && color < BadgeColorCount
+}
+
+// migrateBadge converts a pre-addendum record (string Badge,
+// no icon) to the icon+colour model: icon defaults to 1
+// (Sư Tử) and the old colour keeps its palette position
+// (legacy index 0..5 → the same slot-colour index; an
+// unknown legacy value lands on 0). Returns true when the
+// record changed. Idempotent: a record with an icon set is
+// only range-clamped.
+func migrateBadge(a *Alliance) bool {
+	changed := false
+	if a.BadgeIcon == 0 {
+		a.BadgeIcon = 1
+		idx := -1
+		for i, b := range AllianceBadges {
+			if b == a.Badge {
+				idx = i
+				break
+			}
 		}
+		if idx >= 0 {
+			a.BadgeColor = idx
+		} else {
+			a.BadgeColor = 0
+		}
+		changed = true
 	}
-	return false
+	if a.Badge != "" {
+		a.Badge = ""
+		changed = true
+	}
+	if a.BadgeIcon < 1 || a.BadgeIcon > BadgeIconCount {
+		a.BadgeIcon = 1
+		changed = true
+	}
+	if a.BadgeColor < 0 || a.BadgeColor >= BadgeColorCount {
+		a.BadgeColor = 0
+		changed = true
+	}
+	return changed
 }
 
 var (
 	ErrAllyLogin       = errors.New("Đăng nhập để dùng Liên minh")
 	ErrAllyBadName     = errors.New("Tên liên minh phải có 3–24 ký tự (chữ, số, khoảng trắng, _)")
 	ErrAllyNameTaken   = errors.New("Tên liên minh đã có người dùng")
-	ErrAllyBadBadge    = errors.New("Màu khiên không hợp lệ")
+	ErrAllyBadBadge    = errors.New("Huy hiệu liên minh không hợp lệ")
 	ErrAllyBadMode     = errors.New("Chế độ tuyển thành viên không hợp lệ")
 	ErrAllyNotFound    = errors.New("Không tìm thấy liên minh")
 	ErrAllyAlreadyIn   = errors.New("Bạn đã thuộc một liên minh rồi")
@@ -176,13 +223,13 @@ type AllianceChatMsg struct {
 // progress back below a threshold but never un-grants (and
 // never re-grants) the reward.
 type AllianceQuests struct {
-	Week          string `json:"week,omitempty"`
-	Matches       int    `json:"matches"`
-	Wins          int    `json:"wins"`
-	RankedWins    int    `json:"ranked_wins"`
-	DoneMatches   bool   `json:"done_matches,omitempty"`
-	DoneWins      bool   `json:"done_wins,omitempty"`
-	DoneRanked    bool   `json:"done_ranked,omitempty"`
+	Week        string `json:"week,omitempty"`
+	Matches     int    `json:"matches"`
+	Wins        int    `json:"wins"`
+	RankedWins  int    `json:"ranked_wins"`
+	DoneMatches bool   `json:"done_matches,omitempty"`
+	DoneWins    bool   `json:"done_wins,omitempty"`
+	DoneRanked  bool   `json:"done_ranked,omitempty"`
 }
 
 // AllianceChamp is one weekly-race champion record (17b),
@@ -196,18 +243,24 @@ type AllianceChamp struct {
 
 // Alliance is the whole guild state.
 type Alliance struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Badge     string            `json:"badge"`
-	Mode      string            `json:"mode"`
-	Desc      string            `json:"desc,omitempty"`
-	Leader    string            `json:"leader"`
-	XP        int               `json:"xp"`
-	CreatedAt int64             `json:"created_at"`
-	Members   []AllianceMember  `json:"members"`
-	Requests  []AllianceRequest `json:"requests,omitempty"`
-	Invites   []AllianceInvite  `json:"invites,omitempty"`
-	Log       []AllianceEvent   `json:"log,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Badge is the LEGACY 17a shield-colour id, read only by
+	// migrateBadge; new records never write it.
+	Badge string `json:"badge,omitempty"`
+	// BadgeIcon (1..10) + BadgeColor (0..7, slot colours) —
+	// the 17e-addendum badge model.
+	BadgeIcon  int               `json:"badge_icon"`
+	BadgeColor int               `json:"badge_color"`
+	Mode       string            `json:"mode"`
+	Desc       string            `json:"desc,omitempty"`
+	Leader     string            `json:"leader"`
+	XP         int               `json:"xp"`
+	CreatedAt  int64             `json:"created_at"`
+	Members    []AllianceMember  `json:"members"`
+	Requests   []AllianceRequest `json:"requests,omitempty"`
+	Invites    []AllianceInvite  `json:"invites,omitempty"`
+	Log        []AllianceEvent   `json:"log,omitempty"`
 	// 17b: Tag is the short unique alliance tag shown as
 	// [TAG] before members' names (presentation only — the
 	// name is resolved server-side, never in any sim).
@@ -221,9 +274,9 @@ type Alliance struct {
 	// 17b: weekly quests + the weekly-points bonus they
 	// grant (WeekBonus counts toward the weekly ranking
 	// only while WeekBonusKey is the current week).
-	Quests      AllianceQuests `json:"quests"`
-	WeekBonus   int            `json:"week_bonus,omitempty"`
-	WeekBonusKey string        `json:"week_bonus_key,omitempty"`
+	Quests       AllianceQuests `json:"quests"`
+	WeekBonus    int            `json:"week_bonus,omitempty"`
+	WeekBonusKey string         `json:"week_bonus_key,omitempty"`
 	// 17b: last week's final weekly-points snapshot, taken
 	// by touchWeek before it zeroes the rows — the crown
 	// settlement reads it (a week nobody touches until long
@@ -307,7 +360,15 @@ type Alliances struct {
 }
 
 func NewAlliances(store Store, acc *Accounts) *Alliances {
-	return &Alliances{store: store, acc: acc, now: time.Now}
+	as := &Alliances{store: store, acc: acc, now: time.Now}
+	// Badge migration (17e addendum): convert every stored
+	// pre-addendum record once, at service start.
+	for _, a := range store.Alliances() {
+		if migrateBadge(a) {
+			as.save(a)
+		}
+	}
+	return as
 }
 
 // ---- internal helpers (as.mu held by callers) -----------
@@ -702,7 +763,7 @@ func validAllianceName(name string) bool {
 
 // Create founds a new alliance with creator as its leader.
 // The tag (17b) is required and unique case-insensitively.
-func (as *Alliances) Create(creator, name, tag, badge, mode, desc string) (*Alliance, error) {
+func (as *Alliances) Create(creator, name, tag string, icon, color int, mode, desc string) (*Alliance, error) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	name = strings.TrimSpace(name)
@@ -716,7 +777,7 @@ func (as *Alliances) Create(creator, name, tag, badge, mode, desc string) (*Alli
 	if !validAllianceTag(tag) {
 		return nil, ErrAllyBadTag
 	}
-	if !validAllianceBadge(badge) {
+	if !validBadgeIconColor(icon, color) {
 		return nil, ErrAllyBadBadge
 	}
 	if mode != AllianceModeOpen && mode != AllianceModeRequest {
@@ -739,7 +800,8 @@ func (as *Alliances) Create(creator, name, tag, badge, mode, desc string) (*Alli
 		desc = string(rs)
 	}
 	a := &Alliance{
-		ID: newAllianceID(as.store), Name: name, Badge: badge,
+		ID: newAllianceID(as.store), Name: name,
+		BadgeIcon: icon, BadgeColor: color,
 		Mode: mode, Desc: desc, Leader: creator, Tag: tag,
 		CreatedAt: as.now().Unix(),
 		Members: []AllianceMember{{
@@ -1193,7 +1255,7 @@ func (as *Alliances) Transfer(id, actor, target string) error {
 // description (leader only). An empty tag keeps the current
 // one, so pre-17b clients (and alliances founded before
 // tags existed) are never forced through tag validation.
-func (as *Alliances) UpdateSettings(id, actor, tag, badge, mode, desc string) error {
+func (as *Alliances) UpdateSettings(id, actor, tag string, icon, color int, mode, desc string) error {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	a, ok := as.get(id)
@@ -1213,7 +1275,7 @@ func (as *Alliances) UpdateSettings(id, actor, tag, badge, mode, desc string) er
 			return ErrAllyTagTaken
 		}
 	}
-	if !validAllianceBadge(badge) {
+	if !validBadgeIconColor(icon, color) {
 		return ErrAllyBadBadge
 	}
 	if mode != AllianceModeOpen && mode != AllianceModeRequest {
@@ -1227,7 +1289,7 @@ func (as *Alliances) UpdateSettings(id, actor, tag, badge, mode, desc string) er
 	if tag != "" {
 		a.Tag = tag
 	}
-	a.Badge, a.Mode, a.Desc = badge, mode, desc
+	a.BadgeIcon, a.BadgeColor, a.Mode, a.Desc = icon, color, mode, desc
 	as.logf(a, "%s đã cập nhật cài đặt liên minh", as.nameOf(actor))
 	as.save(a)
 	return nil
@@ -1505,7 +1567,7 @@ func (as *Alliances) View(a *Alliance, viewer string, online func(string) bool) 
 		mrows = append(mrows, as.memberWire(m, online))
 	}
 	out := map[string]any{
-		"id": a.ID, "name": a.Name, "badge": a.Badge, "mode": a.Mode,
+		"id": a.ID, "name": a.Name, "badge_icon": a.BadgeIcon, "badge_color": a.BadgeColor, "mode": a.Mode,
 		"desc": a.Desc, "level": level, "xp": a.XP, "xp_into": into,
 		"xp_next": forNext, "week": as.weekPoints(a),
 		"rank": as.rankOf(a.ID), "members_count": len(a.Members),
@@ -1535,7 +1597,7 @@ func (as *Alliances) View(a *Alliance, viewer string, online func(string) bool) 
 			"key": d.key, "label": d.label,
 			"prog": questProgress(a.Quests, d.key), "target": d.target,
 			"done": questDone(a.Quests, d.key),
-			"xp": d.xpReward, "pts": d.ptsReward,
+			"xp":   d.xpReward, "pts": d.ptsReward,
 		})
 	}
 	out["quests"] = qrows
@@ -1594,7 +1656,7 @@ func (as *Alliances) HomeFor(user string, online func(string) bool) (map[string]
 			if iv.User == user {
 				level, _, _ := AllianceLevelForXP(a.XP)
 				invites = append(invites, map[string]any{
-					"id": a.ID, "name": a.Name, "badge": a.Badge,
+					"id": a.ID, "name": a.Name, "badge_icon": a.BadgeIcon, "badge_color": a.BadgeColor,
 					"level": level, "members": len(a.Members),
 					"by_name": as.nameOf(iv.By), "at": iv.At,
 					"tag": a.Tag,
@@ -1640,11 +1702,11 @@ func (as *Alliances) ListWire(user, search string) []map[string]any {
 			}
 		}
 		rows = append(rows, map[string]any{
-			"id": a.ID, "name": a.Name, "badge": a.Badge, "mode": a.Mode,
+			"id": a.ID, "name": a.Name, "badge_icon": a.BadgeIcon, "badge_color": a.BadgeColor, "mode": a.Mode,
 			"level": level, "members": len(a.Members), "cap": AllianceCap,
 			"leader_name": as.nameOf(a.Leader), "requested": requested,
 			"full": len(a.Members) >= AllianceCap,
-			"tag": a.Tag,
+			"tag":  a.Tag,
 		})
 	}
 	return rows
@@ -1664,7 +1726,7 @@ func (as *Alliances) RankingWire(user string) ([]map[string]any, map[string]any)
 	for i, a := range ranked {
 		level, _, _ := AllianceLevelForXP(a.XP)
 		row := map[string]any{
-			"alliance": true, "id": a.ID, "name": a.Name, "badge": a.Badge,
+			"alliance": true, "id": a.ID, "name": a.Name, "badge_icon": a.BadgeIcon, "badge_color": a.BadgeColor,
 			"level": level, "members": len(a.Members), "cap": AllianceCap,
 			"week": as.weekPoints(a), "xp": a.XP,
 			"leader_name": as.nameOf(a.Leader), "pos": i + 1,

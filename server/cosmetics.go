@@ -17,25 +17,26 @@ package main
 // outside the catalogue (e.g. a pre-17d hero id) normalises
 // to the default, which is the migration path.
 //
-// Frames (Đại chiến spec §7.2A): the owner's eleven animated
-// frames. Ownership is COMPUTED from live account data —
-// level, recorded wins, peak rank tier, the tournament
-// champion title, the account's CURRENT alliance level, and
-// the reigning alliance-war champion seam — never stored, so
-// a frame whose condition lapses (leaving a level-5 alliance,
-// losing the war reign) stops being owned, and an equipped
-// frame that stops being owned stops rendering (the profile
-// falls back to no frame). Sources whose systems do not
-// exist yet grant nothing and say so in their unlock text:
-//   - frame_09 (alliance weekly quests, cumulative): the
-//     per-account cumulative quest counter does not exist.
-//   - frame_12 (reigning Đại chiến champion): the war system
-//     itself does not exist yet; the WarChampOf seam below is
-//     where it will plug in (nil today → nobody owns it).
+// Frames, titles, bubble styles (Đại chiến spec §7.2A/B) —
+// OWNER RULE CHANGE (2026-11-12 18:33, corrected 18:35):
+// these three families are ITEMS. Possession comes ONLY
+// from an admin grant recorded on the account
+// (GrantedFrames/GrantedTitles/GrantedBubbles — the grants
+// are how event rewards are distributed in practice). The
+// 17d achievement-computed ownership (level / wins / peak
+// rank / alliance level / reign) NO LONGER grants anything.
+// An equipped item that is not (or no longer) granted falls
+// back on read exactly as before (no frame / no title /
+// Mặc định). Avatars stay free for everyone; "không khung",
+// no title and the Mặc định bubble are absences, not items.
 //
-// Bubble styles (spec §7.2B): default for everyone, a rank
-// style at Kỵ Sĩ peak, and the war-champion style behind the
-// same WarChampOf seam.
+// Player-facing copy NEVER mentions grants or admins: the
+// detail popup shows "Cách nhận: Nhận qua sự kiện", and
+// delivery notes read as event rewards ("Bạn nhận được:
+// ..."). The ONE exception that stays automatic is the
+// <Liên minh vô địch> CHAT suffix (§7.1): a reign-state
+// presentation resolved through the WarChampOf seam, not an
+// equippable item.
 
 import (
 	"errors"
@@ -103,21 +104,21 @@ var FrameNames = map[string]string{
 	"frame_12": "Ruy Băng Sao",
 }
 
-// FrameUnlockText is the honest unlock condition shown for an
-// unowned frame. The two "chưa mở" entries name the missing
-// system instead of promising a condition that cannot be met.
+// FrameUnlockText is the player-facing obtain note for an
+// unowned frame (rule change 2026-11-12): items arrive via
+// events; the UI shows "Cách nhận: Nhận qua sự kiện".
 var FrameUnlockText = map[string]string{
-	"frame_01": "Đạt cấp tài khoản 5",
-	"frame_03": "Đạt cấp tài khoản 15",
-	"frame_04": "Ở trong liên minh cấp 3 trở lên",
-	"frame_05": "Thắng 50 trận (mọi chế độ ghi sổ)",
-	"frame_06": "Đạt bậc Hầu Tước trong thang mùa Hạng",
-	"frame_07": "Vô địch một giải đấu người chơi",
-	"frame_08": "Đạt cấp tài khoản 25",
-	"frame_09": "Nhiệm vụ tuần của liên minh — hệ thống đếm cộng dồn chưa mở",
-	"frame_10": "Ở trong liên minh cấp 5 trở lên",
-	"frame_11": "Thắng 150 trận (mọi chế độ ghi sổ)",
-	"frame_12": "Liên minh vô địch Đại chiến tháng — giải Đại chiến chưa mở",
+	"frame_01": "Nhận qua sự kiện",
+	"frame_03": "Nhận qua sự kiện",
+	"frame_04": "Nhận qua sự kiện",
+	"frame_05": "Nhận qua sự kiện",
+	"frame_06": "Nhận qua sự kiện",
+	"frame_07": "Nhận qua sự kiện",
+	"frame_08": "Nhận qua sự kiện",
+	"frame_09": "Nhận qua sự kiện",
+	"frame_10": "Nhận qua sự kiện",
+	"frame_11": "Nhận qua sự kiện",
+	"frame_12": "Nhận qua sự kiện",
 }
 
 var frameIDSet = func() map[string]bool {
@@ -149,8 +150,8 @@ var BubbleNames = map[string]string{
 
 var BubbleUnlockText = map[string]string{
 	"mac_dinh": "Có sẵn cho mọi tài khoản",
-	"hang":     "Đạt bậc Kỵ Sĩ trong thang mùa Hạng",
-	"vo_dich":  "Liên minh vô địch Đại chiến tháng — giải Đại chiến chưa mở",
+	"hang":     "Nhận qua sự kiện",
+	"vo_dich":  "Nhận qua sự kiện",
 }
 
 var bubbleIDSet = func() map[string]bool {
@@ -247,56 +248,29 @@ func (ac *Accounts) warChampOf(user string) bool {
 	return ac.WarChampOf(user)
 }
 
-// frameOwned evaluates ONE frame's §7.2A condition against
-// the account's live data.
-func (ac *Accounts) frameOwned(a *Account, id string) bool {
-	level, _, _ := LevelForXP(XPFor(a.Matches, a.Wins))
-	switch id {
-	case "frame_01":
-		return level >= 5
-	case "frame_03":
-		return level >= 15
-	case "frame_04":
-		return ac.allyLevelOf(a.User) >= 3
-	case "frame_05":
-		return a.Wins >= 50
-	case "frame_06":
-		return peakTierOf(a) >= TierHauTuoc
-	case "frame_07":
-		for _, t := range a.Titles {
-			if t == TitleChampion {
-				return true
-			}
+func grantedHas(list []string, id string) bool {
+	for _, g := range list {
+		if g == id {
+			return true
 		}
-		return false
-	case "frame_08":
-		return level >= 25
-	case "frame_09":
-		// Cumulative alliance-weekly-quest completions are not
-		// tracked per account yet — grants nothing (see the
-		// unlock text).
-		return false
-	case "frame_10":
-		return ac.allyLevelOf(a.User) >= 5
-	case "frame_11":
-		return a.Wins >= 150
-	case "frame_12":
-		return ac.warChampOf(a.User)
 	}
 	return false
 }
 
-// bubbleOwned evaluates ONE bubble style's condition.
+// frameOwned (rule change 2026-11-12): a frame is owned
+// exactly when an admin grant for it is recorded on the
+// account. Achievement data no longer grants frames.
+func (ac *Accounts) frameOwned(a *Account, id string) bool {
+	return grantedHas(a.GrantedFrames, id)
+}
+
+// bubbleOwned: the Mặc định style is free (it is the absence
+// of an item); every other style is grant-only.
 func (ac *Accounts) bubbleOwned(a *Account, id string) bool {
-	switch id {
-	case "mac_dinh":
+	if id == BubbleDefault {
 		return true
-	case "hang":
-		return peakTierOf(a) >= TierKySi
-	case "vo_dich":
-		return ac.warChampOf(a.User)
 	}
-	return false
+	return grantedHas(a.GrantedBubbles, id)
 }
 
 // cosmeticsOf computes the account's full cosmetics state:
@@ -325,24 +299,22 @@ func (ac *Accounts) cosmeticsOf(a *Account) (ownedFrames, ownedBubbles []string,
 	if bubbleIDSet[a.BubbleStyle] && ac.bubbleOwned(a, a.BubbleStyle) {
 		effBubble = a.BubbleStyle
 	}
-	// Titles: the stored list (tournament champion today) plus
-	// the war-champion title while the seam says the account
-	// holds the reign.
-	hasChamp := false
-	for _, t := range a.Titles {
-		if t == TitleChampion {
-			hasChamp = true
-		}
-	}
-	warOwned := ac.warChampOf(a.User)
+	// Titles (rule change 2026-11-12): possession = the
+	// grant list. The account's banked Titles (15h tournament
+	// banking) are UNTOUCHED as a record — they simply no
+	// longer confer the cosmetic; event rewards are handed
+	// out through grants, so a tournament winner receives
+	// this title as a grant. (The automatic <Liên minh vô
+	// địch> chat SUFFIX is separate: it follows the reign
+	// seam, not this catalogue row.)
 	rows = []TitleRow{
 		{ID: TitleIDChampion, Name: TitleChampion,
-			How:   "Vô địch một giải đấu người chơi",
-			Owned: hasChamp, Expiry: "Vĩnh viễn",
+			How:   "Phần thưởng sự kiện — vô địch giải đấu người chơi",
+			Owned: ac.titleOwned(a, TitleChampion), Expiry: "Vĩnh viễn",
 			Equipped: a.DisplayTitle == TitleChampion},
 		{ID: TitleIDWarChampion, Name: TitleWarChampion,
-			How:   "Thuộc liên minh thắng chung kết Đại chiến tháng (giữ ngôi)",
-			Owned: warOwned, Expiry: "Khi đang giữ ngôi vô địch Đại chiến",
+			How:   "Phần thưởng sự kiện — liên minh vô địch Đại chiến tháng",
+			Owned: ac.titleOwned(a, TitleWarChampion), Expiry: "Vĩnh viễn",
 			Equipped: a.DisplayTitle == TitleWarChampion},
 	}
 	return ownedFrames, ownedBubbles, effFrame, effBubble, rows
@@ -350,21 +322,15 @@ func (ac *Accounts) cosmeticsOf(a *Account) (ownedFrames, ownedBubbles []string,
 
 // titleOwned reports whether the account may equip this
 // display title ("" always allowed — it clears the slot).
+// Rule change 2026-11-12: ownership is the grant list.
 func (ac *Accounts) titleOwned(a *Account, name string) bool {
-	switch name {
-	case "":
+	if name == "" {
 		return true
-	case TitleChampion:
-		for _, t := range a.Titles {
-			if t == TitleChampion {
-				return true
-			}
-		}
-		return false
-	case TitleWarChampion:
-		return ac.warChampOf(a.User)
 	}
-	return false
+	if name != TitleChampion && name != TitleWarChampion {
+		return false
+	}
+	return grantedHas(a.GrantedTitles, name)
 }
 
 // AvatarOf returns the user's effective (normalised) account
@@ -398,6 +364,77 @@ func (ac *Accounts) EquippedBubbleOf(user string) string {
 	}
 	_, _, _, effBubble, _ := ac.cosmeticsOf(a)
 	return effBubble
+}
+
+// ------------------------------------------------------------- grants
+
+var ErrBadGrantItem = errors.New("vật phẩm không hợp lệ")
+
+// GrantItem records an admin grant of ONE cosmetic item
+// (frame / title / bubble style) on an account — the ONLY
+// way these items are possessed (rule change 2026-11-12;
+// in practice this is how event rewards are handed out).
+// kind is "frame" | "title" | "bubble"; item is the frame
+// id, bubble id, or title CATALOGUE id (title names are
+// resolved here). The delivery letter is worded as an event
+// reward — player-facing copy never mentions grants or
+// admins. Returns the item's display name (with its family
+// prefix, ready for "Bạn nhận được: ...") and whether the
+// grant was new (a re-grant of an owned item changes
+// nothing and files no second letter).
+func (ac *Accounts) GrantItem(user, kind, item string) (string, bool, error) {
+	a, ok := ac.store.GetAccount(user)
+	if !ok {
+		return "", false, ErrBadCredentials
+	}
+	var name string
+	fresh := false
+	switch kind {
+	case "frame":
+		if !frameIDSet[item] {
+			return "", false, ErrBadGrantItem
+		}
+		name = "Khung avatar " + FrameNames[item]
+		if !grantedHas(a.GrantedFrames, item) {
+			a.GrantedFrames = append(a.GrantedFrames, item)
+			fresh = true
+		}
+	case "bubble":
+		if !bubbleIDSet[item] || item == BubbleDefault {
+			return "", false, ErrBadGrantItem
+		}
+		name = "Bong bóng chat " + BubbleNames[item]
+		if !grantedHas(a.GrantedBubbles, item) {
+			a.GrantedBubbles = append(a.GrantedBubbles, item)
+			fresh = true
+		}
+	case "title":
+		var titleName string
+		switch item {
+		case TitleIDChampion:
+			titleName = TitleChampion
+		case TitleIDWarChampion:
+			titleName = TitleWarChampion
+		default:
+			return "", false, ErrBadGrantItem
+		}
+		name = "Danh hiệu " + titleName
+		if !grantedHas(a.GrantedTitles, titleName) {
+			a.GrantedTitles = append(a.GrantedTitles, titleName)
+			fresh = true
+		}
+	default:
+		return "", false, ErrBadGrantItem
+	}
+	if fresh {
+		a.appendLetter("Phần thưởng sự kiện",
+			"Bạn nhận được: "+name+". Mở trang Cá nhân để xem và trang bị.",
+			ac.now().Unix())
+		if err := ac.store.PutAccount(a); err != nil {
+			return "", false, err
+		}
+	}
+	return name, fresh, nil
 }
 
 // ------------------------------------------------------------- setters

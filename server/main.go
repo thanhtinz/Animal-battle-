@@ -37,6 +37,13 @@ package main
 //   {"t":"queue_join","mode":"1v1"} / {"t":"queue_leave"}   ranked matchmaking
 //   {"t":"queue_join","queue":"normal","name":...}          normal (unranked) matchmaking, 13t
 //   {"t":"referee_join","code":C,"token":T}        referee processes only
+//   {"t":"world_chat","text":T} / {"t":"world_voice","audio":B64,"dur":S}
+//        chat hub (17e): world channel — account-only, rate-limited
+//   {"t":"alliance_voice","audio":B64,"dur":S}      17e: alliance voice
+//   {"t":"dm_list"} / {"t":"dm_open","peer":U} / {"t":"dm_send","peer":U,"text":T}
+//   {"t":"dm_voice","peer":U,"audio":B64,"dur":S}   17e: private chat
+//   {"t":"megaphone_use","text":T}                  17e: spend a Loa thông báo
+//   {"t":"admin_grant_megaphone","user":U,"count":N} 17e: EMPIRE_AGE_ADMINS only
 // Protocol (server -> client): room / created / joined / match_start /
 // tick / cmd / player_left / desync / error / queue_joined / match_found
 // / referee_ok — see hub.go and README.md.
@@ -48,6 +55,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -130,13 +138,27 @@ type clientMsg struct {
 	// role changes ride Role, and invite/kick/approve targets
 	// ride User (a username the server already knows) or Name
 	// (invite: a free-typed player name to resolve).
-	AllyID string `json:"ally_id"`
-	Badge  string `json:"badge"`
-	Desc   string `json:"desc"`
-	Role   string `json:"role"`
+	AllyID     string `json:"ally_id"`
+	BadgeIcon  int    `json:"badge_icon"`
+	BadgeColor int    `json:"badge_color"`
+	Desc       string `json:"desc"`
+	Role       string `json:"role"`
 	// Tag (17b): the alliance tag on create/settings; the
 	// notice text rides Text.
 	Tag string `json:"tag"`
+	// Chat hub (17e): DM ops carry the other party's username
+	// in Peer; voice ops carry the base64 WAV in Audio and
+	// the declared duration in Dur; the megaphone grant
+	// carries its amount in Count (the target rides User).
+	Peer  string  `json:"peer"`
+	Count int     `json:"count"`
+	Audio string  `json:"audio"`
+	Dur   float64 `json:"dur"`
+	// Item grants (17d rule change): admin_grant_item carries
+	// the family in Kind ("frame"|"title"|"bubble") and the
+	// catalogue id in Item (the target rides User).
+	Kind string `json:"kind"`
+	Item string `json:"item"`
 }
 
 type session struct {
@@ -214,6 +236,32 @@ func (s *session) sendAllyHome() {
 	}
 	mine, invites := as.HomeFor(s.user, s.hub.IsOnline)
 	s.sendJSON(map[string]any{"t": "alliance_home", "mine": mine, "invites": invites})
+}
+
+// sendDMList pushes the caller's conversation list (17e):
+// one row per thread with the partner's resolved display
+// name, last text line, and unread count.
+func (s *session) sendDMList() {
+	rows := []map[string]any{}
+	if s.hub.dms != nil {
+		for _, c := range s.hub.dms.Conversations(s.user) {
+			rows = append(rows, map[string]any{
+				"user": c.User, "name": s.acc.DisplayNameOf(c.User),
+				"last_text": StripEmotes(c.LastText), "last_at": c.LastAt,
+				"unread": c.Unread,
+			})
+		}
+	}
+	s.sendJSON(map[string]any{"t": "dm_list", "rows": rows})
+}
+
+// sendDMThread pushes one pair's stored history (17e).
+func (s *session) sendDMThread(peer string) {
+	msgs := []DMMsg{}
+	if s.hub.dms != nil {
+		msgs = s.hub.dms.History(s.user, peer)
+	}
+	s.sendJSON(map[string]any{"t": "dm_thread", "peer": peer, "rows": msgs})
 }
 
 // onAuthed runs after a successful register/login: if the session
@@ -517,6 +565,180 @@ func (s *session) handle(raw []byte) {
 			return
 		}
 		s.sendJSON(map[string]any{"t": "avatar", "avatar_id": NormalizeAvatarID(m.Avatar)})
+	case "world_chat":
+		// Chat hub (17e): the world channel. Account-only —
+		// guests are refused here exactly like every other
+		// lobby social surface (friends/mail/alliance).
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if text := strings.TrimSpace(m.Text); text != "" {
+			s.hub.RelayWorldChat(s.user, s.acc.DisplayNameOf(s.user), text)
+		}
+	case "world_voice":
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		wav, err := decodeVoicePayload(m.Audio)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		if err := s.hub.RelayWorldVoice(s.user, s.acc.DisplayNameOf(s.user), wav, m.Dur); err != nil {
+			s.sendErr(err)
+		}
+	case "alliance_voice":
+		// Chat hub (17e): voice on the alliance channel —
+		// membership resolved exactly like alliance_chat.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if s.hub.allis == nil {
+			s.sendErr(ErrAllyNotMember)
+			return
+		}
+		a := s.hub.allis.OfUser(s.user)
+		if a == nil {
+			s.sendErr(ErrAllyNotMember)
+			return
+		}
+		wav, err := decodeVoicePayload(m.Audio)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		if err := s.hub.RelayAllianceVoice(s.user, s.acc.DisplayNameOf(s.user), a.ID,
+			s.hub.allis.MemberUsers(a.ID), wav, m.Dur); err != nil {
+			s.sendErr(err)
+		}
+	case "dm_list":
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		s.sendDMList()
+	case "dm_open":
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if _, ok := s.acc.Profile(m.Peer); !ok {
+			s.sendErr(ErrDMTarget)
+			return
+		}
+		if _, err := s.hub.dms.MarkRead(s.user, m.Peer); err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendDMThread(m.Peer)
+		s.sendDMList()
+	case "dm_send":
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if _, ok := s.acc.Profile(m.Peer); !ok {
+			s.sendErr(ErrDMTarget)
+			return
+		}
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			return
+		}
+		if err := s.hub.RelayDMText(s.user, s.acc.DisplayNameOf(s.user), m.Peer, text); err != nil {
+			s.sendErr(err)
+		}
+	case "dm_voice":
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		if _, ok := s.acc.Profile(m.Peer); !ok {
+			s.sendErr(ErrDMTarget)
+			return
+		}
+		wav, err := decodeVoicePayload(m.Audio)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		if err := s.hub.RelayDMVoice(s.user, s.acc.DisplayNameOf(s.user), m.Peer, wav, m.Dur); err != nil {
+			s.sendErr(err)
+		}
+	case "megaphone_use":
+		// Loa thông báo (17e): spend one item, broadcast the
+		// marquee to every online player. No item → refusal.
+		if s.user == "" {
+			s.sendErr(ErrNotLoggedIn)
+			return
+		}
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			return
+		}
+		left, err := s.hub.UseMegaphone(s.user, s.acc.DisplayNameOf(s.user), text)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		s.sendJSON(map[string]any{"t": "megaphones", "count": left})
+	case "admin_grant_megaphone":
+		// Loa thông báo issuance (17e): ONLY accounts named
+		// in EMPIRE_AGE_ADMINS may grant — there is no shop
+		// and no self-grant. Delivery: account count + mail
+		// letter (GrantMegaphones) + a live system note.
+		if s.user == "" || !s.hub.IsAdmin(s.user) {
+			s.sendErr(ErrNotAdmin)
+			return
+		}
+		target := strings.TrimSpace(m.User)
+		n := m.Count
+		if n <= 0 {
+			n = 1
+		}
+		total, err := s.acc.GrantMegaphones(target, n)
+		if err != nil {
+			s.sendJSON(map[string]any{"t": "error", "msg": "Không tìm thấy tài khoản " + target + "."})
+			return
+		}
+		log.Printf("megaphone: admin %s granted %d to %s (total %d)", s.user, n, target, total)
+		s.sendJSON(map[string]any{"t": "megaphone_granted", "user": target, "count": total, "granted": n})
+		note := map[string]any{"t": "system_msg",
+			"text": "Bạn nhận được: " + itoa(n) + " Loa thông báo."}
+		s.hub.SendToUsers([]string{target}, note)
+		s.hub.SendToUsers([]string{target},
+			map[string]any{"t": "megaphones", "count": total})
+	case "admin_grant_item":
+		// Cosmetic item grant (17d rule change): frames,
+		// titles and bubble styles are ITEMS, possessed only
+		// via this admin op (in practice: event rewards).
+		// Delivery mirrors the megaphone grant — a system
+		// note + a mail letter, worded as an event reward —
+		// plus a profile refresh for the target's panels.
+		if s.user == "" || !s.hub.IsAdmin(s.user) {
+			s.sendErr(ErrNotAdmin)
+			return
+		}
+		target := strings.TrimSpace(m.User)
+		name, fresh, err := s.acc.GrantItem(target, m.Kind, m.Item)
+		if err != nil {
+			s.sendErr(err)
+			return
+		}
+		log.Printf("grant item: admin %s -> %s %s:%s (%q) fresh=%v", s.user, target, m.Kind, m.Item, name, fresh)
+		s.sendJSON(map[string]any{"t": "item_granted", "user": target,
+			"kind": m.Kind, "item": m.Item, "name": name, "fresh": fresh})
+		if fresh {
+			s.hub.SendToUsers([]string{target}, map[string]any{
+				"t": "system_msg", "text": "Bạn nhận được: " + name + "."})
+			if p, ok := s.acc.Profile(target); ok {
+				s.hub.SendToUsers([]string{target}, map[string]any{
+					"t": "profile_update", "profile": p})
+			}
+		}
 	case "set_name":
 		// Display-name pick (13r): the name panel after register /
 		// first login. Validated + uniqueness-checked in accounts;
@@ -943,7 +1165,7 @@ func (s *session) handle(raw []byte) {
 			rows := as.ListWire(s.user, m.Name)
 			s.sendJSON(map[string]any{"t": "alliance_list", "rows": rows, "total": len(rows)})
 		case "alliance_create":
-			a, err := as.Create(s.user, m.Name, m.Tag, m.Badge, m.Mode, m.Desc)
+			a, err := as.Create(s.user, m.Name, m.Tag, m.BadgeIcon, m.BadgeColor, m.Mode, m.Desc)
 			if err != nil {
 				s.sendErr(err)
 				return
@@ -1025,7 +1247,7 @@ func (s *session) handle(raw []byte) {
 			pushHome(m.User)
 		case "alliance_settings":
 			members := as.MemberUsers(m.AllyID)
-			if err := as.UpdateSettings(m.AllyID, s.user, m.Tag, m.Badge, m.Mode, m.Desc); err != nil {
+			if err := as.UpdateSettings(m.AllyID, s.user, m.Tag, m.BadgeIcon, m.BadgeColor, m.Mode, m.Desc); err != nil {
 				s.sendErr(err)
 				return
 			}
@@ -1265,6 +1487,20 @@ func main() {
 	// title / champion bubble grant nothing) until the war
 	// plugs its resolver in here.
 	acc.AllyLevelOf = hub.allis.LevelOf
+	// Chat hub (17e): the DM service over the same store, and
+	// the admin set for Loa thông báo grants — account
+	// usernames (comma-separated) in EMPIRE_AGE_ADMINS.
+	// Nobody else can grant megaphones; there is no other
+	// issuance path (no shop, no self-grant).
+	hub.dms = NewDMs(store)
+	if env := strings.TrimSpace(os.Getenv("EMPIRE_AGE_ADMINS")); env != "" {
+		for _, u := range strings.Split(env, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				hub.admins[u] = true
+			}
+		}
+		log.Printf("chat hub: %d admin account(s) may grant megaphones", len(hub.admins))
+	}
 	// Replay archive (13h): one JSON file beside the account store.
 	if rps, err := NewFileReplayStore(*storePath + ".replays.json"); err != nil {
 		log.Fatalf("replay store: %v", err)

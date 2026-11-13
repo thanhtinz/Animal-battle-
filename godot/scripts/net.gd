@@ -88,6 +88,18 @@ signal tourn_room_joined(code: String, slot: int)
 # shared chat_received signal with scope == "alliance".
 signal alliance_home_received(mine: Dictionary, invites: Array)
 signal alliance_list_received(rows: Array)
+# 17e chat hub: the raw chat line (peer / from_user / war_champ
+# ride here; chat_received keeps its fixed signature for the
+# in-match listeners), voice lines, marquee + megaphone
+# pushes, DM pushes, and the system feed.
+signal chat_line_received(m: Dictionary)
+signal voice_line_received(m: Dictionary, wav: PackedByteArray)
+signal marquee_received(sender_name: String, text: String)
+signal megaphones_changed(count: int)
+signal dm_list_received(rows: Array)
+signal dm_thread_received(peer: String, rows: Array)
+signal dm_line_received(peer: String, mine: bool)
+signal system_feed_changed
 
 const DEFAULT_URL := "ws://127.0.0.1:8765/ws"
 ## Sim compatibility tag; must match the server's GameVersion.
@@ -154,7 +166,28 @@ var last_rank_result: Dictionary = {} # latest rank_result payload (stage 4)
 var tourn_list_rows: Array = [] # latest tourn_list payload (15h)
 var tourn_detail: Dictionary = {} # latest tourn_detail payload (15h)
 var tourn_room: Dictionary = {} # {code, slot, tourn_id, match} once bound (15h)
-var alliance_mine: Dictionary = {} # latest alliance_home "mine" ({} = unaffiliated) (17a)
+var alliance_mine: Dictionary = {}
+# 17e chat-hub session state: world transcript (cap 200),
+# DM threads/conversations + live unread, the megaphone
+# count, and the Hệ thống feed (real session events only —
+# server system pushes, ranked results, alliance notices,
+# and the mailbox rendered read-only by the panel).
+var world_chat_lines: Array = []
+var dm_threads: Dictionary = {}
+var dm_convs: Array = []
+var dm_unread: Dictionary = {}
+var megaphone_count: int = 0
+var system_feed: Array = []
+var _last_ally_notice: String = ""
+var _mq_seen: Array = []
+var _mq_layer: CanvasLayer = null
+var _mq_strip: PanelContainer = null
+var _mq_clip: Control = null
+var _mq_label: Label = null
+var _mq_queue: Array = []
+var _mq_x: float = 0.0
+var _mq_text_w: float = 0.0
+var _mq_active: bool = false
 var alliance_invites: Array = [] # alliances holding an invite for me (17a)
 var alliance_rows: Array = [] # latest alliance_list payload (17a)
 var alliance_chat_lines: Array = [] # session transcript [{name, text}] of the alliance channel (17a)
@@ -269,6 +302,7 @@ func _ready() -> void:
 			or args.has("mp-alliance") or args.has("mp-shot-alliance") \
 			or args.has("mp-alliance2") or args.has("mp-shot-alliance2") \
 			or args.has("mp-settings") or args.has("mp-shot-settings") \
+			or args.has("mp-chathub") or args.has("mp-shot-chathub") \
 			or args.has("mp-kill"):
 		auto = args
 		_auto_phase = "boot"
@@ -362,6 +396,8 @@ func disconnect_from_server() -> void:
 
 
 func _process(delta: float) -> void:
+	if _mq_active:
+		_marquee_tick(delta)
 	if is_referee and peer == null and not _referee_connect_tried:
 		_referee_connect_tried = true
 		connect_to_server(referee_url)
@@ -539,6 +575,8 @@ func _handle_message(txt: String) -> void:
 					" after=", String(m.get("after", {}).get("rank_text", "")),
 					" mmr=", int(m.get("mmr_after", 0)))
 			rank_result_received.emit(m)
+			_sys_note("Đấu hạng kết thúc — hạng %d, biến động sao %+d." % [
+				int(m.get("placement", 0)), int(m.get("star_delta", 0))])
 		"queue_left":
 			print("MPLOG queue left")
 			queue_left_notice.emit()
@@ -610,21 +648,88 @@ func _handle_message(txt: String) -> void:
 			# 17d: the sender's equipped chat-bubble style
 			# (server-resolved, presentation only).
 			var cbub := String(m.get("bubble", "mac_dinh"))
+			var cchamp := bool(m.get("war_champ", false))
 			if cscope == "alliance":
 				# 17a: keep a session transcript for the alliance
 				# screen; the line still rides chat_received.
-				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub})
+				alliance_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp})
 				if alliance_chat_lines.size() > 100:
 					alliance_chat_lines.pop_front()
 				print("MPLOG alliance chat from=", cname, " text=", ctext)
+			elif cscope == "world":
+				# 17e: the world channel transcript.
+				world_chat_lines.append({"name": cname, "text": ctext, "tag": ctag, "bubble": cbub, "champ": cchamp})
+				if world_chat_lines.size() > 200:
+					world_chat_lines.pop_front()
+				print("MPLOG world chat from=", cname, " text=", ctext)
+			elif cscope == "dm":
+				_file_dm_line(m, cname, ctext, ctag, cbub, cchamp)
 			if ctag != "":
 				print("MPLOG chat ally_tag=", ctag, " scope=", cscope)
 			chat_received.emit(cscope, int(m.get("from", -1)), cname, ctext, ctag, cbub)
+			chat_line_received.emit(m)
+		"voice":
+			# 17e chat voice: one relayed WAV payload; the hub
+			# files it into the channel's session transcript
+			# (live only — the server stores no voice).
+			var vwav := Marshalls.base64_to_raw(String(m.get("data", "")))
+			_on_voice_msg(m, vwav)
+			voice_line_received.emit(m, vwav)
+			print("MPLOG voice scope=", String(m.get("scope", "")),
+				" from=", String(m.get("name", "")), " bytes=", vwav.size())
+		"marquee":
+			# 17e Loa thông báo: dedupe by mid (a logged-in
+			# room player is reached twice by construction).
+			var mmid := int(m.get("mid", 0))
+			if not _mq_seen.has(mmid):
+				_mq_seen.append(mmid)
+				if _mq_seen.size() > 32:
+					_mq_seen.pop_front()
+				var mdisp := _decor_name(String(m.get("name", "")),
+					String(m.get("ally_tag", "")), bool(m.get("war_champ", false)))
+				_show_marquee(mdisp, String(m.get("text", "")))
+				marquee_received.emit(mdisp, String(m.get("text", "")))
+				print("MPLOG marquee mid=", mmid, " from=", mdisp,
+					" text=", String(m.get("text", "")))
+		"megaphones":
+			megaphone_count = int(m.get("count", 0))
+			megaphones_changed.emit(megaphone_count)
+			print("MPLOG megaphones count=", megaphone_count)
+		"megaphone_granted":
+			print("MPLOG megaphone granted user=", String(m.get("user", "")),
+				" total=", int(m.get("count", 0)))
+		"system_msg":
+			_sys_note(String(m.get("text", "")))
+			print("MPLOG system_msg text=", String(m.get("text", "")))
+		"dm_list":
+			dm_convs = m.get("rows", [])
+			dm_unread.clear()
+			for r in dm_convs:
+				var ru := int(r.get("unread", 0))
+				if ru > 0:
+					dm_unread[String(r.get("user", ""))] = ru
+			dm_list_received.emit(dm_convs)
+			print("MPLOG dm_list rows=", dm_convs.size(), " unread=", dm_total_unread())
+		"dm_thread":
+			var dpeer := String(m.get("peer", ""))
+			var drows: Array = m.get("rows", [])
+			var conv: Array = []
+			for r in drows:
+				conv.append({"name": String(r.get("name", "")),
+					"text": String(r.get("text", "")),
+					"mine": String(r.get("from", "")) == account_name,
+					"tag": "", "bubble": "mac_dinh", "champ": false})
+			dm_threads[dpeer] = conv
+			dm_unread.erase(dpeer)
+			dm_thread_received.emit(dpeer, drows)
+			print("MPLOG dm_thread peer=", dpeer, " rows=", drows.size())
 		"auth_ok":
 			auth_token = String(m.get("token", ""))
 			auth_profile = m.get("profile", {})
 			account_name = String(auth_profile.get("user", ""))
 			mail_unread = int(auth_profile.get("unread_mail", 0))
+			megaphone_count = int(auth_profile.get("megaphones", 0))
+			dm_request_list()
 			# Remember-me persistence follows the checkbox state at
 			# auth time: on → store the token; off → drop any
 			# stored one, so an old remembered session never
@@ -728,6 +833,10 @@ func _handle_message(txt: String) -> void:
 					" members=", int(alliance_mine.get("members_count", 0)),
 					" invites=", alliance_invites.size())
 			alliance_home_received.emit(alliance_mine, alliance_invites)
+			var anotice := String(alliance_mine.get("notice", ""))
+			if anotice != "" and anotice != _last_ally_notice:
+				_last_ally_notice = anotice
+				_sys_note("Thông báo liên minh: " + anotice)
 		"alliance_list":
 			alliance_rows = m.get("rows", [])
 			print("MPLOG alliance list rows=", alliance_rows.size())
@@ -825,8 +934,9 @@ func alliance_request_list(search: String) -> void:
 	_send({"t": "alliance_list", "name": search})
 
 
-func alliance_create(ally_name: String, tag: String, badge: String, mode: String, desc: String) -> void:
-	_send({"t": "alliance_create", "name": ally_name, "tag": tag, "badge": badge,
+func alliance_create(ally_name: String, tag: String, icon: int, color_idx: int, mode: String, desc: String) -> void:
+	_send({"t": "alliance_create", "name": ally_name, "tag": tag,
+			"badge_icon": icon, "badge_color": color_idx,
 			"mode": mode, "desc": desc})
 
 
@@ -874,8 +984,9 @@ func alliance_transfer(id: String, user: String) -> void:
 	_send({"t": "alliance_transfer", "ally_id": id, "user": user})
 
 
-func alliance_settings(id: String, tag: String, badge: String, mode: String, desc: String) -> void:
-	_send({"t": "alliance_settings", "ally_id": id, "tag": tag, "badge": badge,
+func alliance_settings(id: String, tag: String, icon: int, color_idx: int, mode: String, desc: String) -> void:
+	_send({"t": "alliance_settings", "ally_id": id, "tag": tag,
+			"badge_icon": icon, "badge_color": color_idx,
 			"mode": mode, "desc": desc})
 
 
@@ -885,6 +996,209 @@ func alliance_disband(id: String) -> void:
 
 func alliance_chat(text: String) -> void:
 	_send({"t": "alliance_chat", "text": text})
+
+# ------------------------------------------------------------------
+# 17e chat hub API: world channel, DM ops, voice relays, the
+# megaphone, and the admin grant. All lobby traffic — the
+# server validates login, rate limits, and permissions.
+
+func world_chat(text: String) -> void:
+	_send({"t": "world_chat", "text": text})
+
+
+func world_voice(wav: PackedByteArray, dur: float) -> void:
+	_send({"t": "world_voice", "audio": Marshalls.raw_to_base64(wav), "dur": dur})
+
+
+func alliance_voice(wav: PackedByteArray, dur: float) -> void:
+	_send({"t": "alliance_voice", "audio": Marshalls.raw_to_base64(wav), "dur": dur})
+
+
+func dm_request_list() -> void:
+	if account_name != "":
+		_send({"t": "dm_list"})
+
+
+func dm_open(peer: String) -> void:
+	_send({"t": "dm_open", "peer": peer})
+
+
+func dm_send(peer: String, text: String) -> void:
+	_send({"t": "dm_send", "peer": peer, "text": text})
+
+
+func dm_voice(peer: String, wav: PackedByteArray, dur: float) -> void:
+	_send({"t": "dm_voice", "peer": peer, "audio": Marshalls.raw_to_base64(wav), "dur": dur})
+
+
+func use_megaphone(text: String) -> void:
+	_send({"t": "megaphone_use", "text": text})
+
+
+func admin_grant_megaphone(user: String, count: int) -> void:
+	_send({"t": "admin_grant_megaphone", "user": user, "count": count})
+
+
+## Item grant op (17d rule change): kind is "frame" |
+## "title" | "bubble"; item is the catalogue id. Admin-list
+## accounts only — the server refuses everyone else.
+func admin_grant_item(user: String, kind: String, item: String) -> void:
+	_send({"t": "admin_grant_item", "user": user, "kind": kind, "item": item})
+
+
+func dm_total_unread() -> int:
+	var total := 0
+	for k in dm_unread:
+		total += int(dm_unread[k])
+	return total
+
+
+## _decor_name renders a chat sender with the standing
+## presentation riders: [TAG] before, <Liên minh vô địch>
+## after (spec §7.1; the suffix appears only while the
+## sender holds the reign).
+func _decor_name(sender_name: String, tag: String, champ: bool) -> String:
+	var out := sender_name
+	if tag != "":
+		out = "[" + tag + "] " + out
+	if champ:
+		out += " <Liên minh vô địch>"
+	return out
+
+
+## _sys_note appends one REAL session event to the Hệ thống
+## feed (server system pushes, ranked results, alliance
+## notice changes — the panel also renders the mailbox).
+func _sys_note(text: String) -> void:
+	if text == "":
+		return
+	system_feed.append({"text": text, "at": int(Time.get_unix_time_from_system())})
+	if system_feed.size() > 100:
+		system_feed.pop_front()
+	system_feed_changed.emit()
+
+
+func _file_dm_line(m: Dictionary, cname: String, ctext: String,
+		ctag: String, cbub: String, cchamp: bool) -> void:
+	var peer := String(m.get("peer", ""))
+	if peer == "":
+		return
+	var mine := String(m.get("from_user", "")) == account_name
+	var lines: Array = dm_threads.get(peer, [])
+	lines.append({"name": cname, "text": ctext, "tag": ctag,
+		"bubble": cbub, "champ": cchamp, "mine": mine})
+	if lines.size() > 200:
+		lines.pop_front()
+	dm_threads[peer] = lines
+	if not mine:
+		dm_unread[peer] = int(dm_unread.get(peer, 0)) + 1
+	dm_line_received.emit(peer, mine)
+	print("MPLOG dm from=", cname, " peer=", peer, " text=", ctext)
+
+
+func _on_voice_msg(m: Dictionary, wav: PackedByteArray) -> void:
+	var scope := String(m.get("scope", ""))
+	var entry := {"name": String(m.get("name", "")),
+		"tag": String(m.get("ally_tag", "")),
+		"bubble": String(m.get("bubble", "mac_dinh")),
+		"champ": bool(m.get("war_champ", false)),
+		"voice": true, "dur": float(m.get("dur", 0.0)), "data": wav}
+	match scope:
+		"world":
+			world_chat_lines.append(entry)
+			if world_chat_lines.size() > 200:
+				world_chat_lines.pop_front()
+		"alliance":
+			alliance_chat_lines.append(entry)
+			if alliance_chat_lines.size() > 100:
+				alliance_chat_lines.pop_front()
+		"dm":
+			var peer := String(m.get("peer", ""))
+			if peer == "":
+				return
+			entry["mine"] = String(m.get("from_user", "")) == account_name
+			var lines: Array = dm_threads.get(peer, [])
+			lines.append(entry)
+			if lines.size() > 200:
+				lines.pop_front()
+			dm_threads[peer] = lines
+			if not bool(entry["mine"]):
+				dm_unread[peer] = int(dm_unread.get(peer, 0)) + 1
+			dm_line_received.emit(peer, bool(entry["mine"]))
+
+
+# ------------------------------------------------------------------
+# 17e megaphone marquee: a top-of-screen scrolling strip on
+# its own layer (96 — above every panel), presentation only.
+# Entries queue (max 3); each scrolls once at ~110 px/s and
+# dismisses. Mid-scroll it never blocks input (strip is
+# mouse-transparent).
+
+const MARQUEE_SPEED := 110.0
+
+
+func _ensure_marquee() -> void:
+	if _mq_layer != null:
+		return
+	_mq_layer = CanvasLayer.new()
+	_mq_layer.layer = 96
+	add_child(_mq_layer)
+	_mq_strip = PanelContainer.new()
+	_mq_strip.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_mq_strip.offset_bottom = 34
+	_mq_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.05, 0.12, 0.94)
+	sb.border_color = Color(0.85, 0.68, 0.25)
+	sb.set_border_width_all(0)
+	sb.border_width_bottom = 2
+	_mq_strip.add_theme_stylebox_override("panel", sb)
+	_mq_clip = Control.new()
+	_mq_clip.clip_contents = true
+	_mq_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mq_strip.add_child(_mq_clip)
+	_mq_label = Label.new()
+	_mq_label.add_theme_font_size_override("font_size", 17)
+	_mq_label.add_theme_color_override("font_color", Color(0.98, 0.90, 0.70))
+	_mq_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mq_clip.add_child(_mq_label)
+	_mq_layer.add_child(_mq_strip)
+	_mq_strip.visible = false
+
+
+func _show_marquee(sender_name: String, text: String) -> void:
+	_ensure_marquee()
+	var line := "[Loa] " + sender_name + ": " + text
+	if _mq_active:
+		if _mq_queue.size() < 3:
+			_mq_queue.append(line)
+		return
+	_mq_start(line)
+
+
+func _mq_start(line: String) -> void:
+	_mq_label.text = line
+	var vp_w := get_viewport().get_visible_rect().size.x
+	_mq_text_w = ThemeDB.fallback_font.get_string_size(line,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+	_mq_x = vp_w
+	_mq_label.position = Vector2(_mq_x, 6)
+	_mq_strip.visible = true
+	_mq_active = true
+
+
+func _marquee_tick(delta: float) -> void:
+	if _mq_label == null:
+		_mq_active = false
+		return
+	_mq_x -= MARQUEE_SPEED * delta
+	_mq_label.position.x = _mq_x
+	if _mq_x < -_mq_text_w:
+		if _mq_queue.is_empty():
+			_mq_active = false
+			_mq_strip.visible = false
+		else:
+			_mq_start(String(_mq_queue.pop_front()))
 
 
 ## 17b: set the alliance notice board (leader/deputy). The
@@ -1692,6 +2006,13 @@ func _auto_process() -> void:
 	if auto.has("mp-shot-settings") and _auto_authed and not _auto_shot_done:
 		_auto_settings_shot(cs)
 		return
+	# 17e chat-hub smoke driver + captures.
+	if auto.has("mp-chathub") and _auto_authed:
+		if _auto_chathub_process(cs):
+			return
+	if auto.has("mp-shot-chathub") and _auto_authed and not _auto_shot_done:
+		_auto_chathub_shot(cs)
+		return
 	# Home-lobby screenshot: once authed, give the home screen a
 	# beat to fill the profile chip from the auth payload, then
 	# shoot and quit.
@@ -2381,7 +2702,7 @@ func _auto_alliance_process(_cs) -> bool:
 				0:
 					print("MPLOG alliance create sent name=", aname)
 					alliance_create(aname, String(auto.get("mp-alliance-tag", "HKL1")),
-							"red", "request", "Chung một chiến tuyến")
+							2, 1, "request", "Chung một chiến tuyến")
 					_ally_stage = 1
 				1:
 					alliance_request_home()
@@ -2503,7 +2824,12 @@ func _auto_alliance_shot(cs) -> void:
 		2:
 			if aname == "" and now - _auto_home_at < 1500:
 				return
-			if cs != null and cs.has_method("open_alliance_shot"):
+			if auto.has("mp-alliance-createform") and cs != null \
+					and cs.has_method("open_alliance_create_shot"):
+				var bp := String(auto.get("mp-alliance-badge", "1,0")).split(",")
+				cs.open_alliance_create_shot(int(bp[0]),
+						int(bp[1]) if bp.size() > 1 else 0)
+			elif cs != null and cs.has_method("open_alliance_shot"):
 				cs.open_alliance_shot()
 			_ally_stage = 3
 			_ally_next_poll = now + 2600
@@ -2553,7 +2879,7 @@ func _auto_alliance2_process(_cs) -> bool:
 			match _ally2_stage:
 				0:
 					print("MPLOG ally2 create sent name=", aname, " tag=", atag)
-					alliance_create(aname, atag, "red", "request",
+					alliance_create(aname, atag, 2, 1, "request",
 							"Liên minh kiểm thử 17b")
 					_ally2_stage = 1
 				1:
@@ -3435,6 +3761,12 @@ func _auto_settings_shot(cs) -> void:
 					set_avatar("art:03")
 					set_frame("frame_01")
 					_set_shot_stage = 1
+				elif mode == "frames_popup":
+					if cs != null and cs.has_method("open_settings_shot"):
+						cs.open_settings_shot("frames")
+					if cs != null and cs.settings_panels != null:
+						cs.settings_panels.shot_open_frame_detail("frame_06")
+					_set_shot_stage = 3
 				else:
 					if cs != null and cs.has_method("open_settings_shot"):
 						cs.open_settings_shot(mode)
@@ -3465,4 +3797,246 @@ func _auto_settings_shot(cs) -> void:
 				_auto_shot_done = true
 				_save_shot(path)
 				print("MPLOG settings shot saved panel=", mode)
+				get_tree().quit()
+
+
+# ------------------------------------------------------------------
+# 17e chat-hub drivers (tests/chathub_smoke.sh,
+# tests/capture_chathub.sh). Roles via --mp-chathub=<role>:
+#   a     — world send; waits for B's world reply, DM, voice,
+#           and marquee; then proves a non-admin grant fails.
+#   b     — replies on world, DMs A, sends a synthetic voice
+#           note, proves the empty-megaphone refusal, waits
+#           for the admin grant, then broadcasts a marquee.
+#   admin — grants HubB two megaphones after a warm-up wait.
+#   a2    — fresh process: relogs as A and verifies the DM
+#           history survived on the server.
+# Captures via --mp-shot-chathub=<mode>: world / picker /
+# alliance / dm_list / dm_thread / marquee.
+
+var _hub_stage: int = 0
+var _hub_next_poll: int = 0
+var _hub_authed_at: int = 0
+var _hub_quit_at: int = 0
+var _hub_hooked: bool = false
+var _hub_world_from: Dictionary = {}   # sender name -> last world text
+var _hub_dm_from: Dictionary = {}      # peer -> last text
+var _hub_voice_world_from: String = ""
+var _hub_marquee_text: String = ""
+var _hub_last_error: String = ""
+var _hub_grant_used: bool = false
+var _hub_thread_rows: int = -1
+var _hub_shot_stage: int = 0
+var _hub_shot_at: int = 0
+
+
+func _hub_hook() -> void:
+	if _hub_hooked:
+		return
+	_hub_hooked = true
+	chat_line_received.connect(func(m: Dictionary) -> void:
+		if String(m.get("scope", "")) == "world":
+			_hub_world_from[String(m.get("name", ""))] = String(m.get("text", ""))
+		elif String(m.get("scope", "")) == "dm":
+			_hub_dm_from[String(m.get("peer", ""))] = String(m.get("text", "")))
+	voice_line_received.connect(func(m: Dictionary, _wav: PackedByteArray) -> void:
+		if String(m.get("scope", "")) == "world":
+			_hub_voice_world_from = String(m.get("name", "")))
+	marquee_received.connect(func(_n: String, text: String) -> void:
+		_hub_marquee_text = text)
+	lobby_error.connect(func(msg: String) -> void:
+		_hub_last_error = msg)
+	dm_thread_received.connect(func(_peer: String, rows: Array) -> void:
+		_hub_thread_rows = rows.size()
+		for r in rows:
+			if String(r.get("text", "")).find("nhan rieng") != -1:
+				print("MPLOG chathub a2 dm history ok rows=", rows.size()))
+
+
+func _auto_chathub_process(_cs) -> bool:
+	_hub_hook()
+	var now := Time.get_ticks_msec()
+	if _hub_authed_at == 0:
+		_hub_authed_at = now
+	if _hub_quit_at == 0 and now - _hub_authed_at > 150000:
+		print("MPLOG chathub TIMEOUT role=", String(auto.get("mp-chathub", "")), " stage=", _hub_stage)
+		_hub_quit_at = now + 400
+	if _hub_quit_at > 0:
+		if now >= _hub_quit_at:
+			get_tree().quit()
+		return true
+	if now < _hub_next_poll:
+		return true
+	_hub_next_poll = now + 600
+	var role := String(auto.get("mp-chathub", ""))
+	match role:
+		"a":
+			match _hub_stage:
+				0:
+					world_chat("A chao the gioi [e:vui]")
+					print("MPLOG chathub a world sent")
+					_hub_stage = 1
+				1:
+					if _hub_world_from.has("HubB"):
+						print("MPLOG chathub a got world from b text=", String(_hub_world_from["HubB"]))
+						_hub_stage = 2
+				2:
+					if _hub_dm_from.has("HubB"):
+						print("MPLOG chathub a got dm from b text=", String(_hub_dm_from["HubB"]))
+						_hub_stage = 3
+				3:
+					if _hub_voice_world_from == "HubB":
+						print("MPLOG chathub a got voice world from b")
+						_hub_stage = 4
+				4:
+					if _hub_marquee_text.find("Tran dau") != -1:
+						print("MPLOG chathub a got marquee text=", _hub_marquee_text)
+						_hub_stage = 5
+				5:
+					_hub_last_error = ""
+					admin_grant_megaphone("HubA", 1)
+					_hub_stage = 6
+				6:
+					if _hub_last_error.find("Không có quyền") != -1:
+						print("MPLOG chathub a grant refused err=", _hub_last_error)
+						print("MPLOG chathub a done")
+						_hub_quit_at = now + 600
+		"b":
+			match _hub_stage:
+				0:
+					if _hub_world_from.has("HubA"):
+						var t := String(_hub_world_from["HubA"])
+						print("MPLOG chathub b got world from a emote=", t.find("[e:vui]") != -1, " text=", t)
+						world_chat("B chao lai [e:tim]")
+						print("MPLOG chathub b world sent")
+						_hub_stage = 1
+				1:
+					dm_send("HubA", "B nhan rieng cho A [e:cuoi]")
+					print("MPLOG chathub b dm sent")
+					_hub_stage = 2
+				2:
+					world_voice(VoiceRec.synth_wav(0.6), 0.6)
+					print("MPLOG chathub b voice sent")
+					_hub_stage = 3
+				3:
+					_hub_last_error = ""
+					use_megaphone("B bao som")
+					_hub_stage = 4
+				4:
+					if _hub_last_error.find("Loa thông báo") != -1:
+						print("MPLOG chathub b megaphone refused")
+						_hub_stage = 5
+				5:
+					if megaphone_count >= 2 and not _hub_grant_used:
+						_hub_grant_used = true
+						print("MPLOG chathub b megaphones n=", megaphone_count)
+						use_megaphone("B: Tran dau 20h tap trung!")
+						print("MPLOG chathub b megaphone used")
+					elif _hub_grant_used and megaphone_count == 1:
+						print("MPLOG chathub b megaphone left count=", megaphone_count)
+						print("MPLOG chathub b done")
+						_hub_quit_at = now + 600
+		"admin":
+			match _hub_stage:
+				0:
+					if now - _hub_authed_at > 5000:
+						admin_grant_megaphone("HubB", 2)
+						print("MPLOG chathub admin grant sent")
+						_hub_stage = 1
+				1:
+					if now - _hub_authed_at > 9000:
+						print("MPLOG chathub admin done")
+						_hub_quit_at = now + 600
+		"a2":
+			match _hub_stage:
+				0:
+					dm_open("HubB")
+					_hub_stage = 1
+				1:
+					if _hub_thread_rows >= 0:
+						print("MPLOG chathub a2 done")
+						_hub_quit_at = now + 600
+	return true
+
+
+## mp-shot-chathub captures (account HubShotA; the store is
+## seeded by tests/capture_chathub.sh). Modes: world (emote +
+## voice lines in the world tab), picker (emoticon grid
+## open), alliance (creates an alliance, posts, opens the
+## Liên minh tab), dm_list / dm_thread (seeded thread with
+## HubShotB), marquee (seeded with 2 megaphones).
+func _auto_chathub_shot(cs) -> void:
+	_hub_hook()
+	var now := Time.get_ticks_msec()
+	if _hub_authed_at == 0:
+		_hub_authed_at = now
+		return
+	var mode := String(auto.get("mp-shot-chathub", "world"))
+	var path := String(auto.get("mp-shot-file", ""))
+	match _hub_shot_stage:
+		0:
+			if now - _hub_authed_at > 1000:
+				_hub_shot_at = now
+				match mode:
+					"world", "picker":
+						world_chat("Chao ca nha [e:vui] toi moi vao [e:tim]")
+						world_voice(VoiceRec.synth_wav(0.8), 0.8)
+						_hub_shot_stage = 1
+					"alliance":
+						alliance_create("Hub Minh 17e", "H17", 2, 1, "open", "")
+						_hub_shot_stage = 5
+					"dm_list":
+						dm_request_list()
+						if cs != null and cs.has_method("open_chat_hub_shot"):
+							cs.open_chat_hub_shot("dm")
+						_hub_shot_stage = 3
+					"dm_thread":
+						dm_open("HubShotB")
+						_hub_shot_stage = 7
+					"marquee":
+						use_megaphone("Dai chien lien minh — dang ky da mo!")
+						_hub_shot_stage = 9
+		1:
+			if now - _hub_shot_at > 900:
+				if cs != null and cs.has_method("open_chat_hub_shot"):
+					cs.open_chat_hub_shot("world")
+				if mode == "picker" and cs != null and cs.chat_hub != null:
+					cs.chat_hub.shot_open_picker()
+				_hub_shot_at = now
+				_hub_shot_stage = 3
+		5:
+			if not alliance_mine.is_empty():
+				alliance_chat("Tap trung danh tran [e:like] [e:vui]")
+				_hub_shot_at = now
+				_hub_shot_stage = 6
+			elif now - _hub_shot_at > 15000:
+				_hub_shot_stage = 6
+		6:
+			if now - _hub_shot_at > 900:
+				if cs != null and cs.has_method("open_chat_hub_shot"):
+					cs.open_chat_hub_shot("alliance")
+				_hub_shot_at = now
+				_hub_shot_stage = 3
+		7:
+			if _hub_thread_rows >= 0 or now - _hub_shot_at > 8000:
+				if cs != null and cs.has_method("open_chat_hub_shot"):
+					cs.open_chat_hub_shot("dm")
+				if cs != null and cs.chat_hub != null:
+					cs.chat_hub.shot_open_thread("HubShotB")
+				_hub_shot_at = now
+				_hub_shot_stage = 3
+		9:
+			# Save MID-SCROLL: wait until the marquee text has
+			# travelled into the left half of the strip.
+			var want_x := get_viewport().get_visible_rect().size.x * 0.45
+			if (_mq_active and _mq_x < want_x) or now - _hub_shot_at > 12000:
+				_auto_shot_done = true
+				_save_shot(path)
+				print("MPLOG chathub marquee shot saved")
+				get_tree().quit()
+		3:
+			if now - _hub_shot_at > 1200:
+				_auto_shot_done = true
+				_save_shot(path)
+				print("MPLOG chathub shot saved mode=", mode)
 				get_tree().quit()

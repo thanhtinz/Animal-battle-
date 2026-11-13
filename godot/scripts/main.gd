@@ -3154,6 +3154,31 @@ func home_open_settings_panels(which: String = "hub") -> void:
 	settings_panels.open(which)
 
 
+var chat_hub = null
+
+
+func _ensure_chat_hub() -> void:
+	if chat_hub == null:
+		chat_hub = ChatHub.new()
+		chat_hub.setup(self)
+		add_child(chat_hub)
+
+
+## 17e: the ONE chat entry — every out-of-match chat surface
+## (Hệ thống / Thế giới / Liên minh / Chat riêng) lives in
+## the hub; the alliance screen's "Chat liên minh" lands on
+## the alliance tab of this same panel.
+func home_open_chat_hub(tab: String = "world") -> void:
+	_ensure_chat_hub()
+	chat_hub.open(tab)
+
+
+## Capture-harness entry (17e): open the chat hub on a tab.
+func open_chat_hub_shot(tab: String) -> void:
+	show_home()
+	home_open_chat_hub(tab)
+
+
 ## Capture-harness entry: open the profile screen.
 func open_profile_shot() -> void:
 	show_home()
@@ -3298,6 +3323,15 @@ func home_open_alliance() -> void:
 func open_alliance_shot() -> void:
 	show_home()
 	home_open_alliance()
+
+
+## Badge capture variant: the join view with the CREATE form
+## open (icon picker + colour row + live preview).
+func open_alliance_create_shot(icon := 1, color_idx := 0) -> void:
+	show_home()
+	home_open_alliance()
+	if alliance_screen != null and alliance_screen.has_method("shot_open_create"):
+		alliance_screen.shot_open_create(icon, color_idx)
 
 
 ## Home settings: relay address shared with the lobby.

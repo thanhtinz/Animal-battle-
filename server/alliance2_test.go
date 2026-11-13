@@ -341,16 +341,16 @@ func TestAllianceTagRules(t *testing.T) {
 	e := allySetup(t)
 	e.reg(t, "Lead", "Lead2", "Mem")
 	for _, bad := range []string{"", "A", "ABCDEF", "A B", "A-B", "A_B", "!!"} {
-		if _, err := e.as.Create("Lead", "Hội Tag", bad, "red", AllianceModeOpen, ""); err != ErrAllyBadTag {
+		if _, err := e.as.Create("Lead", "Hội Tag", bad, 1, 0, AllianceModeOpen, ""); err != ErrAllyBadTag {
 			t.Fatalf("tag %q: %v", bad, err)
 		}
 	}
-	a, err := e.as.Create("Lead", "Hội Tag", "HT99", "red", AllianceModeOpen, "")
+	a, err := e.as.Create("Lead", "Hội Tag", "HT99", 1, 0, AllianceModeOpen, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Uniqueness is case-insensitive.
-	if _, err := e.as.Create("Lead2", "Hội Khác", "ht99", "blue", AllianceModeOpen, ""); err != ErrAllyTagTaken {
+	if _, err := e.as.Create("Lead2", "Hội Khác", "ht99", 2, 1, AllianceModeOpen, ""); err != ErrAllyTagTaken {
 		t.Fatalf("duplicate tag: %v", err)
 	}
 	// TagOf resolves members; guests/strangers get "".
@@ -370,23 +370,23 @@ func TestAllianceTagRules(t *testing.T) {
 	b := e.mustCreate(t, "Lead2", "Hội Hai", AllianceModeOpen)
 	_ = b
 	allyJoin(t, e, a.ID, "Mem")
-	if err := e.as.UpdateSettings(a.ID, "Mem", "NEW1", "red", AllianceModeOpen, ""); err != ErrAllyNoPerm {
+	if err := e.as.UpdateSettings(a.ID, "Mem", "NEW1", 1, 0, AllianceModeOpen, ""); err != ErrAllyNoPerm {
 		t.Fatalf("member tag edit: %v", err)
 	}
-	if err := e.as.UpdateSettings(a.ID, "Lead", "hT99", "red", AllianceModeOpen, ""); err != nil {
+	if err := e.as.UpdateSettings(a.ID, "Lead", "hT99", 1, 0, AllianceModeOpen, ""); err != nil {
 		t.Fatalf("own tag re-case: %v", err)
 	}
-	if err := e.as.UpdateSettings(a.ID, "Lead", "T01", "red", AllianceModeOpen, ""); err != ErrAllyTagTaken {
+	if err := e.as.UpdateSettings(a.ID, "Lead", "T01", 1, 0, AllianceModeOpen, ""); err != ErrAllyTagTaken {
 		t.Fatalf("settings to taken tag (mustCreate T01): %v", err)
 	}
-	if err := e.as.UpdateSettings(a.ID, "Lead", "SL1", "red", AllianceModeOpen, ""); err != nil {
+	if err := e.as.UpdateSettings(a.ID, "Lead", "SL1", 1, 0, AllianceModeOpen, ""); err != nil {
 		t.Fatalf("settings tag: %v", err)
 	}
 	if got := e.as.TagOf("Lead"); got != "SL1" {
 		t.Fatalf("TagOf after settings = %q", got)
 	}
 	// Empty tag in settings keeps the current one.
-	if err := e.as.UpdateSettings(a.ID, "Lead", "", "blue", AllianceModeOpen, ""); err != nil {
+	if err := e.as.UpdateSettings(a.ID, "Lead", "", 2, 1, AllianceModeOpen, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.as.TagOf("Lead"); got != "SL1" {

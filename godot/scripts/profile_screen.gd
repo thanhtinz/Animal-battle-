@@ -49,9 +49,17 @@ const GOLD := Color(0.98, 0.8, 0.35)
 const GOLD_DEEP := Color(0.85, 0.6, 0.16)
 const PAPER := Color(0.96, 0.94, 0.88)
 const MUTED := Color(0.72, 0.76, 0.86)
+# Owner order 2026-11-12: profile stats + settings button use
+# Font Awesome (CSS-style) icons, not the drawn glass glyphs.
+const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
+const FA_GEAR := 0xF013
+const FA_KHANDA := 0xF66D
+const FA_TROPHY := 0xF091
+const FA_SHIELD := 0xF3ED
 
 var game = null
 
+var _fa_font: Font = null
 var _root: Control
 var _panel: PanelContainer
 var _body: VBoxContainer
@@ -326,6 +334,24 @@ func _fmt_num(n: int) -> String:
 	return ("-" if neg else "") + digits + out
 
 
+## A Font Awesome glyph as a tintable Label (same pattern as
+## alliance_screen._fa / hud._fa).
+func _fa(cp: int, px: int, col: Color = PAPER) -> Label:
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	var l := Label.new()
+	l.text = String.chr(cp)
+	l.add_theme_font_override("font", _fa_font)
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.custom_minimum_size = Vector2(px + 6, px + 6)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
 func _icon_button(kind: String, tip: String) -> Dictionary:
 	var holder := Control.new()
 	holder.custom_minimum_size = Vector2(40, 40)
@@ -335,12 +361,13 @@ func _icon_button(kind: String, tip: String) -> Dictionary:
 	panel.add_theme_stylebox_override("panel",
 			_sb(Color(0.03, 0.04, 0.08, 0.6), 20, Color(1, 0.85, 0.4, 0.4), 1))
 	holder.add_child(panel)
-	var ic := GlassIcon.new()
-	ic.kind = kind
-	ic.custom_minimum_size = Vector2(22, 22)
-	ic.size = Vector2(22, 22)
-	ic.position = Vector2(9, 9)
-	holder.add_child(ic)
+	# Only caller is the settings gear (owner order 2026-11-12:
+	# FA icon, not the drawn glyph).
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cc.add_child(_fa(FA_GEAR, 18, PAPER))
+	holder.add_child(cc)
 	var btn := Button.new()
 	btn.flat = true
 	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -486,23 +513,8 @@ func _refresh() -> void:
 	var tv := _label(title_text, 16)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(tv)
-	var pen_holder := Control.new()
-	pen_holder.custom_minimum_size = Vector2(26, 26)
-	var pen := MiniGlyph.new()
-	pen.kind = "pencil"
-	pen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pen.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pen_holder.add_child(pen)
-	var pen_btn := Button.new()
-	pen_btn.flat = true
-	pen_btn.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pen_btn.tooltip_text = "Đổi danh hiệu"
-	# 17d: the pen opens the Danh hiệu settings panel.
-	pen_btn.pressed.connect(func() -> void:
-		if game != null and game.has_method("home_open_settings_panels"):
-			game.home_open_settings_panels("titles"))
-	pen_holder.add_child(pen_btn)
-	title_row.add_child(pen_holder)
+	# Owner order 2026-11-12: the pencil shortcut is REMOVED —
+	# Danh hiệu is changed from the settings hub only.
 	_body.add_child(title_row)
 
 	# Liên minh row (17a): the account's real alliance from the
@@ -662,10 +674,14 @@ func _stat_cell(icon_kind: String, value: String, caption: String) -> VBoxContai
 	vb.add_theme_constant_override("separation", 2)
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var center := CenterContainer.new()
-	var ic := GlassIcon.new()
-	ic.kind = icon_kind
-	ic.custom_minimum_size = Vector2(26, 26)
-	center.add_child(ic)
+	# Owner order 2026-11-12: FA icons for the stats row
+	# (khanda = the vendored font's sword; it has no "swords").
+	var cp := FA_KHANDA
+	if icon_kind == "trophy":
+		cp = FA_TROPHY
+	elif icon_kind == "emblem":
+		cp = FA_SHIELD
+	center.add_child(_fa(cp, 20, GOLD))
 	vb.add_child(center)
 	var v := _label(value, 20, Color.WHITE)
 	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

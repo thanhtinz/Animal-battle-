@@ -1,9 +1,10 @@
 // settings_test.go — 17d profile settings: rename cooldown
 // (incl. the first-set exemption + the rejection date),
-// avatar catalogue validation + migration, frame ownership
-// computation from fixtures (incl. the champion-reign
-// frame_12 grant/revoke through the WarChampOf seam), equip
-// persistence, and the titles catalogue with thời hạn.
+// avatar catalogue validation + migration, the GRANT model
+// for frames/titles/bubbles (rule change 2026-11-12:
+// possession = admin grants only; achievement data and the
+// reign seam grant nothing), equip persistence + fallback,
+// and the titles catalogue with thời hạn.
 package main
 
 import (
@@ -126,143 +127,149 @@ func ownedSet(p Profile) map[string]bool {
 	return out
 }
 
-func TestFrameOwnershipFixtures(t *testing.T) {
+func TestGrantModelOwnership(t *testing.T) {
 	ac, _ := testAccounts(t)
 	register17d(t, ac, "owner")
 	prof := func() Profile {
 		a, _ := ac.store.GetAccount("owner")
 		return ac.profileOf(a)
 	}
-	// Fresh account (Lv 1, 0 wins): no frames.
-	if got := prof().OwnedFrames; len(got) != 0 {
-		t.Fatalf("fresh account frames = %v", got)
-	}
-	// Level 5 needs XP 2000: XPFor = 10m + 20w; 200 matches
-	// 0 wins = 2000 XP exactly -> frame_01 only.
-	seedStats(t, ac, "owner", 200, 0)
-	if got := ownedSet(prof()); !got["frame_01"] || len(got) != 1 {
-		t.Fatalf("Lv5 frames = %v", got)
-	}
-	// 50 wins -> frame_05 joins (wins also add XP: 200m/50w
-	// = 3000 XP = still Lv 5 band? LevelForXP(3000): L=6
-	// needs 3000 -> Lv 6; frame_03 needs Lv 15, not yet).
-	seedStats(t, ac, "owner", 200, 50)
-	got := ownedSet(prof())
-	if !got["frame_05"] || got["frame_03"] {
-		t.Fatalf("50-win frames = %v", got)
-	}
-	// 150 wins -> frame_11 too.
+	// Rule change 2026-11-12: achievement data grants
+	// NOTHING anymore — max out every old source at once
+	// (Lv via stats, 150 wins, banked champion title, Hầu
+	// Tước peak, alliance Lv 5 seam) and the account still
+	// owns no frame, no title, no bubble beyond Mặc định.
 	seedStats(t, ac, "owner", 400, 150)
-	got = ownedSet(prof())
-	if !got["frame_11"] {
-		t.Fatalf("150-win frames = %v", got)
-	}
-	// Tournament champion title -> frame_07.
 	a, _ := ac.store.GetAccount("owner")
 	a.Titles = []string{TitleChampion}
-	ac.store.PutAccount(a)
-	if got := ownedSet(prof()); !got["frame_07"] {
-		t.Fatalf("champion frames = %v", got)
-	}
-	// Peak tier Hầu Tước via season history -> frame_06.
-	a, _ = ac.store.GetAccount("owner")
 	a.History = []SeasonRecord{{FinalTier: TierHauTuoc}}
 	ac.store.PutAccount(a)
-	if got := ownedSet(prof()); !got["frame_06"] {
-		t.Fatalf("peak-tier frames = %v", got)
+	ac.AllyLevelOf = func(user string) int { return 5 }
+	if got := prof().OwnedFrames; len(got) != 0 {
+		t.Fatalf("achievement-stacked account frames = %v, want none", got)
 	}
-	// frame_09 stays locked: its cumulative counter does not
-	// exist yet (honest unlock text).
-	if got["frame_09"] {
-		t.Fatal("frame_09 must stay locked until its counter exists")
+	if _, err := ac.SetFrame("owner", "frame_01"); !errors.Is(err, ErrFrameNotOwned) {
+		t.Fatalf("ungranted frame equip err = %v", err)
 	}
-	if !strings.Contains(FrameUnlockText["frame_09"], "chưa mở") {
-		t.Fatalf("frame_09 unlock text must be honest: %q", FrameUnlockText["frame_09"])
+	if _, err := ac.SetDisplayTitle("owner", TitleChampion); !errors.Is(err, ErrTitleNotOwned) {
+		t.Fatalf("banked-but-ungranted title equip err = %v", err)
 	}
-}
-
-func TestFrameAllianceLevelSeam(t *testing.T) {
-	ac, _ := testAccounts(t)
-	register17d(t, ac, "member")
-	lvl := 0
-	ac.AllyLevelOf = func(user string) int { return lvl }
-	frame := func(id string) bool {
-		a, _ := ac.store.GetAccount("member")
-		for _, f := range ac.profileOf(a).OwnedFrames {
-			if f == id {
-				return true
-			}
+	if _, err := ac.SetBubbleStyle("owner", BubbleRank); !errors.Is(err, ErrBubbleNotOwned) {
+		t.Fatalf("ungranted bubble equip err = %v", err)
+	}
+	// Grants confer possession, one family at a time.
+	name, fresh, err := ac.GrantItem("owner", "frame", "frame_01")
+	if err != nil || !fresh || !strings.Contains(name, "Dây Dâu Tây") {
+		t.Fatalf("grant frame: name=%q fresh=%v err=%v", name, fresh, err)
+	}
+	if got := ownedSet(prof()); !got["frame_01"] || len(got) != 1 {
+		t.Fatalf("frames after grant = %v", got)
+	}
+	if p, err := ac.SetFrame("owner", "frame_01"); err != nil || p.FrameID != "frame_01" {
+		t.Fatalf("equip granted frame: %v frame=%q", err, p.FrameID)
+	}
+	// A re-grant is idempotent: no duplicate, no new letter.
+	unreadBefore := prof().UnreadMail
+	if _, fresh, err := ac.GrantItem("owner", "frame", "frame_01"); err != nil || fresh {
+		t.Fatalf("re-grant: fresh=%v err=%v", fresh, err)
+	}
+	if prof().UnreadMail != unreadBefore {
+		t.Fatal("re-grant must not file a second letter")
+	}
+	if _, _, err := ac.GrantItem("owner", "title", TitleIDChampion); err != nil {
+		t.Fatalf("grant title: %v", err)
+	}
+	if p, err := ac.SetDisplayTitle("owner", TitleChampion); err != nil || p.DisplayTitle != TitleChampion {
+		t.Fatalf("equip granted title: %v title=%q", err, p.DisplayTitle)
+	}
+	if _, _, err := ac.GrantItem("owner", "bubble", BubbleRank); err != nil {
+		t.Fatalf("grant bubble: %v", err)
+	}
+	if p, err := ac.SetBubbleStyle("owner", BubbleRank); err != nil || p.BubbleStyle != BubbleRank {
+		t.Fatalf("equip granted bubble: %v bubble=%q", err, p.BubbleStyle)
+	}
+	// Bad grants are rejected: unknown frame, the free
+	// default bubble, unknown title id, unknown kind, ghost.
+	for _, bad := range [][2]string{
+		{"frame", "frame_99"}, {"bubble", BubbleDefault},
+		{"title", "king"}, {"skin", "frame_01"},
+	} {
+		if _, _, err := ac.GrantItem("owner", bad[0], bad[1]); !errors.Is(err, ErrBadGrantItem) {
+			t.Fatalf("grant %v err = %v, want ErrBadGrantItem", bad, err)
 		}
-		return false
 	}
-	if frame("frame_04") || frame("frame_10") {
-		t.Fatal("no alliance: frames 04/10 must be locked")
+	if _, _, err := ac.GrantItem("ghost", "frame", "frame_01"); !errors.Is(err, ErrBadCredentials) {
+		t.Fatalf("grant to ghost err = %v", err)
 	}
-	lvl = 3
-	if !frame("frame_04") || frame("frame_10") {
-		t.Fatal("alliance Lv 3: frame_04 owned, frame_10 locked")
+	// Fallback on read: strip the grant directly in the
+	// store (the no-longer-granted state) — the profile
+	// falls back to no frame while the stored equip value
+	// itself survives untouched.
+	a, _ = ac.store.GetAccount("owner")
+	a.GrantedFrames = nil
+	ac.store.PutAccount(a)
+	if p := prof(); p.FrameID != "" {
+		t.Fatalf("ungranted equipped frame must fall back, got %q", p.FrameID)
 	}
-	lvl = 5
-	if !frame("frame_10") {
-		t.Fatal("alliance Lv 5: frame_10 owned")
+	a, _ = ac.store.GetAccount("owner")
+	if a.FrameID != "frame_01" {
+		t.Fatalf("stored frame must survive the fallback, got %q", a.FrameID)
+	}
+	// Every frame's obtain note is the event wording.
+	for _, id := range FrameIDs {
+		if FrameUnlockText[id] != "Nhận qua sự kiện" {
+			t.Fatalf("frame %s unlock text = %q", id, FrameUnlockText[id])
+		}
 	}
 }
 
-func TestWarChampSeamGrantsAndRevoke(t *testing.T) {
+func TestWarSeamDoesNotGrantItems(t *testing.T) {
 	ac, _ := testAccounts(t)
 	register17d(t, ac, "champ")
-	reign := false
-	ac.WarChampOf = func(user string) bool { return reign }
-	// No reign: nothing war-related is owned, equips rejected.
+	// The reign seam stays ONLY as the automatic chat
+	// suffix (§7.1 exception) — even with the reign ON it
+	// grants no item: frame_12, the war bubble and the war
+	// title all stay unowned until granted.
+	ac.WarChampOf = func(user string) bool { return true }
+	a, _ := ac.store.GetAccount("champ")
+	p := ac.profileOf(a)
+	for _, f := range p.OwnedFrames {
+		if f == "frame_12" {
+			t.Fatal("reign must not grant frame_12 anymore")
+		}
+	}
+	for _, r := range p.TitleRows {
+		if r.ID == TitleIDWarChampion && r.Owned {
+			t.Fatal("reign must not grant the war title item anymore")
+		}
+	}
 	if _, err := ac.SetFrame("champ", "frame_12"); !errors.Is(err, ErrFrameNotOwned) {
-		t.Fatalf("frame_12 without reign err = %v", err)
+		t.Fatalf("frame_12 under reign err = %v", err)
 	}
 	if _, err := ac.SetBubbleStyle("champ", BubbleWarChamp); !errors.Is(err, ErrBubbleNotOwned) {
-		t.Fatalf("champion bubble without reign err = %v", err)
+		t.Fatalf("war bubble under reign err = %v", err)
 	}
 	if _, err := ac.SetDisplayTitle("champ", TitleWarChampion); !errors.Is(err, ErrTitleNotOwned) {
-		t.Fatalf("war title without reign err = %v", err)
+		t.Fatalf("war title under reign err = %v", err)
 	}
-	// Reign on: frame_12 + war title row + champion bubble.
-	reign = true
-	p, err := ac.SetFrame("champ", "frame_12")
-	if err != nil {
-		t.Fatalf("frame_12 with reign: %v", err)
+	// Granted, they equip normally (reign state irrelevant).
+	if _, _, err := ac.GrantItem("champ", "frame", "frame_12"); err != nil {
+		t.Fatal(err)
 	}
-	if p.FrameID != "frame_12" {
-		t.Fatalf("equipped frame = %q", p.FrameID)
+	if _, _, err := ac.GrantItem("champ", "title", TitleIDWarChampion); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := ac.SetBubbleStyle("champ", BubbleWarChamp); err != nil {
-		t.Fatalf("champion bubble with reign: %v", err)
+	if _, _, err := ac.GrantItem("champ", "bubble", BubbleWarChamp); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := ac.SetDisplayTitle("champ", TitleWarChampion); err != nil {
-		t.Fatalf("war title with reign: %v", err)
+	if p, err := ac.SetFrame("champ", "frame_12"); err != nil || p.FrameID != "frame_12" {
+		t.Fatalf("equip granted frame_12: %v %q", err, p.FrameID)
 	}
-	rows := map[string]TitleRow{}
-	for _, r := range p.TitleRows {
-		rows[r.ID] = r
+	if p, err := ac.SetDisplayTitle("champ", TitleWarChampion); err != nil || p.DisplayTitle != TitleWarChampion {
+		t.Fatalf("equip granted war title: %v %q", err, p.DisplayTitle)
 	}
-	// (p predates the title equip; re-read for rows.)
-	a, _ := ac.store.GetAccount("champ")
-	for _, r := range ac.profileOf(a).TitleRows {
-		rows[r.ID] = r
-	}
-	if !rows[TitleIDWarChampion].Owned ||
-		rows[TitleIDWarChampion].Expiry != "Khi đang giữ ngôi vô địch Đại chiến" ||
-		!rows[TitleIDWarChampion].Equipped {
-		t.Fatalf("war title row = %+v", rows[TitleIDWarChampion])
-	}
-	// Reign ends: effective frame/bubble/display-title all
-	// fall back WITHOUT touching the stored values.
-	reign = false
-	a, _ = ac.store.GetAccount("champ")
-	p = ac.profileOf(a)
-	if p.FrameID != "" || p.BubbleStyle != BubbleDefault || p.DisplayTitle != "" {
-		t.Fatalf("after reign: frame=%q bubble=%q title=%q, want defaults",
-			p.FrameID, p.BubbleStyle, p.DisplayTitle)
-	}
-	if a.FrameID != "frame_12" {
-		t.Fatalf("stored frame must survive a lapsed reign, got %q", a.FrameID)
+	if p, err := ac.SetBubbleStyle("champ", BubbleWarChamp); err != nil || p.BubbleStyle != BubbleWarChamp {
+		t.Fatalf("equip granted war bubble: %v %q", err, p.BubbleStyle)
 	}
 }
 
@@ -274,7 +281,9 @@ func TestEquipPersistenceAcrossReload(t *testing.T) {
 	}
 	ac := NewAccounts(store)
 	register17d(t, ac, "keeper")
-	seedStats(t, ac, "keeper", 200, 0) // Lv 5 -> frame_01
+	if _, _, err := ac.GrantItem("keeper", "frame", "frame_01"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ac.SetFrame("keeper", "frame_01"); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +293,7 @@ func TestEquipPersistenceAcrossReload(t *testing.T) {
 	if _, err := ac.SetBubbleStyle("keeper", BubbleDefault); err != nil {
 		t.Fatal(err)
 	}
-	// Reload from disk: equips survive.
+	// Reload from disk: equips AND the grant list survive.
 	store2, err := NewFileStore(dir + "/accounts.json")
 	if err != nil {
 		t.Fatal(err)
@@ -298,9 +307,12 @@ func TestEquipPersistenceAcrossReload(t *testing.T) {
 	if p.FrameID != "frame_01" || a.AvatarID != "art:07" {
 		t.Fatalf("reloaded equips: frame=%q avatar=%q", p.FrameID, a.AvatarID)
 	}
-	// Unowned + unknown equips are rejected.
+	if len(a.GrantedFrames) != 1 || a.GrantedFrames[0] != "frame_01" {
+		t.Fatalf("reloaded grants = %v", a.GrantedFrames)
+	}
+	// Ungranted + unknown equips are rejected.
 	if _, err := ac.SetFrame("keeper", "frame_06"); !errors.Is(err, ErrFrameNotOwned) {
-		t.Fatalf("unowned frame err = %v", err)
+		t.Fatalf("ungranted frame err = %v", err)
 	}
 	if _, err := ac.SetFrame("keeper", "frame_99"); !errors.Is(err, ErrBadFrame) {
 		t.Fatalf("unknown frame err = %v", err)
@@ -330,13 +342,28 @@ func TestTitlesCatalogue(t *testing.T) {
 			t.Fatalf("row missing how/expiry: %+v", r)
 		}
 	}
-	// Earn the tournament title: row lights up, Vĩnh viễn,
-	// equippable, and shows on the profile.
+	// Banking the tournament title (15h) is UNTOUCHED as a
+	// record — but it no longer confers the cosmetic: the
+	// row stays dark and the equip is refused until the
+	// title arrives as a grant (event reward hand-out).
 	a.Titles = []string{TitleChampion}
 	ac.store.PutAccount(a)
+	p = ac.profileOf(a)
+	for _, r := range p.TitleRows {
+		if r.ID == TitleIDChampion && r.Owned {
+			t.Fatal("banked title must not light the row without a grant")
+		}
+	}
+	if _, err := ac.SetDisplayTitle("titled", TitleChampion); !errors.Is(err, ErrTitleNotOwned) {
+		t.Fatalf("banked-only title equip err = %v", err)
+	}
+	// Granted: the row lights up, Vĩnh viễn, equippable.
+	if _, _, err := ac.GrantItem("titled", "title", TitleIDChampion); err != nil {
+		t.Fatal(err)
+	}
 	p, err := ac.SetDisplayTitle("titled", TitleChampion)
 	if err != nil {
-		t.Fatalf("equip champion title: %v", err)
+		t.Fatalf("equip granted champion title: %v", err)
 	}
 	if p.DisplayTitle != TitleChampion {
 		t.Fatalf("display title = %q", p.DisplayTitle)
@@ -361,13 +388,20 @@ func TestBubbleRankStyleOwnership(t *testing.T) {
 	if _, err := ac.SetBubbleStyle("ranked", BubbleRank); !errors.Is(err, ErrBubbleNotOwned) {
 		t.Fatalf("rank bubble err = %v", err)
 	}
-	// Peak tier Kỵ Sĩ via history unlocks it.
+	// A Kỵ Sĩ peak no longer unlocks it (grant model).
 	a, _ := ac.store.GetAccount("ranked")
 	a.History = []SeasonRecord{{FinalTier: TierKySi}}
 	ac.store.PutAccount(a)
+	if _, err := ac.SetBubbleStyle("ranked", BubbleRank); !errors.Is(err, ErrBubbleNotOwned) {
+		t.Fatalf("rank bubble after peak tier err = %v, want still unowned", err)
+	}
+	// Granted, it equips and resolves.
+	if _, _, err := ac.GrantItem("ranked", "bubble", BubbleRank); err != nil {
+		t.Fatal(err)
+	}
 	p, err := ac.SetBubbleStyle("ranked", BubbleRank)
 	if err != nil {
-		t.Fatalf("rank bubble with peak tier: %v", err)
+		t.Fatalf("rank bubble after grant: %v", err)
 	}
 	if p.BubbleStyle != BubbleRank || ac.EquippedBubbleOf("ranked") != BubbleRank {
 		t.Fatalf("bubble = %q", p.BubbleStyle)

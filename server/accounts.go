@@ -147,6 +147,22 @@ type Account struct {
 	// display-name RENAME (17d cooldown). The first name set
 	// never stamps it; 0 = never renamed.
 	LastRenameAt int64 `json:"last_rename_at,omitempty"`
+	// Megaphones (17e) is the Loa thông báo consumable count.
+	// It only ever grows through an admin grant and shrinks
+	// one per marquee broadcast — there is no other source.
+	Megaphones int `json:"megaphones,omitempty"`
+	// Granted cosmetics (17d rule change, 2026-11-12): the
+	// account's ADMIN-GRANTED item lists for the three item
+	// families — avatar frames, display titles, chat-bubble
+	// styles. Possession of these items comes ONLY from a
+	// grant recorded here (in practice: event rewards handed
+	// out by the game team); achievement data (level, rank,
+	// wins, reign) no longer grants them. Avatars stay free,
+	// "no frame"/no title/the Mặc định bubble are absences,
+	// not items, and stay free too.
+	GrantedFrames  []string `json:"granted_frames,omitempty"`
+	GrantedTitles  []string `json:"granted_titles,omitempty"`
+	GrantedBubbles []string `json:"granted_bubbles,omitempty"`
 	// MatchHistory is the rolling record of this account's latest
 	// ranked results (stage 13g home lobby "Lịch Sử"), oldest
 	// first, capped at MatchHistoryCap entries.
@@ -338,6 +354,10 @@ type Profile struct {
 	OwnedBubbles []string   `json:"owned_bubbles"`
 	TitleRows    []TitleRow `json:"title_rows"`
 	RenameNextAt int64      `json:"rename_next_at"`
+	// Megaphones (17e) is the account's Loa thông báo
+	// (megaphone) consumable count: admin-granted only,
+	// spent one per world marquee broadcast.
+	Megaphones int `json:"megaphones"`
 	// TournHistory is the account's tournament podium record
 	// (15h), oldest first.
 	TournHistory []TournFinish `json:"tourn_history,omitempty"`
@@ -493,7 +513,8 @@ func (a *Account) profile() Profile {
 		OwnedSkins: owned, ActiveSkin: EffectiveActiveSkin(a),
 		ID: a.ID, Level: level, XP: xp, XPInto: into, XPForNext: forNext,
 		Credit: EffectiveCredit(a), SeasonStars: a.SeasonStars,
-		Titles: a.Titles, TournHistory: a.TournamentHistory}
+		Titles: a.Titles, TournHistory: a.TournamentHistory,
+		Megaphones: a.Megaphones}
 	if n := len(a.History); n > 0 {
 		last := a.History[n-1]
 		final := RankState{Tier: last.FinalTier, Division: last.FinalDivision,
@@ -573,6 +594,11 @@ type Store interface {
 	PutAlliance(a *Alliance) error
 	DeleteAlliance(id string) error
 	Alliances() []*Alliance
+	// DMThreads are the 17e private-chat threads, keyed by
+	// the sorted username pair (see DMKey).
+	GetDMThread(key string) (*DMThread, bool)
+	PutDMThread(t *DMThread) error
+	DMThreads() []*DMThread
 }
 
 type storeData struct {
@@ -581,6 +607,7 @@ type storeData struct {
 	Meta        map[string]string      `json:"meta,omitempty"`
 	Tournaments map[string]*Tournament `json:"tournaments,omitempty"`
 	Alliances   map[string]*Alliance   `json:"alliances,omitempty"`
+	DMs         map[string]*DMThread   `json:"dms,omitempty"`
 }
 
 type FileStore struct {
@@ -599,6 +626,7 @@ func NewFileStore(path string) (*FileStore, error) {
 	fs.data.Meta = make(map[string]string)
 	fs.data.Tournaments = make(map[string]*Tournament)
 	fs.data.Alliances = make(map[string]*Alliance)
+	fs.data.DMs = make(map[string]*DMThread)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -624,6 +652,9 @@ func NewFileStore(path string) (*FileStore, error) {
 		}
 		if fs.data.Alliances == nil {
 			fs.data.Alliances = make(map[string]*Alliance)
+		}
+		if fs.data.DMs == nil {
+			fs.data.DMs = make(map[string]*DMThread)
 		}
 	}
 	return fs, nil
@@ -782,6 +813,49 @@ func (fs *FileStore) Alliances() []*Alliance {
 	out := make([]*Alliance, 0, len(fs.data.Alliances))
 	for _, a := range fs.data.Alliances {
 		out = append(out, copyAlliance(a))
+	}
+	return out
+}
+
+func copyDMThread(t *DMThread) *DMThread {
+	if t == nil {
+		return nil
+	}
+	out := *t
+	out.Msgs = append([]DMMsg(nil), t.Msgs...)
+	out.Unread = make(map[string]int, len(t.Unread))
+	for k, v := range t.Unread {
+		out.Unread[k] = v
+	}
+	return &out
+}
+
+func (fs *FileStore) GetDMThread(key string) (*DMThread, bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	t, ok := fs.data.DMs[key]
+	if !ok {
+		return nil, false
+	}
+	return copyDMThread(t), true
+}
+
+func (fs *FileStore) PutDMThread(t *DMThread) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.data.DMs == nil {
+		fs.data.DMs = make(map[string]*DMThread)
+	}
+	fs.data.DMs[t.Key] = copyDMThread(t)
+	return fs.flushLocked()
+}
+
+func (fs *FileStore) DMThreads() []*DMThread {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	out := make([]*DMThread, 0, len(fs.data.DMs))
+	for _, t := range fs.data.DMs {
+		out = append(out, copyDMThread(t))
 	}
 	return out
 }

@@ -617,7 +617,7 @@ func add_chat_line(sender_name: String, text: String, scope: String, slot: int =
 	var head := "[color=%s]%s[/color]" % [col.to_html(), _bb_escape(sender_name)]
 	if scope == "team":
 		head = "[color=#8fa3c8](Đội) [/color]" + head
-	_chat_log.text += head + ": " + _bb_escape(text) + "\n"
+	_chat_log.text += head + ": " + _bb_escape(Emotes.strip_tokens(text)) + "\n"
 	if _chat_rows == null:
 		return
 	# 17d: lines also wear the sender's equipped bubble style
@@ -626,10 +626,17 @@ func add_chat_line(sender_name: String, text: String, scope: String, slot: int =
 	if key != _chat_last_key or _chat_last_body == null:
 		_chat_last_key = key
 		_chat_last_body = _new_chat_block(sender_name, scope, col, bubble_style)
-	var l := _label(text, 14, TXT)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_chat_last_body.add_child(l)
+	# 17e: emoticon tokens render as inline images; plain
+	# lines keep the cheap Label path.
+	if Emotes.has_token(text):
+		var rich := Emotes.make_rich(text, 14, TXT)
+		rich.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_chat_last_body.add_child(rich)
+	else:
+		var l := _label(text, 14, TXT)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_chat_last_body.add_child(l)
 	# Circular trim: keep at most CHAT_MAX_BLOCKS blocks.
 	while _chat_rows.get_child_count() > CHAT_MAX_BLOCKS:
 		var old := _chat_rows.get_child(0)

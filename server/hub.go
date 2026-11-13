@@ -191,11 +191,20 @@ type Hub struct {
 	// room (alliance chat + alliance state pushes). A session
 	// registers on auth under a unique id and unregisters
 	// exactly itself on teardown / logout / re-auth.
-	userMu       sync.Mutex
-	userConns    map[string]map[uint64]sender
-	userSeq      uint64
-	allyChatWin  map[string][]time.Time // per-user alliance-chat rate window; guarded by userMu
-	OnRoomClosed func(code string)      // e.g. reap the room's referee process
+	userMu      sync.Mutex
+	userConns   map[string]map[uint64]sender
+	userSeq     uint64
+	allyChatWin map[string][]time.Time // per-user alliance-chat rate window; guarded by userMu
+	// Chat hub (17e; guarded by userMu like the other lobby
+	// windows): the world/DM text budget, the voice budget,
+	// the DM service, the configured admin set, and the
+	// marquee sequence (dedupe key on clients).
+	worldChatWin map[string][]time.Time
+	voiceWin     map[string][]time.Time
+	dms          *DMs
+	admins       map[string]bool
+	marqueeSeq   int64
+	OnRoomClosed func(code string) // e.g. reap the room's referee process
 	queue        []*queueEntry
 	nqueue       []*queueEntry    // normal (unranked) queue, 13t
 	mmNow        func() time.Time // test seam for queue timing
@@ -216,8 +225,11 @@ func (h *Hub) nextSeqLocked() int64 {
 func NewHub() *Hub {
 	return &Hub{rooms: make(map[string]*Room), mmNow: time.Now,
 		online: make(map[string]int), tournRooms: make(map[string]string),
-		userConns:   make(map[string]map[uint64]sender),
-		allyChatWin: make(map[string][]time.Time)}
+		userConns:    make(map[string]map[uint64]sender),
+		allyChatWin:  make(map[string][]time.Time),
+		worldChatWin: make(map[string][]time.Time),
+		voiceWin:     make(map[string][]time.Time),
+		admins:       make(map[string]bool)}
 }
 
 // RoomSlotUsers returns slot -> account username for a room
@@ -378,6 +390,7 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 	if rs := []rune(text); len(rs) > ChatMaxLen {
 		text = string(rs[:ChatMaxLen])
 	}
+	text = SanitizeEmotes(text) // 17e: emoticon token validation
 	tag := ""
 	if h.allis != nil {
 		tag = h.allis.TagOf(user)
@@ -396,6 +409,9 @@ func (h *Hub) RelayAllianceChat(user, name, allyID string, memberUsers []string,
 	// chat lines too (§7.2B).
 	if h.acc != nil && user != "" {
 		msg["bubble"] = h.acc.EquippedBubbleOf(user)
+		if h.acc.warChampOf(user) {
+			msg["war_champ"] = true
+		}
 	}
 	h.SendToUsers(memberUsers, msg)
 }
@@ -1678,6 +1694,7 @@ func (h *Hub) RelayChatEx(code string, slot int, scope, text string, targets []i
 	if rs := []rune(text); len(rs) > ChatMaxLen {
 		text = string(rs[:ChatMaxLen])
 	}
+	text = SanitizeEmotes(text) // 17e: emoticon token validation
 	msg := map[string]any{
 		"t": "chat", "scope": scope, "from": slot, "name": p.Name, "text": text,
 	}
@@ -1693,6 +1710,12 @@ func (h *Hub) RelayChatEx(code string, slot int, scope, text string, targets []i
 	// only — drives the in-match speech bubble + line style.
 	if h.acc != nil && p.User != "" {
 		msg["bubble"] = h.acc.EquippedBubbleOf(p.User)
+		// Spec §7.1 (17e wiring): the reigning war champion's
+		// <Liên minh vô địch> suffix. The seam is nil until
+		// the war system exists, so this never fires yet.
+		if h.acc.warChampOf(p.User) {
+			msg["war_champ"] = true
+		}
 	}
 	if scope == "team" {
 		if r.Diplomacy && len(targets) > 0 {

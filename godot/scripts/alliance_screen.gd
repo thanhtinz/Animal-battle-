@@ -41,17 +41,10 @@ const PANEL_LINE := Color(0.30, 0.34, 0.46)
 const FIELD_BG := Color(0.04, 0.05, 0.10)
 const BTN_BG := Color(0.13, 0.16, 0.24)
 
-# Badge colour set (ids must match the server's AllianceBadges).
-const BADGE_ORDER: Array = ["red", "blue", "teal", "green", "gold", "purple"]
-const BADGE_COLORS := {
-	"red": Color(0.45, 0.08, 0.10), "blue": Color(0.10, 0.25, 0.55),
-	"teal": Color(0.05, 0.35, 0.38), "green": Color(0.10, 0.32, 0.12),
-	"gold": Color(0.45, 0.35, 0.05), "purple": Color(0.25, 0.12, 0.42),
-}
-const BADGE_NAMES := {
-	"red": "Đỏ", "blue": "Xanh dương", "teal": "Xanh ngọc",
-	"green": "Xanh lá", "gold": "Vàng", "purple": "Tím",
-}
+# Badge model (17e addendum): icon 1..10 + colour 0..7 (slot
+# colours) — see scripts/ally_badge.gd (AllyBadge) and the
+# server's validBadgeIconColor. The 17a shield-colour strings
+# are gone from the wire.
 const ROLE_NAMES := {"leader": "Hội trưởng", "deputy": "Phó", "member": "Thành viên"}
 
 var game = null # Main (duck-typed)
@@ -63,6 +56,7 @@ var _tab := "members"
 var _sig := "\u0001" # payload signature: rebuild only on change
 var _search_text := ""
 var _create_open := false
+var _create_preset: Dictionary = {}
 var _invite_open := false
 var _settings_open := false
 var _notice_open := false # 17b notice editor card
@@ -76,32 +70,6 @@ var _chat_scroll: ScrollContainer = null
 var _chat_input: LineEdit = null
 var _fa_font: Font = null
 var _status_msg := "" # last action/error line; reapplied after every rebuild
-
-
-class ShieldBadge:
-	extends Control
-	var fill: Color = Color(0.45, 0.08, 0.1)
-
-	func _draw() -> void:
-		var w := size.x
-		var h := size.y
-		var pts := PackedVector2Array([
-				Vector2(0.07 * w, 0.04 * h), Vector2(0.93 * w, 0.04 * h),
-				Vector2(0.93 * w, 0.46 * h), Vector2(0.80 * w, 0.72 * h),
-				Vector2(0.5 * w, 0.97 * h), Vector2(0.20 * w, 0.72 * h),
-				Vector2(0.07 * w, 0.46 * h)])
-		draw_colored_polygon(pts, fill)
-		var loop := PackedVector2Array(pts)
-		loop.append(pts[0])
-		draw_polyline(loop, Color(0.98, 0.8, 0.35, 0.9), 2.5)
-		var c := Vector2(0.5 * w, 0.40 * h)
-		var r := 0.19 * minf(w, h)
-		var star := PackedVector2Array()
-		for i in 10:
-			var ang := -PI * 0.5 + i * PI / 5.0
-			var rad := r if i % 2 == 0 else r * 0.45
-			star.append(c + Vector2(cos(ang), sin(ang)) * rad)
-		draw_colored_polygon(star, Color(1.0, 0.82, 0.3))
 
 
 func setup(g) -> void:
@@ -386,13 +354,102 @@ func _section(text: String, extra := "") -> HBoxContainer:
 	return hb
 
 
-func _badge(badge_id: String, px: int) -> ShieldBadge:
-	var b := ShieldBadge.new()
-	b.fill = BADGE_COLORS.get(badge_id, BADGE_COLORS["red"])
-	b.custom_minimum_size = Vector2(px, px)
-	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return b
+## The alliance badge of a wire row (icon texture tinted by
+## its slot colour).
+func _badge_of(row: Dictionary, px: int) -> TextureRect:
+	var tr := AllyBadge.make(int(row.get("badge_icon", 1)),
+			int(row.get("badge_color", 0)), px)
+	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return tr
+
+
+## Icon + colour badge picker (create form + leader
+## settings). The choice lives in `state` ({"icon", "color"});
+## taps repaint the preview, grid rings and swatch rings IN
+## PLACE — no _render, so sibling form fields keep drafts.
+func _badge_picker(state: Dictionary, preview_px: int) -> Control:
+	var box := HBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 4)
+	var prev := TextureRect.new()
+	prev.custom_minimum_size = Vector2(preview_px, preview_px)
+	prev.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	prev.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	prev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pv.add_child(prev)
+	var pname := _label("", 12, GOLD_TXT, true)
+	pname.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pv.add_child(pname)
+	box.add_child(pv)
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", 5)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_child(_label("Biểu tượng", 12, MUTED))
+	var grid := GridContainer.new()
+	grid.columns = 5
+	grid.add_theme_constant_override("h_separation", 5)
+	grid.add_theme_constant_override("v_separation", 5)
+	right.add_child(grid)
+	var cells: Array = []
+	for i in range(1, 11):
+		var cell := PanelContainer.new()
+		cell.custom_minimum_size = Vector2(46, 46)
+		var tb := TextureButton.new()
+		tb.texture_normal = AllyBadge.icon_texture(i)
+		tb.ignore_texture_size = true
+		tb.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+		tb.custom_minimum_size = Vector2(40, 40)
+		var idx := i
+		tb.pressed.connect(func() -> void:
+			state["icon"] = idx)
+		cell.add_child(tb)
+		grid.add_child(cell)
+		cells.append(cell)
+	right.add_child(_label("Màu huy hiệu", 12, MUTED))
+	var swrow := HBoxContainer.new()
+	swrow.add_theme_constant_override("separation", 5)
+	right.add_child(swrow)
+	var swatches: Array = []
+	for c in 8:
+		var sw := Button.new()
+		sw.custom_minimum_size = Vector2(30, 30)
+		sw.focus_mode = Control.FOCUS_NONE
+		var ci := c
+		sw.pressed.connect(func() -> void:
+			state["color"] = ci)
+		swrow.add_child(sw)
+		swatches.append(sw)
+	box.add_child(right)
+	var refresh := func() -> void:
+		var icon := AllyBadge.icon_id(int(state.get("icon", 1)))
+		var col := AllyBadge.color_of(int(state.get("color", 0)))
+		prev.texture = AllyBadge.icon_texture(icon)
+		prev.modulate = col
+		pname.text = AllyBadge.icon_name(icon)
+		for j in cells.size():
+			var cell2: PanelContainer = cells[j]
+			var on := (j + 1) == icon
+			cell2.add_theme_stylebox_override("panel", _sb(
+					Color(0.10, 0.13, 0.22, 0.9), 8,
+					GOLD if on else PANEL_LINE, 2 if on else 1))
+			var tb2: TextureButton = cell2.get_child(0)
+			tb2.modulate = col
+		for j in swatches.size():
+			var sw2: Button = swatches[j]
+			var on2 := j == int(state.get("color", 0))
+			var sbx := _sb(TeamColors.ui_color(j), 8,
+					GOLD if on2 else PANEL_LINE, 2 if on2 else 1)
+			sw2.add_theme_stylebox_override("normal", sbx)
+			sw2.add_theme_stylebox_override("hover", sbx)
+			sw2.add_theme_stylebox_override("pressed", sbx)
+	for i in range(1, 11):
+		var tb3: TextureButton = (cells[i - 1] as PanelContainer).get_child(0)
+		tb3.pressed.connect(refresh)
+	for c in 8:
+		(swatches[c] as Button).pressed.connect(refresh)
+	refresh.call()
+	return box
 
 
 func _avatar(avatar_id: String, px: int) -> TextureRect:
@@ -654,7 +711,7 @@ func _profile_card(mine: Dictionary) -> PanelContainer:
 	pv.add_theme_constant_override("separation", 9)
 	card.add_child(pv)
 	var cc := CenterContainer.new()
-	cc.add_child(_badge(String(mine.get("badge", "red")), 108))
+	cc.add_child(_badge_of(mine, 108))
 	pv.add_child(cc)
 	var nm := _label(String(mine.get("name", "")), 21, GOLD_TXT, true)
 	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -749,7 +806,15 @@ func _actions_card(mine: Dictionary) -> PanelContainer:
 			_render())
 		vb.add_child(inv)
 	var chatb := _icon_btn("Chat liên minh", FA_COMMENTS)
-	chatb.pressed.connect(func() -> void: _open_chat(mine))
+	# 17e: alliance chat MOVED to the chat hub (the owner's
+	# "toàn bộ chat gom về một chỗ") — this button opens the
+	# hub on its Liên minh tab. The internal view below stays
+	# only for the 17b capture harnesses.
+	chatb.pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_chat_hub"):
+			game.home_open_chat_hub("alliance")
+		else:
+			_open_chat(mine))
 	vb.add_child(chatb)
 	if role in ["leader", "deputy"]:
 		var notb := _icon_btn("Thông báo liên minh", FA_BULLHORN)
@@ -893,12 +958,10 @@ func _settings_card(mine: Dictionary) -> PanelContainer:
 	var tag_edit := _field("VD: SL123", String(mine.get("tag", "")))
 	tag_edit.max_length = 5
 	vb.add_child(tag_edit)
-	vb.add_child(_label("Màu khiên", 13, MUTED))
-	var badge_opt := _option(BADGE_ORDER.map(func(id: String) -> String:
-			return "Khiên " + String(BADGE_NAMES[id])), 0)
-	badge_opt.selected = maxi(0, BADGE_ORDER.find(String(mine.get("badge", "red"))))
-	badge_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vb.add_child(badge_opt)
+	vb.add_child(_label("Huy hiệu liên minh", 13, MUTED))
+	var badge_state := {"icon": int(mine.get("badge_icon", 1)),
+			"color": int(mine.get("badge_color", 0))}
+	vb.add_child(_badge_picker(badge_state, 76))
 	vb.add_child(_label("Tuyển thành viên", 13, MUTED))
 	var mode_opt := _option(["Mở — vào ngay không cần duyệt", "Xin vào — Hội trưởng/Phó duyệt đơn"], 0)
 	mode_opt.selected = 1 if String(mine.get("mode", "request")) == "request" else 0
@@ -912,7 +975,7 @@ func _settings_card(mine: Dictionary) -> PanelContainer:
 	var save := _button("Lưu cài đặt", true)
 	save.pressed.connect(func() -> void:
 		Net.alliance_settings(ally_id, tag_edit.text.strip_edges(),
-				String(BADGE_ORDER[badge_opt.selected]),
+				int(badge_state["icon"]), int(badge_state["color"]),
 				"open" if mode_opt.selected == 0 else "request",
 				desc_edit.text.strip_edges())
 		_settings_open = false
@@ -1360,7 +1423,14 @@ func _render_chat_lines() -> void:
 		var bub := String(ln.get("bubble", "mac_dinh"))
 		if bub != "mac_dinh" and ChatBubbles.STYLES.has(bub):
 			tcol = ChatBubbles.STYLES[bub]["text"]
-		hb.add_child(_label_wrap(String(ln.get("text", "")), 13, tcol))
+		# 17e: voice lines + emoticon tokens render rich here
+		# too (never as raw token text).
+		if bool(ln.get("voice", false)):
+			hb.add_child(_label_wrap("Tin nhắn thoại • %d giây" % int(ceil(float(ln.get("dur", 0.0)))), 13, MUTED))
+		else:
+			var body := Emotes.make_rich(String(ln.get("text", "")), 13, tcol)
+			body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			hb.add_child(body)
 		lv.add_child(hb)
 
 
@@ -1387,6 +1457,15 @@ func shot_set_tab(tab: String, member_user := "") -> void:
 func shot_open_chat() -> void:
 	if not Net.alliance_mine.is_empty():
 		_open_chat(Net.alliance_mine)
+
+
+## Capture hook: open the create-alliance form (badge picker),
+## optionally with a preset badge selection for the shot.
+func shot_open_create(icon := 1, color_idx := 0) -> void:
+	_create_open = true
+	_create_preset = {"icon": icon, "color": color_idx}
+	_sig = "\u0001"
+	_render()
 
 
 # ------------------------------------------------------------ not joined
@@ -1453,17 +1532,12 @@ func _create_card() -> PanelContainer:
 	var tag_edit := _field("Tag liên minh (2–5 ký tự chữ/số, VD: SL123)…")
 	tag_edit.max_length = 5
 	vb.add_child(tag_edit)
+	vb.add_child(_label("Huy hiệu liên minh", 13, MUTED))
+	var badge_state: Dictionary = _create_preset.duplicate() \
+			if not _create_preset.is_empty() else {"icon": 1, "color": 0}
+	vb.add_child(_badge_picker(badge_state, 84))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
-	var bcol := VBoxContainer.new()
-	bcol.add_theme_constant_override("separation", 4)
-	bcol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bcol.add_child(_label("Màu khiên", 13, MUTED))
-	var badge_opt := _option(BADGE_ORDER.map(func(id: String) -> String:
-			return "Khiên " + String(BADGE_NAMES[id])), 0)
-	badge_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bcol.add_child(badge_opt)
-	row.add_child(bcol)
 	var mcol := VBoxContainer.new()
 	mcol.add_theme_constant_override("separation", 4)
 	mcol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1488,7 +1562,8 @@ func _create_card() -> PanelContainer:
 		if tg.length() < 2:
 			_show_status("Tag liên minh phải có 2–5 ký tự (chỉ chữ và số).")
 			return
-		Net.alliance_create(nm, tg, String(BADGE_ORDER[badge_opt.selected]),
+		Net.alliance_create(nm, tg, int(badge_state["icon"]),
+				int(badge_state["color"]),
 				"open" if mode_opt.selected == 0 else "request",
 				desc_edit.text.strip_edges())
 		_create_open = false)
@@ -1519,7 +1594,7 @@ func _invite_row(inv: Dictionary) -> PanelContainer:
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 12)
 	inner.add_child(hb)
-	hb.add_child(_badge(String(inv.get("badge", "red")), 50))
+	hb.add_child(_badge_of(inv, 50))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1553,7 +1628,7 @@ func _join_row(rowd: Dictionary) -> PanelContainer:
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 12)
 	inner.add_child(hb)
-	hb.add_child(_badge(String(rowd.get("badge", "red")), 50))
+	hb.add_child(_badge_of(rowd, 50))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nv.size_flags_vertical = Control.SIZE_SHRINK_CENTER

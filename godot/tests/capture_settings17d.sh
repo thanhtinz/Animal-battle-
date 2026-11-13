@@ -38,6 +38,7 @@ acct = {"user": "SetUser", "salt": salt, "hash": pw("secret1", salt),
         "created": now - 90000, "display_name": "TenCu17d",
         "wins": 0, "losses": 200, "matches": 200, "mmr": 1000,
         "last_played": now - 3600,
+        "granted_frames": ["frame_01"],
         "rank": {"tier": 0, "division": 2, "stars": 0, "streak": 0,
                  "season": 1, "peak_tier": 0, "peak_division": 2}}
 json.dump({"accounts": {"SetUser": acct}}, open(sys.argv[1], "w"))

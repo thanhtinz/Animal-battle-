@@ -45,6 +45,7 @@ var _ping_label: Label
 var _ping_icon: GlassIcon
 var _ping_icon_shadow: GlassIcon
 var _mail_badge: Dictionary = {}
+var _chat_badge: Dictionary = {} # 17e chat-hub entry (DM unread badge)
 var _banner_idx: int = 0
 var _banner_title: Label
 var _banner_sub: Label
@@ -381,6 +382,14 @@ func setup(p_game) -> void:
 			if unread > 0 and not _mail_mark_sent:
 				_mail_mark_sent = true
 				Net.mark_mail_read(0))
+	# 17e: the Chat button's badge tracks unread DMs live.
+	Net.dm_list_received.connect(func(_rows) -> void:
+		_set_chat_badge(Net.dm_total_unread()))
+	Net.dm_line_received.connect(func(_p, mine) -> void:
+		if not mine:
+			_set_chat_badge(Net.dm_total_unread()))
+	Net.dm_thread_received.connect(func(_p, _rows) -> void:
+		_set_chat_badge(Net.dm_total_unread()))
 	Net.friends_received.connect(func(_rows) -> void:
 		_rebuild_rail()
 		if _fr_root != null and _fr_root.visible:
@@ -637,16 +646,32 @@ func _set_mail_badge(n: int) -> void:
 	_set_badge(_mail_badge, n)
 
 
+func _set_chat_badge(n: int) -> void:
+	if not _chat_badge.is_empty():
+		_set_badge(_chat_badge, n)
+
+
 func _build_top_right() -> void:
 	# Tín (13l addendum): the friends icon left this row —
 	# Thư · Cài đặt · Ping remain. (The friends panel itself
 	# stays in code, dormant like the other removed entries.)
 	var row := HBoxContainer.new()
 	row.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	row.position = Vector2(-244, 12)
-	row.custom_minimum_size = Vector2(232, 48)
+	# 17e: the row gains the Chat button (the ONE entry to
+	# the chat hub) — widened by one glyph + one gap, same
+	# right edge, same optical line.
+	row.position = Vector2(-302, 12)
+	row.custom_minimum_size = Vector2(290, 48)
 	row.add_theme_constant_override("separation", 10)
 	_root.add_child(row)
+
+	# 17e: Chat first — its badge counts unread DMs.
+	_chat_badge = _icon_button("chat", "Chat", 48.0, true)
+	_chat_badge["btn"].pressed.connect(func() -> void:
+		if game != null and game.has_method("home_open_chat_hub"):
+			game.home_open_chat_hub("world"))
+	row.add_child(_chat_badge["holder"])
+	_set_chat_badge(Net.dm_total_unread())
 
 	# Tín's frameless order ("thay thành icon css và bỏ
 	# khung"): mail + gear are BARE glyphs now — no glass
