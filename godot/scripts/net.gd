@@ -1345,10 +1345,11 @@ void fragment() {
 """
 
 
-## The pill's width: at most 800px, always 32px short of
-## the viewport so it never touches the screen edges.
+## The pill's width: at most 560px (owner: the 800px
+## strip read too long), always 32px short of the
+## viewport so it never touches the screen edges.
 func _mq_pill_w() -> float:
-	return minf(800.0, get_viewport().get_visible_rect().size.x - 32.0)
+	return minf(560.0, get_viewport().get_visible_rect().size.x - 32.0)
 
 
 ## (Re)applies the pill geometry — centred horizontally,
@@ -4420,8 +4421,12 @@ func _auto_chathub_shot(cs) -> void:
 				_hub_shot_stage = 3
 		9:
 			# Save MID-SCROLL: wait until the marquee text has
-			# travelled into the left half of the strip.
-			var want_x := get_viewport().get_visible_rect().size.x * 0.45
+			# travelled into the left half of the CLIP (the
+			# label's x is clip-relative — comparing it with
+			# the viewport width broke when the pill narrowed
+			# to 560px and the shot fired before the strip's
+			# first frame).
+			var want_x := (_mq_pill_w() - 66.0) * 0.5
 			if (_mq_active and _mq_x < want_x) or now - _hub_shot_at > 12000:
 				_auto_shot_done = true
 				_save_shot(path)
