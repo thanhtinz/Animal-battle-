@@ -385,10 +385,17 @@ func _build_chat_panel() -> void:
 	_chat_input.add_theme_font_size_override("font_size", 14)
 	_chat_input.add_theme_color_override("font_color", TXT)
 	_chat_input.add_theme_color_override("font_placeholder_color", TXT_DIM)
-	_chat_input.add_theme_stylebox_override("normal",
-			_sb(BORDER, Color(0.02, 0.04, 0.09, 0.9), 10))
-	_chat_input.add_theme_stylebox_override("focus",
-			_sb(GOLD, Color(0.02, 0.04, 0.09, 0.9), 10))
+	# Owner order 2026-11-12: input text padded inside its
+	# box (the shared _sb margins are 1px — text touched the
+	# border). Same fix as the chat hub input.
+	var isb := _sb(BORDER, Color(0.02, 0.04, 0.09, 0.9), 10)
+	isb.content_margin_left = 12
+	isb.content_margin_right = 12
+	_chat_input.add_theme_stylebox_override("normal", isb)
+	var ifsb := _sb(GOLD, Color(0.02, 0.04, 0.09, 0.9), 10)
+	ifsb.content_margin_left = 12
+	ifsb.content_margin_right = 12
+	_chat_input.add_theme_stylebox_override("focus", ifsb)
 	_chat_input.text_submitted.connect(func(_t: String) -> void: _send_chat_input())
 	irow.add_child(_chat_input)
 	var send_btn := _fa_button(FA_SEND, 10, 38, Color(0.1, 0.08, 0.02))

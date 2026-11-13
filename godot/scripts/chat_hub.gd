@@ -421,28 +421,68 @@ func _scroll_to_bottom(sc: ScrollContainer) -> void:
 		sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
 
 
+func _line_time(line: Dictionary) -> String:
+	var ts := int(line.get("ts", 0))
+	if ts <= 0:
+		# Live lines without a server stamp: pin the arrival
+		# time on the dict so re-renders keep one time.
+		if not line.has("_cts"):
+			line["_cts"] = int(Time.get_unix_time_from_system())
+		ts = int(line["_cts"])
+	var d := Time.get_time_dict_from_unix_time(ts)
+	return "%02d:%02d" % [int(d.get("hour", 0)), int(d.get("minute", 0))]
+
+
 func _line_row(line: Dictionary) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Owner layout order 2026-11-12: each message is a block —
+	# sender AVATAR at the left; a header line with the sender
+	# name, their title, <alliance tag> and @username; the
+	# TIME at the right end of the header; the message itself
+	# under the header.
 	var bubble := String(line.get("bubble", "mac_dinh"))
 	var st: Dictionary = ChatBubbles.STYLES.get(bubble, ChatBubbles.STYLES["mac_dinh"])
-	var name := Net._decor_name(String(line.get("name", "?")),
-		String(line.get("tag", "")), bool(line.get("champ", false)))
-	var nl := _label(name + ":", 14, Color(st["text"]))
-	nl.custom_minimum_size = Vector2(150, 0)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var av := AvatarFrame.new()
+	av.custom_minimum_size = Vector2(34, 34)
+	av.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	av.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	av.set_content(Avatars.texture_for_user(
+		String(line.get("avatar_id", "")), String(line.get("user", ""))),
+		String(line.get("frame_id", "")), false)
+	row.add_child(av)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(col)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	col.add_child(head)
+	var nl := _label(String(line.get("name", "?")), 14, Color(st["text"]))
 	nl.clip_text = true
-	# Owner order 2026-11-12 (even text): names RIGHT-align
-	# to a common edge so message text starts on one clean
-	# column regardless of name length.
-	nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	row.add_child(nl)
+	head.add_child(nl)
+	var title := String(line.get("title", ""))
+	if title != "":
+		head.add_child(_label(title, 12, GOLD_TXT))
+	if bool(line.get("champ", false)):
+		head.add_child(_label("<Liên minh vô địch>", 12, GOLD_TXT))
+	var tag := String(line.get("tag", ""))
+	if tag != "":
+		head.add_child(_label("<%s>" % tag, 12, MUTED))
+	var uname := String(line.get("user", ""))
+	if uname != "":
+		head.add_child(_label("@%s" % uname, 12, MUTED))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	head.add_child(_label(_line_time(line), 12, MUTED))
 	if bool(line.get("voice", false)):
-		row.add_child(_voice_cell(line))
-		return row
-	var body := Emotes.make_rich(String(line.get("text", "")), 14, PAPER)
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(body)
+		col.add_child(_voice_cell(line))
+	else:
+		var body := Emotes.make_rich(String(line.get("text", "")), 14, PAPER)
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_child(body)
 	return row
 
 
@@ -470,7 +510,7 @@ func _build_lines(lines: Array, channel: String) -> void:
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var sc := _scroll_box()
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 5)
+	vb.add_theme_constant_override("separation", 9)
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sc.add_child(vb)
@@ -686,8 +726,17 @@ func _input_bar(channel: String) -> Control:
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	edit.custom_minimum_size = Vector2(0, 38)
 	edit.add_theme_font_size_override("font_size", 14)
-	edit.add_theme_stylebox_override("normal", _sb(FIELD_BG, 8, PANEL_LINE, 1))
-	edit.add_theme_stylebox_override("focus", _sb(FIELD_BG, 8, GOLD, 1))
+	# Owner order 2026-11-12: the input TEXT must sit padded
+	# inside its box — _sb leaves content margins unset, so
+	# the text rendered flush against the border (1px).
+	var esb := _sb(FIELD_BG, 8, PANEL_LINE, 1)
+	esb.content_margin_left = 12
+	esb.content_margin_right = 12
+	var fsb := _sb(FIELD_BG, 8, GOLD, 1)
+	fsb.content_margin_left = 12
+	fsb.content_margin_right = 12
+	edit.add_theme_stylebox_override("normal", esb)
+	edit.add_theme_stylebox_override("focus", fsb)
 	edit.max_length = 200
 	edit.text_submitted.connect(func(_t: String) -> void: _send_current(channel))
 	row.add_child(edit)
