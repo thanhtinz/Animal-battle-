@@ -35,6 +35,10 @@ const CARD_BG := Color(0.05, 0.07, 0.13)
 const PANEL_LINE := Color(0.30, 0.34, 0.46)
 const FIELD_BG := Color(0.04, 0.05, 0.10)
 const BTN_BG := Color(0.13, 0.16, 0.24)
+# Owner order 2026-11-12: voice + megaphone are ICON buttons.
+const FA_FONT_PATH := "res://assets/fonts/fa-solid-900.ttf"
+const FA_MIC := 0xF130
+const FA_BULLHORN := 0xF0A1
 
 const TABS := ["system", "world", "alliance", "dm"]
 const TAB_NAMES := {
@@ -59,6 +63,7 @@ var _poll := 0.0
 var _rec: VoiceRec = null
 var _player: AudioStreamPlayer = null
 var _recording := false
+var _fa_font: Font = null
 var _mic_btn: Button = null
 
 
@@ -193,7 +198,8 @@ func _process(delta: float) -> void:
 		if _rec.auto_stopped():
 			_finish_recording()
 		elif _mic_btn != null:
-			_mic_btn.text = "Đang ghi %ds — thả để gửi" % int(_rec.recorded_seconds())
+			_mic_btn.add_theme_color_override("font_color",
+					Color(1.0, 0.52, 0.45))
 	_poll += delta
 	if _poll >= 0.6:
 		_poll = 0.0
@@ -238,6 +244,59 @@ func _label_wrap(text: String, fsize: int, col: Color = PAPER) -> Label:
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
+
+
+## A Font Awesome glyph as a tintable Label (same pattern as
+## the other screens' _fa helpers).
+func _fa(cp: int, px: int, col: Color = PAPER) -> Label:
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	var l := Label.new()
+	l.text = String.chr(cp)
+	l.add_theme_font_override("font", _fa_font)
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.custom_minimum_size = Vector2(px + 6, px + 6)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## Icon + count toggle chip (the megaphone): a styled panel
+## with an FA glyph and a small count label, flat Button on top.
+func _loa_chip() -> Control:
+	var holder := PanelContainer.new()
+	holder.custom_minimum_size = Vector2(78, 38)
+	if _loa_mode:
+		holder.add_theme_stylebox_override("panel",
+				_btn_sb(Color(0.98, 0.8, 0.35), 8))
+	else:
+		holder.add_theme_stylebox_override("panel",
+				_btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	var cc := CenterContainer.new()
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(cc)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 5)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cc.add_child(hb)
+	var ink := Color(0.1, 0.08, 0.02) if _loa_mode else PAPER
+	hb.add_child(_fa(FA_BULLHORN, 15, ink))
+	var cnt := _label("x%d" % Net.megaphone_count, 13, ink)
+	cnt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(cnt)
+	var btn := Button.new()
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.tooltip_text = "Loa thông báo"
+	btn.pressed.connect(func() -> void:
+		_loa_mode = not _loa_mode
+		_sig = ""
+		_render())
+	holder.add_child(btn)
+	return holder
 
 
 func _button(text: String, primary := false, min_w := 0) -> Button:
@@ -572,8 +631,14 @@ func _input_bar(channel: String) -> Control:
 			13, GOLD_TXT))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	# Hold-to-talk voice.
-	var mic := _button("Giọng nói", false, 96)
+	# Hold-to-talk voice (owner order: icon, not a text button).
+	var mic := _button("", false, 48)
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	mic.add_theme_font_override("font", _fa_font)
+	mic.add_theme_font_size_override("font_size", 16)
+	mic.text = String.chr(FA_MIC)
+	mic.tooltip_text = "Giữ để ghi âm"
 	mic.toggle_mode = false
 	mic.button_down.connect(func() -> void: _start_recording(channel, mic))
 	mic.button_up.connect(func() -> void:
@@ -581,13 +646,8 @@ func _input_bar(channel: String) -> Control:
 			_finish_recording())
 	row.add_child(mic)
 	_mic_btn = mic
-	# Megaphone toggle.
-	var loa := _button("Loa x%d" % Net.megaphone_count, _loa_mode, 84)
-	loa.pressed.connect(func() -> void:
-		_loa_mode = not _loa_mode
-		_sig = ""
-		_render())
-	row.add_child(loa)
+	# Megaphone toggle (owner order: icon + count chip).
+	row.add_child(_loa_chip())
 	# Emoticon picker toggle (the button IS one of the set).
 	var pick := TextureButton.new()
 	pick.texture_normal = Emotes.texture("vui")
@@ -676,7 +736,8 @@ func _start_recording(channel: String, btn: Button) -> void:
 		return
 	_recording = true
 	_mic_btn = btn
-	btn.text = "Đang ghi 0s — thả để gửi"
+	btn.add_theme_color_override("font_color", Color(1.0, 0.52, 0.45))
+	_set_status("Đang ghi âm — thả nút mic để gửi.", false)
 	_rec.start_recording()
 	# Remember the target on the button for the finish step.
 	btn.set_meta("channel", channel)
@@ -687,7 +748,7 @@ func _finish_recording() -> void:
 	var channel := "world"
 	if _mic_btn != null and is_instance_valid(_mic_btn):
 		channel = String(_mic_btn.get_meta("channel", "world"))
-		_mic_btn.text = "Giọng nói"
+		_mic_btn.add_theme_color_override("font_color", PAPER)
 	var take: Dictionary = _rec.stop_recording()
 	var wav: PackedByteArray = take.get("wav", PackedByteArray())
 	var dur := float(take.get("dur", 0.0))

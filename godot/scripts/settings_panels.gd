@@ -363,15 +363,11 @@ func _set_status(msg: String, bad: bool) -> void:
 	_status_bad = bad
 
 
-func _header(title: String, back: bool) -> void:
+func _header(title: String, _back: bool) -> void:
+	# Owner order 2026-11-12: NO "Quay lại" button on the
+	# settings sub-panels — the red X is the only way out.
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
-	if back:
-		var b := _button("Quay lại", false, 92)
-		b.pressed.connect(func() -> void:
-			_view = "hub"
-			_render())
-		row.add_child(b)
 	var t := _label(title, 20, GOLD)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
