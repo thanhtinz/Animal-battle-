@@ -541,9 +541,9 @@ func _render_avatar_tab() -> void:
 	_body.add_child(_label_wrap("Chọn ảnh đại diện — cả 20 ảnh đều miễn phí cho mọi tài khoản.", 13, MUTED))
 	var sc := _scroll()
 	var grid := GridContainer.new()
-	grid.columns = 5
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
+	grid.columns = 4 # owner order 2026-11-12: rows of 4
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(grid)
 	var sel := Avatars.local_avatar()
@@ -556,7 +556,8 @@ func _avatar_cell(id: String, sel: String) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 4)
 	var holder := PanelContainer.new()
-	holder.custom_minimum_size = Vector2(100, 100)
+	holder.custom_minimum_size = Vector2(136, 136)
+	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var is_sel := id == sel
 	holder.add_theme_stylebox_override("panel",
 		_sb(Color(0.08, 0.09, 0.14), 10, GOLD_TXT if is_sel else PANEL_LINE, 2 if is_sel else 1))

@@ -388,18 +388,21 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 	right.add_child(_label("Biểu tượng", 12, MUTED))
 	var grid := GridContainer.new()
 	grid.columns = 5
-	grid.add_theme_constant_override("h_separation", 5)
-	grid.add_theme_constant_override("v_separation", 5)
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_child(grid)
 	var cells: Array = []
 	for i in range(1, 11):
 		var cell := PanelContainer.new()
-		cell.custom_minimum_size = Vector2(46, 46)
+		cell.custom_minimum_size = Vector2(56, 56)
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var tb := TextureButton.new()
 		tb.texture_normal = AllyBadge.icon_texture(i)
 		tb.ignore_texture_size = true
 		tb.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
-		tb.custom_minimum_size = Vector2(40, 40)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		var idx := i
 		tb.pressed.connect(func() -> void:
 			state["icon"] = idx)
@@ -408,12 +411,13 @@ func _badge_picker(state: Dictionary, preview_px: int) -> Control:
 		cells.append(cell)
 	right.add_child(_label("Màu huy hiệu", 12, MUTED))
 	var swrow := HBoxContainer.new()
-	swrow.add_theme_constant_override("separation", 5)
+	swrow.add_theme_constant_override("separation", 8)
 	right.add_child(swrow)
 	var swatches: Array = []
 	for c in 8:
 		var sw := Button.new()
-		sw.custom_minimum_size = Vector2(30, 30)
+		sw.custom_minimum_size = Vector2(36, 36)
+		sw.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sw.focus_mode = Control.FOCUS_NONE
 		var ci := c
 		sw.pressed.connect(func() -> void:
@@ -1525,31 +1529,46 @@ func _create_card() -> PanelContainer:
 	vb.add_theme_constant_override("separation", 8)
 	card.add_child(vb)
 	vb.add_child(_section("TẠO LIÊN MINH MỚI"))
+	var badge_state: Dictionary = _create_preset.duplicate() \
+			if not _create_preset.is_empty() else {"icon": 1, "color": 0}
+	# Owner order 2026-11-12 (create panel looked sparse/ugly):
+	# two balanced columns — fields left, badge studio right.
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 16)
+	vb.add_child(cols)
+	var left := VBoxContainer.new()
+	left.add_theme_constant_override("separation", 8)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(left)
 	var name_edit := _field("Tên liên minh (3–24 ký tự)…")
 	name_edit.max_length = 24
-	vb.add_child(name_edit)
+	left.add_child(name_edit)
 	# 17b: the tag is chosen at creation (leader-editable later).
 	var tag_edit := _field("Tag liên minh (2–5 ký tự chữ/số, VD: SL123)…")
 	tag_edit.max_length = 5
-	vb.add_child(tag_edit)
-	vb.add_child(_label("Huy hiệu liên minh", 13, MUTED))
-	var badge_state: Dictionary = _create_preset.duplicate() \
-			if not _create_preset.is_empty() else {"icon": 1, "color": 0}
-	vb.add_child(_badge_picker(badge_state, 84))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	var mcol := VBoxContainer.new()
-	mcol.add_theme_constant_override("separation", 4)
-	mcol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mcol.add_child(_label("Tuyển thành viên", 13, MUTED))
+	left.add_child(tag_edit)
+	left.add_child(_label("Tuyển thành viên", 13, MUTED))
 	var mode_opt := _option(["Mở — vào ngay không cần duyệt", "Xin vào — duyệt đơn"], 1)
 	mode_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mcol.add_child(mode_opt)
-	row.add_child(mcol)
-	vb.add_child(row)
+	left.add_child(mode_opt)
+	left.add_child(_label("Mô tả", 13, MUTED))
 	var desc_edit := _field("Mô tả ngắn (không bắt buộc)…")
 	desc_edit.max_length = 120
-	vb.add_child(desc_edit)
+	left.add_child(desc_edit)
+	var studio := PanelContainer.new()
+	var ssb := _sb(Color(1, 1, 1, 0.045), 10, Color(1, 0.85, 0.4, 0.35), 1)
+	ssb.content_margin_left = 14
+	ssb.content_margin_right = 14
+	ssb.content_margin_top = 10
+	ssb.content_margin_bottom = 10
+	studio.add_theme_stylebox_override("panel", ssb)
+	studio.custom_minimum_size = Vector2(500, 0)
+	cols.add_child(studio)
+	var svb := VBoxContainer.new()
+	svb.add_theme_constant_override("separation", 6)
+	studio.add_child(svb)
+	svb.add_child(_label("Huy hiệu liên minh", 13, MUTED))
+	svb.add_child(_badge_picker(badge_state, 96))
 	var brow := HBoxContainer.new()
 	brow.add_theme_constant_override("separation", 8)
 	var create := _button("Tạo liên minh", true, false, 160)

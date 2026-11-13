@@ -69,24 +69,63 @@ func setup(g) -> void:
 func _ready() -> void:
 	layer = 55 # above profile/alliance (50), below settings (56)
 	visible = false
+	# Owner order 2026-11-12: AOV-style floating panel, NOT
+	# full-screen — dim backdrop, panel ~60% wide on the left,
+	# the lobby stays visible on the right.
+	var dim := ColorRect.new()
+	dim.color = Color(0.01, 0.015, 0.04, 0.5)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(dim)
 	var board := PanelContainer.new()
 	board.set_anchors_preset(Control.PRESET_FULL_RECT)
+	board.anchor_right = 0.60
+	board.offset_left = 24
+	board.offset_right = -14
+	board.offset_top = 24
+	board.offset_bottom = -56
 	var bs := PageShell.bg_style()
+	bs.set_corner_radius_all(10)
+	bs.border_color = Color(1, 0.85, 0.4, 0.55)
+	bs.set_border_width_all(2)
 	bs.content_margin_left = 16
 	bs.content_margin_right = 16
-	bs.content_margin_top = PageShell.CONTENT_TOP
-	bs.content_margin_bottom = 34
+	bs.content_margin_top = 14
+	bs.content_margin_bottom = 14
 	board.add_theme_stylebox_override("panel", bs)
 	add_child(board)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 10)
+	board.add_child(outer)
+	var hrow := HBoxContainer.new()
+	hrow.add_child(_label("Chat", 20, Color(1.0, 0.85, 0.4)))
+	var hsp := Control.new()
+	hsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hrow.add_child(hsp)
+	var xbtn := Button.new()
+	xbtn.text = "X"
+	xbtn.custom_minimum_size = Vector2(36, 36)
+	xbtn.focus_mode = Control.FOCUS_NONE
+	xbtn.add_theme_color_override("font_color", Color.WHITE)
+	xbtn.add_theme_stylebox_override("normal",
+			_sb(Color(0.72, 0.16, 0.14), 8, Color(0, 0, 0, 0), 0))
+	xbtn.add_theme_stylebox_override("hover",
+			_sb(Color(0.82, 0.22, 0.18), 8, Color(0, 0, 0, 0), 0))
+	xbtn.add_theme_stylebox_override("pressed",
+			_sb(Color(0.60, 0.12, 0.11), 8, Color(0, 0, 0, 0), 0))
+	xbtn.pressed.connect(func() -> void: close())
+	hrow.add_child(xbtn)
+	outer.add_child(hrow)
 	_body = VBoxContainer.new()
 	_body.add_theme_constant_override("separation", 10)
-	board.add_child(_body)
-	add_child(PageShell.header("Chat", func() -> void: close()))
+	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer.add_child(_body)
 	_status = _label("", 13, Color(1.0, 0.75, 0.6))
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_status.offset_top = -28
-	_status.offset_left = 16
-	_status.offset_right = -16
+	_status.anchor_right = 0.60
+	_status.offset_top = -48
+	_status.offset_bottom = -26
+	_status.offset_left = 40
+	_status.offset_right = -30
 	add_child(_status)
 	_rec = VoiceRec.new()
 	add_child(_rec)
@@ -552,6 +591,7 @@ func _input_bar(channel: String) -> Control:
 	# Emoticon picker toggle (the button IS one of the set).
 	var pick := TextureButton.new()
 	pick.texture_normal = Emotes.texture("vui")
+	pick.ignore_texture_size = true
 	pick.custom_minimum_size = Vector2(38, 38)
 	pick.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
 	pick.tooltip_text = "Biểu cảm"
