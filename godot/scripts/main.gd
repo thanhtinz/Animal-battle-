@@ -2628,6 +2628,26 @@ func _mp_placements() -> Array:
 	return alive + fallen
 
 
+## 17k: placements for the RESULT SCREEN (AOV spec §1): the very
+## list the referee/host reports to the server, exposed for
+## presentation. Only a versus match has per-slot placements —
+## queue free-for-alls and custom FFA/1v1. A match with a shared
+## team (2v2) or diplomacy (shared allied victory) has no
+## individual ranking, so this returns [] and the result screen
+## keeps its score order there. A fallen slot's index in this
+## list is already its FINAL placement at any moment (each later
+## fall swaps one still-alive slot ahead of it for the fallen
+## slot itself), so the banner can name the local placement even
+## on the early panel that opens when the local player falls
+## mid-match.
+func result_placements() -> Array:
+	if not mp_mode or mp_has_allies() or diplomacy_active():
+		return []
+	if slot_eliminated.size() != slot_count():
+		return []
+	return _mp_placements()
+
+
 ## 14a: elimination ticks as the replay sidecar wants them —
 ## slot-indexed, -1 for a slot that never fell (survivors).
 func _mp_elim_ticks() -> Array:

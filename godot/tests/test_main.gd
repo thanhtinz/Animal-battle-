@@ -3941,6 +3941,79 @@ func _ready() -> void:
 	remove_child(gameW)
 	gameW.queue_free()
 	await get_tree().process_frame
+	# ------------------------------------------------ (17k) AOV result: placement vs MVP
+	# Stage an 8-slot free-for-all: slots 5/6/7 fell in that
+	# order; slot 7 (placement #6) is staged as the runaway top
+	# SCORER, so placement order and MVP must visibly come
+	# apart. Base scores on a bare instance are slot0=35 /
+	# slot1=95 / rest 0, so gathered gaps of 200+ pin the
+	# survivor order to 0,1,2,3,4.
+	var gameP = load("res://main.tscn").instantiate()
+	add_child(gameP)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	gameP.mp_mode = true
+	gameP.local_slot = 0
+	gameP.slot_teams = [0, 1, 2, 3, 4, 5, 6, 7]
+	gameP.slot_names = ["An", "Bình", "Chi", "Dũng", "Hà", "Giang", "Hải", "Kiên"]
+	gameP.slot_chars = ["knight", "archer", "mage", "paladin",
+			"berserker", "dragoon", "assassin", "ranger"]
+	gameP.slot_eliminated = [false, false, false, false, false, true, true, true]
+	gameP.slot_inert = [false, false, false, false, false, false, false, false]
+	gameP.mp_elim_order = [5, 6, 7]
+	gameP.mp_elim_tick = {5: 100, 6: 200, 7: 300}
+	gameP.slot_tc_down = [false, false, false, false, false, false, false, false]
+	gameP.mp_rally = []
+	gameP.mp_techs = []
+	gameP.mp_wallets = []
+	gameP.mp_ages = []
+	for i in range(8):
+		gameP.mp_rally.append(Vector2.ZERO)
+		gameP.mp_techs.append({"levels": {}, "active": {}})
+		gameP.mp_wallets.append({"food": 800, "wood": 800, "gold": 800, "stone": 800})
+		gameP.mp_ages.append({"age": 1})
+	gameP.gathered_totals[0] = {"food": 10000}
+	gameP.gathered_totals[1] = {"food": 8000}
+	gameP.gathered_totals[2] = {"food": 6000}
+	gameP.gathered_totals[3] = {"food": 4000}
+	gameP.gathered_totals[4] = {"food": 2000}
+	gameP.gathered_totals[7] = {"food": 50000}
+	check("pk1 versus placements = survival order",
+			gameP.result_placements() == [0, 1, 2, 3, 4, 7, 6, 5],
+			"placements=%s" % [gameP.result_placements()])
+	gameP.hud.show_end_panel("victory", 600.0, "Thắng")
+	await get_tree().process_frame
+	var pk_mvp: String = collect_text.call(gameP.hud._end_mvp)
+	check("pk2 MVP spotlight = top scorer, not placement #1",
+			pk_mvp.contains("Kiên") and pk_mvp.contains("MVP"), pk_mvp)
+	var pk_row0: String = collect_text.call(gameP.hud._end_standings.get_child(0))
+	var pk_row5: String = collect_text.call(gameP.hud._end_standings.get_child(5))
+	var pk_row7: String = collect_text.call(gameP.hud._end_standings.get_child(7))
+	check("pk3 standings follow placement; MVP tag + eliminated status ride their own rows",
+			gameP.hud._end_standings.get_child_count() == 8
+			and pk_row0.contains("An") and pk_row0.contains("#1")
+			and not pk_row0.contains("MVP") and not pk_row0.contains("Đã bị loại")
+			and pk_row5.contains("Kiên") and pk_row5.contains("#6")
+			and pk_row5.contains("MVP") and pk_row5.contains("Đã bị loại")
+			and pk_row7.contains("Giang") and pk_row7.contains("#8")
+			and pk_row7.contains("Đã bị loại") and not pk_row7.contains("MVP"),
+			"row0=%s row5=%s row7=%s" % [pk_row0, pk_row5, pk_row7])
+	check("pk4 banner context names the local placement",
+			gameP.hud._end_context.text.contains("Hạng 1/8"),
+			gameP.hud._end_context.text)
+	gameP.local_slot = 5
+	gameP.hud.show_end_panel("defeat", 600.0, "Thua")
+	await get_tree().process_frame
+	check("pk5 first-fallen local placement is final (8/8)",
+			gameP.hud._end_context.text.contains("Hạng 8/8"),
+			gameP.hud._end_context.text)
+	gameP.slot_teams = [0, 0, 1, 1, 2, 2, 3, 3]
+	check("pk6 team match: no placements",
+			gameP.result_placements().is_empty(),
+			"placements=%s" % [gameP.result_placements()])
+	remove_child(gameP)
+	gameP.queue_free()
+	await get_tree().process_frame
 	# Sliders: one 0..100 scale; the number always equals the
 	# knob's filled percent. Brightness maps onto 0.5x..1.5x.
 	var gameSL = load("res://main.tscn").instantiate()

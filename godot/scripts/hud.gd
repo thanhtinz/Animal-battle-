@@ -1807,7 +1807,16 @@ func _result_context(mt: int) -> String:
 	var lname := String(World.LAYOUT_NAMES.get(layout_id, ""))
 	if lname != "":
 		map += " — " + lname
-	return "%02d:%02d · %s · %s" % [mt / 60, mt % 60, mode, map]
+	var txt := "%02d:%02d · %s · %s" % [mt / 60, mt % 60, mode, map]
+	# 17k (AOV spec §1.1): a versus banner names the local
+	# placement ("Hạng 3/8"); observers have no placement.
+	if game.mp_mode and not game.observer_mode \
+			and game.has_method("result_placements"):
+		var pl: Array = game.result_placements()
+		var pos := pl.find(game.local_slot)
+		if pos >= 0:
+			txt += " · Hạng %d/%d" % [pos + 1, pl.size()]
+	return txt
 
 
 ## 13y-AOV standings columns: [FA header glyph, caption, width].
@@ -1824,15 +1833,33 @@ const RESULT_COLS: Array = [
 
 ## Rebuild the standings, chart and breakdown from Main's 13y
 ## accounting. Count-agnostic: it renders exactly the owners the
-## match had, sorted by score (ties keep slot order).
+## match had — in placement order in a versus match (17k), else
+## sorted by score (ties keep slot order).
 func _refresh_result() -> void:
 	var owners: Array = game.result_owners()
-	owners.sort_custom(func(a: int, b: int) -> bool:
-		var sa: int = game.match_score_of(a)
-		var sb: int = game.match_score_of(b)
-		if sa != sb:
-			return sa > sb
-		return a < b)
+	# 17k (AOV spec §1): the MVP is the top SCORER, whoever they
+	# are; the standings list itself follows the match PLACEMENT
+	# (survival order) in a versus match. The two are different
+	# rankings and the spec keeps them apart — an early fall can
+	# still be the match's top scorer. Matches without placements
+	# (SP, team, diplomacy) keep the score order for the list.
+	var mvp_owner := -1
+	var mvp_score := -1
+	for o in owners:
+		var sc: int = game.match_score_of(int(o))
+		if sc > mvp_score:
+			mvp_score = sc
+			mvp_owner = int(o)
+	var order: Array = game.result_placements() \
+			if game.has_method("result_placements") else []
+	if order.size() != owners.size():
+		order = owners.duplicate()
+		order.sort_custom(func(a: int, b: int) -> bool:
+			var sa: int = game.match_score_of(a)
+			var sb: int = game.match_score_of(b)
+			if sa != sb:
+				return sa > sb
+			return a < b)
 	for ch in _end_standings.get_children():
 		_end_standings.remove_child(ch)
 		ch.free()
@@ -1841,19 +1868,20 @@ func _refresh_result() -> void:
 	for ch in _end_mvp.get_children():
 		_end_mvp.remove_child(ch)
 		ch.free()
-	if not owners.is_empty():
-		_end_mvp.add_child(_result_mvp_card(int(owners[0]), teams))
-	for i in range(owners.size()):
-		_end_standings.add_child(_result_row(int(owners[i]), i, teams))
-	_end_chart.set_data(game.stat_series, owners)
+	if mvp_owner >= 0:
+		_end_mvp.add_child(_result_mvp_card(mvp_owner, teams))
+	for i in range(order.size()):
+		_end_standings.add_child(_result_row(int(order[i]), i, teams,
+				int(order[i]) == mvp_owner))
+	_end_chart.set_data(game.stat_series, order)
 	for ch in _end_breakdown.get_children():
 		_end_breakdown.remove_child(ch)
 		ch.free()
 	var show_iron := false
-	for owner in owners:
+	for owner in order:
 		if int((game.stat_counters(owner).gathered as Dictionary).get("iron", 0)) > 0:
 			show_iron = true
-	for owner in owners:
+	for owner in order:
 		_end_breakdown.add_child(_result_block(owner, teams, show_iron))
 
 
@@ -1956,11 +1984,11 @@ func _result_mvp_card(owner: int, teams: bool) -> PanelContainer:
 
 
 ## One AOV standings row: placement · hero portrait · name (+MVP
-## tag on the top scorer; the local player's row wears the gold
-## frame) · the RESULT_COLS stat columns, right-aligned.
-func _result_row(owner: int, idx: int, teams: bool) -> PanelContainer:
+## tag on the top scorer, wherever their placement landed; the
+## local player's row wears the gold frame) · the RESULT_COLS
+## stat columns, right-aligned.
+func _result_row(owner: int, idx: int, teams: bool, is_mvp: bool) -> PanelContainer:
 	var is_local: bool = owner == (game.local_slot if game.mp_mode else 0)
-	var is_mvp := idx == 0
 	var bg := Color(0.05, 0.08, 0.15, 0.9) if idx % 2 == 0 \
 			else Color(0.035, 0.055, 0.11, 0.9)
 	var border := BORDER_DIM
@@ -1996,7 +2024,13 @@ func _result_row(owner: int, idx: int, teams: bool) -> PanelContainer:
 	if is_mvp:
 		nrow.add_child(_mvp_tag())
 	vb.add_child(nrow)
-	vb.add_child(_label(AGE_TXT[clampi(game.owner_age(owner), 1, 4)], 11, TXT_DIM))
+	# 17k (AOV spec §1.3): an eliminated player carries their
+	# status on the row, under the name.
+	var sub: String = AGE_TXT[clampi(game.owner_age(owner), 1, 4)]
+	if game.mp_mode and owner < game.slot_eliminated.size() \
+			and bool(game.slot_eliminated[owner]):
+		sub += " · Đã bị loại"
+	vb.add_child(_label(sub, 11, TXT_DIM))
 	var c: Dictionary = game.stat_counters(owner)
 	var apm_txt := "—"
 	if game.mp_mode or owner == 0:
