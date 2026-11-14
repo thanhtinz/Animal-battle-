@@ -30,6 +30,11 @@ const FA_CHECK := 0xF00C
 const FA_XMARK := 0xF00D
 const FA_BULLHORN := 0xF0A1
 const FA_TASKS := 0xF0AE
+const FA_ELLIPSIS_V := 0xF142 # 17l row-menu button glyph
+const FA_INFO := 0xF05A # 17l menu: Chi tiết
+const FA_ARROW_UP := 0xF062 # 17l menu: Phong Phó
+const FA_ARROW_DOWN := 0xF063 # 17l menu: Hạ Phó
+const FA_USER_X := 0xF235 # 17l menu: Đuổi khỏi liên minh
 
 const GOLD := Color(1.0, 0.85, 0.4)
 const GOLD_TXT := Color(0.98, 0.8, 0.35)
@@ -66,6 +71,7 @@ var _detail_user := "" # 17b: member-detail card target ("" = closed)
 var _chat_open := false
 var _arm := "" # two-tap confirm key ("leave" / "disband" / "transfer:<user>")
 var _arm_at := 0
+var _menu_root: Control = null # 17l: open member-row menu overlay
 var _chat_box: VBoxContainer = null
 var _chat_scroll: ScrollContainer = null
 var _chat_input: LineEdit = null
@@ -141,6 +147,7 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	_chat_open = false
+	_close_row_menu()
 
 
 func _process(delta: float) -> void:
@@ -568,6 +575,7 @@ func _render() -> void:
 	if sig == _sig:
 		return
 	_sig = sig
+	_close_row_menu() # 17l: a rebuild kills the menu's anchor row
 	for c in _body.get_children():
 		_body.remove_child(c)
 		c.queue_free()
@@ -1158,20 +1166,16 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	inner.add_theme_constant_override("margin_top", 7)
 	inner.add_theme_constant_override("margin_bottom", 7)
 	row.add_child(inner)
-	# 17j: the card stacks TWO lines — the member line and,
-	# only for leader/deputy viewers, a right-aligned actions
-	# line below it. On one line the row's minimum width was
-	# 717-806px (probe tests/probe_memberrow.gd) against the
-	# 706px the tab area actually has (692 with the vertical
-	# scrollbar): the horizontal scroll is disabled, so the
-	# overflow was clipped and the LAST button — "Đuổi" —
-	# lost its right edge or vanished entirely.
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 6)
-	inner.add_child(lines)
+	# 17l: back to ONE line. The 17j two-line stack existed
+	# only to hold the second line of action buttons (on one
+	# line the row's minimum width was 717-806px against the
+	# 706px the tab area has, and the last button was
+	# clipped); those actions now live in the three-dot menu
+	# at the end of this line, so the single line fits with
+	# room to spare.
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
-	lines.add_child(hb)
+	inner.add_child(hb)
 	hb.add_child(_avatar(String(mem.get("avatar", "knight")), 40, String(mem.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1211,45 +1215,14 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	st.add_child(_label("Trực tuyến" if online else _ago(int(mem.get("seen", 0))),
 			12, Color(0.45, 0.85, 0.55) if online else MUTED))
 	hb.add_child(st)
-	# 17b: every row opens the member detail card.
-	var detail := _small_btn("Chi tiết")
-	detail.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	detail.pressed.connect(func() -> void:
-		_detail_user = String(mem.get("user", ""))
-		_sig = "\u0001"
-		_render())
-	hb.add_child(detail)
-	# Contextual actions (server re-checks every permission).
-	var target := String(mem.get("user", ""))
-	var t_role := String(mem.get("role", "member"))
-	if not self_row and my_role in ["leader", "deputy"]:
-		var acts := HBoxContainer.new()
-		acts.add_theme_constant_override("separation", 6)
-		acts.alignment = BoxContainer.ALIGNMENT_END
-		acts.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if my_role == "leader":
-			if t_role == "member":
-				var up := _small_btn("Lên Phó")
-				up.pressed.connect(func() -> void:
-					Net.alliance_role(ally_id, target, "deputy"))
-				acts.add_child(up)
-			elif t_role == "deputy":
-				var down := _small_btn("Hạ Phó")
-				down.pressed.connect(func() -> void:
-					Net.alliance_role(ally_id, target, "member"))
-				acts.add_child(down)
-			var tr_key := "transfer:" + target
-			var tr := _small_btn("Đã chắc? Bấm lại" if _armed(tr_key) else "Chuyển quyền")
-			tr.pressed.connect(func() -> void:
-				_confirm_or(tr_key, func() -> void:
-					Net.alliance_transfer(ally_id, target)))
-			acts.add_child(tr)
-		if my_role == "leader" or t_role == "member":
-			var kick := _small_btn("Đuổi")
-			kick.pressed.connect(func() -> void:
-				Net.alliance_kick(ally_id, target))
-			acts.add_child(kick)
-		lines.add_child(acts)
+	# 17l: exactly ONE action control — the three-dot menu
+	# button. Chi tiết and (for leader/deputy viewers) the
+	# role/kick actions all live in its menu now, gated as
+	# before; the server still re-checks every permission.
+	var dots := _dots_btn()
+	dots.pressed.connect(func() -> void:
+		_open_member_menu(dots, mem, my_role, ally_id, self_row))
+	hb.add_child(dots)
 	return row
 
 
@@ -1263,6 +1236,160 @@ func _small_btn(text: String) -> Button:
 	b.custom_minimum_size = Vector2(0, 30)
 	b.add_theme_font_size_override("font_size", 12)
 	return b
+
+
+## 17l: the member row's ONE action control — a 36×36
+## three-dot icon button in the screen's standard button
+## shell (owner: the row carried too many buttons side by
+## side). It opens the row menu built by _open_member_menu;
+## every action the row used to show as its own button lives
+## in that menu now.
+func _dots_btn() -> Button:
+	if _fa_font == null:
+		_fa_font = load(FA_FONT_PATH)
+	var b := Button.new()
+	b.text = String.chr(FA_ELLIPSIS_V)
+	b.custom_minimum_size = Vector2(36, 36)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	b.add_theme_font_override("font", _fa_font)
+	b.add_theme_font_size_override("font_size", 15)
+	b.add_theme_color_override("font_color", GOLD_TXT)
+	b.add_theme_color_override("font_hover_color", GOLD_TXT)
+	b.add_theme_color_override("font_pressed_color", GOLD_TXT)
+	b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
+	b.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
+	b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
+	b.add_theme_stylebox_override("disabled", _btn_sb(Color(1, 1, 1, 0.03), 8, Color(1, 1, 1, 0.10), 1))
+	b.add_theme_color_override("font_disabled_color", DIM)
+	return b
+
+
+func _close_row_menu() -> void:
+	if _menu_root != null:
+		_menu_root.queue_free()
+		_menu_root = null
+
+
+## 17l row menu: a small slate card anchored under the row's
+## three-dot button, in the codebase's popup family (overlay
+## root + tap-away backdrop, like the settings item popup).
+## One menu at a time; it closes on selection, on a tap
+## anywhere else, and on any body rebuild (its anchor row is
+## gone then — _render closes it before rebuilding).
+func _open_row_menu(anchor: Button, entries: Array) -> void:
+	_close_row_menu()
+	_menu_root = Control.new()
+	_menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_menu_root)
+	var back := ColorRect.new()
+	back.color = Color(0, 0, 0, 0.30)
+	back.set_anchors_preset(Control.PRESET_FULL_RECT)
+	back.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and ev.pressed:
+			_close_row_menu())
+	_menu_root.add_child(back)
+	var panel := PanelContainer.new()
+	var ps := _sb(Color(0.06, 0.08, 0.15, 0.98), 10, Color(1, 0.85, 0.4, 0.45), 1)
+	ps.content_margin_left = 6
+	ps.content_margin_right = 6
+	ps.content_margin_top = 6
+	ps.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", ps)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	panel.add_child(vb)
+	for e in entries:
+		vb.add_child(_menu_item(e))
+	_menu_root.add_child(panel)
+	var r := anchor.get_global_rect()
+	var vp := get_viewport().get_visible_rect().size
+	var ms := panel.get_combined_minimum_size()
+	panel.size = ms
+	var pos := Vector2(r.end.x - ms.x, r.end.y + 4.0)
+	if pos.y + ms.y > vp.y - 8.0:
+		pos.y = r.position.y - ms.y - 4.0
+	pos.x = clampf(pos.x, 8.0, maxf(8.0, vp.x - ms.x - 8.0))
+	pos.y = clampf(pos.y, 8.0, maxf(8.0, vp.y - ms.y - 8.0))
+	panel.position = pos
+
+
+func _menu_item(e: Dictionary) -> Button:
+	var danger := bool(e.get("danger", false))
+	var col := RED if danger else PAPER
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(200, 36)
+	b.add_theme_stylebox_override("normal", _btn_sb(Color(0, 0, 0, 0), 6))
+	b.add_theme_stylebox_override("hover", _btn_sb(Color(0.16, 0.20, 0.30), 6))
+	b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.09, 0.11, 0.19), 6))
+	var hb := HBoxContainer.new()
+	hb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hb.offset_left = 8
+	hb.offset_right = -6
+	hb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	hb.add_theme_constant_override("separation", 9)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(_fa(int(e.get("cp", 0)), 14, col))
+	var l := _label(String(e.get("text", "")), 13, col)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hb.add_child(l)
+	b.add_child(hb)
+	var fn: Callable = e.get("fn", Callable())
+	b.pressed.connect(func() -> void:
+		_close_row_menu()
+		if fn.is_valid():
+			fn.call())
+	return b
+
+
+## 17l: the member row's menu entries, gated EXACTLY like
+## the per-row buttons they replace (17a/17b): Chi tiết for
+## everyone (own row and plain-member viewers included —
+## those menus hold nothing else); the rest only for a
+## leader/deputy viewer looking at someone else's row —
+## promote/demote and transfer are the leader's alone, kick
+## is the leader's for any target and a deputy's for plain
+## members only. Transfer and kick run through the two-tap
+## _confirm_or, the screen's standard confirm for
+## destructive actions: the first tap arms the key, the
+## reopened menu shows "Đã chắc? Bấm lại", and a second tap
+## within 5 s fires. No wire changes — the same Net calls.
+func _open_member_menu(anchor: Button, mem: Dictionary, my_role: String,
+		ally_id: String, self_row: bool) -> void:
+	var target := String(mem.get("user", ""))
+	var t_role := String(mem.get("role", "member"))
+	var entries: Array = []
+	entries.append({"cp": FA_INFO, "text": "Chi tiết", "danger": false,
+		"fn": func() -> void:
+			_detail_user = target
+			_sig = "\u0001"
+			_render()})
+	if not self_row and my_role in ["leader", "deputy"]:
+		if my_role == "leader":
+			if t_role == "member":
+				entries.append({"cp": FA_ARROW_UP, "text": "Phong Phó", "danger": false,
+					"fn": func() -> void:
+						Net.alliance_role(ally_id, target, "deputy")})
+			elif t_role == "deputy":
+				entries.append({"cp": FA_ARROW_DOWN, "text": "Hạ Phó", "danger": false,
+					"fn": func() -> void:
+						Net.alliance_role(ally_id, target, "member")})
+			var tr_key := "transfer:" + target
+			entries.append({"cp": FA_CROWN,
+				"text": "Đã chắc? Bấm lại" if _armed(tr_key) else "Chuyển quyền",
+				"danger": false,
+				"fn": func() -> void:
+					_confirm_or(tr_key, func() -> void:
+						Net.alliance_transfer(ally_id, target))})
+		if my_role == "leader" or t_role == "member":
+			var kick_key := "kick:" + target
+			entries.append({"cp": FA_USER_X,
+				"text": "Đã chắc? Bấm lại" if _armed(kick_key) else "Đuổi khỏi liên minh",
+				"danger": true,
+				"fn": func() -> void:
+					_confirm_or(kick_key, func() -> void:
+						Net.alliance_kick(ally_id, target))})
+	_open_row_menu(anchor, entries)
 
 
 func _fill_requests(cv: VBoxContainer, mine: Dictionary) -> void:
