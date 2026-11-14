@@ -179,10 +179,10 @@ func _sb(bg: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> StyleB
 ## of 1/1 — same total, centre 1px higher: the tab font's line
 ## box centres the ink ~1px BELOW the pill centre (measured
 ## ink centroid dy +0.7..+1.2px), so the ink now lands centred.
-func _btn_sb(bg: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0) -> StyleBoxFlat:
+func _btn_sb(bg: Color, radius: int, border := Color(0, 0, 0, 0), bw := 0, pad_x := 1) -> StyleBoxFlat:
 	var s := _sb(bg, radius, border, bw)
-	s.content_margin_left = 1
-	s.content_margin_right = 1
+	s.content_margin_left = pad_x
+	s.content_margin_right = pad_x
 	s.content_margin_top = 0
 	s.content_margin_bottom = 2
 	return s
@@ -237,30 +237,30 @@ func _fa(cp: int, px: int, col: Color = PAPER) -> Label:
 	return l
 
 
-func _button(text: String, primary := false, danger := false, min_w := 0) -> Button:
+func _button(text: String, primary := false, danger := false, min_w := 0, pad_x := 1) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(min_w, 38)
 	b.add_theme_font_size_override("font_size", 14)
 	if primary:
-		b.add_theme_stylebox_override("normal", _btn_sb(Color(0.98, 0.8, 0.35), 8))
-		b.add_theme_stylebox_override("hover", _btn_sb(Color(1.0, 0.86, 0.45), 8))
-		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.88, 0.7, 0.28), 8))
+		b.add_theme_stylebox_override("normal", _btn_sb(Color(0.98, 0.8, 0.35), 8, Color(0, 0, 0, 0), 0, pad_x))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(1.0, 0.86, 0.45), 8, Color(0, 0, 0, 0), 0, pad_x))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.88, 0.7, 0.28), 8, Color(0, 0, 0, 0), 0, pad_x))
 		b.add_theme_color_override("font_color", Color(0.1, 0.08, 0.02))
 		b.add_theme_color_override("font_hover_color", Color(0.1, 0.08, 0.02))
 	elif danger:
-		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(0.98, 0.5, 0.45, 0.55), 1))
-		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.2, 0.2, 0.3), 8, Color(0.98, 0.5, 0.45, 0.8), 1))
-		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.1, 0.12, 0.2), 8, Color(0.98, 0.5, 0.45), 1))
+		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(0.98, 0.5, 0.45, 0.55), 1, pad_x))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.2, 0.2, 0.3), 8, Color(0.98, 0.5, 0.45, 0.8), 1, pad_x))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.1, 0.12, 0.2), 8, Color(0.98, 0.5, 0.45), 1, pad_x))
 		b.add_theme_color_override("font_color", RED)
 		b.add_theme_color_override("font_hover_color", RED)
 	else:
-		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1))
-		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1))
-		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1))
+		b.add_theme_stylebox_override("normal", _btn_sb(BTN_BG, 8, Color(1, 0.85, 0.4, 0.35), 1, pad_x))
+		b.add_theme_stylebox_override("hover", _btn_sb(Color(0.18, 0.22, 0.32), 8, Color(1, 0.85, 0.4, 0.6), 1, pad_x))
+		b.add_theme_stylebox_override("pressed", _btn_sb(Color(0.09, 0.11, 0.19), 8, Color(1, 0.85, 0.4, 0.35), 1, pad_x))
 		b.add_theme_color_override("font_color", PAPER)
 		b.add_theme_color_override("font_hover_color", PAPER)
-	b.add_theme_stylebox_override("disabled", _btn_sb(Color(1, 1, 1, 0.03), 8, Color(1, 1, 1, 0.10), 1))
+	b.add_theme_stylebox_override("disabled", _btn_sb(Color(1, 1, 1, 0.03), 8, Color(1, 1, 1, 0.10), 1, pad_x))
 	b.add_theme_color_override("font_disabled_color", DIM)
 	return b
 
@@ -1158,9 +1158,20 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	inner.add_theme_constant_override("margin_top", 7)
 	inner.add_theme_constant_override("margin_bottom", 7)
 	row.add_child(inner)
+	# 17j: the card stacks TWO lines — the member line and,
+	# only for leader/deputy viewers, a right-aligned actions
+	# line below it. On one line the row's minimum width was
+	# 717-806px (probe tests/probe_memberrow.gd) against the
+	# 706px the tab area actually has (692 with the vertical
+	# scrollbar): the horizontal scroll is disabled, so the
+	# overflow was clipped and the LAST button — "Đuổi" —
+	# lost its right edge or vanished entirely.
+	var lines := VBoxContainer.new()
+	lines.add_theme_constant_override("separation", 6)
+	inner.add_child(lines)
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
-	inner.add_child(hb)
+	lines.add_child(hb)
 	hb.add_child(_avatar(String(mem.get("avatar", "knight")), 40, String(mem.get("user", ""))))
 	var nv := VBoxContainer.new()
 	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1214,6 +1225,7 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 	if not self_row and my_role in ["leader", "deputy"]:
 		var acts := HBoxContainer.new()
 		acts.add_theme_constant_override("separation", 6)
+		acts.alignment = BoxContainer.ALIGNMENT_END
 		acts.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if my_role == "leader":
 			if t_role == "member":
@@ -1237,12 +1249,17 @@ func _member_row(mem: Dictionary, my_role: String, ally_id: String) -> PanelCont
 			kick.pressed.connect(func() -> void:
 				Net.alliance_kick(ally_id, target))
 			acts.add_child(kick)
-		hb.add_child(acts)
+		lines.add_child(acts)
 	return row
 
 
 func _small_btn(text: String) -> Button:
-	var b := _button(text)
+	# 17j: small buttons get 8px of horizontal text padding.
+	# At the _btn_sb default (1px) the ink sits flush against
+	# the frame (measured: "Đuổi" = 28px ink in a 30px button)
+	# and reads as clipped; the tab buttons keep pad 1 because
+	# they are expand-fill and their geometry is the 17c fix.
+	var b := _button(text, false, false, 0, 8)
 	b.custom_minimum_size = Vector2(0, 30)
 	b.add_theme_font_size_override("font_size", 12)
 	return b
